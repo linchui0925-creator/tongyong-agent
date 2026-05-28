@@ -1,43 +1,31 @@
-# Stage 1: Build frontend
-FROM node:20-alpine AS frontend-build
-
-WORKDIR /app/frontend
-
-COPY frontend/package*.json ./
-RUN npm install
-
-COPY frontend/ ./
-RUN npm run build
-
-# Stage 2: Backend
-FROM python:3.11-slim AS backend
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install only essential packages
+RUN pip install --no-cache-dir \
+    fastapi==0.115.9 \
+    uvicorn==0.30.6 \
+    python-dotenv==1.0.1 \
+    pydantic==2.10.6 \
+    pydantic-settings==2.7.1 \
+    openai==2.36.0 \
+    httpx==0.28.1 \
+    python-multipart==0.0.6 \
+    sse-starlette==2.1.3
 
-# Copy backend files
-COPY backend/ ./backend/
-COPY pyproject.toml uv.lock ./
+# Copy backend source code
+COPY backend/app ./backend/app
+COPY backend/requirements.txt ./
 
-# Install Python dependencies
-RUN pip install uv && uv sync --frozen
+# Copy pre-built frontend (run `npm run build` locally first if needed)
+COPY frontend/dist ./frontend/dist
+COPY frontend/index.html ./frontend/index.html
 
-# Copy built frontend from stage 1
-COPY --from=frontend-build /app/frontend/dist ./frontend/dist
-
-# Environment variables (defaults, real values should be passed via -e or .env)
 ENV PYTHONUNBUFFERED=1
 ENV BACKEND_HOST=0.0.0.0
 ENV BACKEND_PORT=8000
 
 EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]

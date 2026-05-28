@@ -107,6 +107,14 @@ class TeamSessionStore:
             c.execute("ALTER TABLE team_roles ADD COLUMN downstream_roles TEXT DEFAULT '[]'")
         except sqlite3.OperationalError:
             pass
+        try:
+            c.execute("ALTER TABLE team_roles ADD COLUMN debate_side TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE team_roles ADD COLUMN debate_position TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
 
         # Agent 连接图
         c.execute("""
@@ -137,6 +145,8 @@ class TeamSessionStore:
                 llm_model TEXT DEFAULT '',
                 opponent_name TEXT DEFAULT '',
                 stance TEXT DEFAULT '',
+                debate_side TEXT DEFAULT '',
+                debate_position TEXT DEFAULT '',
                 skills TEXT DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -219,8 +229,8 @@ class TeamSessionStore:
             """INSERT INTO team_roles
                (id, session_id, name, profile, watch_actions, action_types, tool_permission,
                 llm_provider, llm_model, opponent_name, action_configs, stance,
-                upstream_roles, downstream_roles)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                upstream_roles, downstream_roles, debate_side, debate_position)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 role_id, session_id, role.name, role.profile,
                 json.dumps(role.watch_actions),
@@ -231,6 +241,8 @@ class TeamSessionStore:
                 role.stance,
                 json.dumps(role.upstream_roles),
                 json.dumps(role.downstream_roles),
+                role.debate_side,
+                role.debate_position,
             )
         )
         conn.commit()
@@ -251,6 +263,8 @@ class TeamSessionStore:
             stance = r[11] if len(r) > 11 else ""
             upstream_roles = json.loads(r[12]) if len(r) > 12 else []
             downstream_roles = json.loads(r[13]) if len(r) > 13 else []
+            debate_side = r[14] if len(r) > 14 else ""
+            debate_position = r[15] if len(r) > 15 else ""
             role = TeamRole(
                 name=r[2], profile=r[3],
                 watch_actions=json.loads(r[4]),
@@ -261,6 +275,8 @@ class TeamSessionStore:
                 stance=stance,
                 upstream_roles=upstream_roles,
                 downstream_roles=downstream_roles,
+                debate_side=debate_side,
+                debate_position=debate_position,
             )
             role.set_actions(role.action_types)
             roles.append(role)
@@ -284,7 +300,7 @@ class TeamSessionStore:
         c = conn.cursor()
 
         # 可更新字段
-        simple_fields = {"profile", "llm_provider", "llm_model", "opponent_name", "stance"}
+        simple_fields = {"profile", "llm_provider", "llm_model", "opponent_name", "stance", "debate_side", "debate_position"}
         json_fields = {"watch_actions", "action_types", "action_configs", "upstream_roles", "downstream_roles"}
 
         updates = []
@@ -326,6 +342,8 @@ class TeamSessionStore:
         stance = row[11] if len(row) > 11 else ""
         upstream_roles = json.loads(row[12]) if len(row) > 12 else []
         downstream_roles = json.loads(row[13]) if len(row) > 13 else []
+        debate_side = row[14] if len(row) > 14 else ""
+        debate_position = row[15] if len(row) > 15 else ""
         role = TeamRole(
             name=row[2], profile=row[3],
             watch_actions=json.loads(row[4]),
@@ -336,6 +354,8 @@ class TeamSessionStore:
             stance=stance,
             upstream_roles=upstream_roles,
             downstream_roles=downstream_roles,
+            debate_side=debate_side,
+            debate_position=debate_position,
         )
         role.set_actions(role.action_types)
         return role

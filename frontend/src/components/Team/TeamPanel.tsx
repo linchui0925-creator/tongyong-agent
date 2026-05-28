@@ -294,6 +294,7 @@ export const TeamPanel: React.FC = () => {
                   <RoleList
                     roles={roles} templates={templates}
                     onAdd={handleAddRole} onDelete={handleDeleteRole} onUpdate={handleUpdateRole}
+                    sessionMode={sessionMode}
                   />
                 </div>
               )}

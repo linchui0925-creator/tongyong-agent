@@ -52,7 +52,9 @@ class TeamRole(BaseModel):
 
     # 辩论场景专用
     opponent_name: str = ""
-    stance: str = ""                            # 辩论立场（如"赞成禁止" / "反对禁止"，空=由 LLM 自行判断）
+    stance: str = ""                            # 辩论立场（如"正方" / "反方"，空=由 LLM 自行判断）
+    debate_side: str = ""                        # 辩论阵营：positive(正方) / negative(反方) / judge(裁判)
+    debate_position: str = ""                    # 辩论位置：first(一辩) / second(二辩) / third(三辩) / fourth(四辩) / judge(裁判)
     
     # 运行时（不持久化）
     _rc: Optional[RoleContext] = PrivateAttr(default=None)
@@ -258,26 +260,39 @@ class TeamRole(BaseModel):
     def make_debate_role(self, opponent_name: str) -> "TeamRole":
         """
         将当前角色转换为辩论角色（原地修改）：
-        - observe 覆盖：只接受对手发来的定向消息（send_to == self.name）
+        - observe 覆盖：从环境获取所有消息，自己做路由过滤
         - _act 覆盖：构建对话历史，并定向发给对手
+
+        辩论模式下的消息路由规则（确保每个角色都能正确接收消息）：
+        1. 定向消息（send_to == self.name）：总是接收（对手发给我的消息）
+        2. 广播消息（send_to == ""）：cause_by 必须在 watch_actions 中才接收
+        3. 发给其他人（send_to != self.name 且 != ""）：忽略
         """
         import types
 
         # 保存 self 引用供闭包使用
         self_ref = self
 
-        # 辩论 observe：只接收发给自己的消息 + 广播初始消息
+        # 辩论 observe：从环境获取未读消息，自己做路由过滤
+        # 注意：不再使用 _env.get_messages_for_role()，因为它对 Worker 有特殊处理
+        # 会阻止接收广播消息，这在辩论模式下会导致角色错过初始 UserRequirement
         async def debate_observe(self: "TeamRole") -> List[TeamMessage]:
             news: List[TeamMessage] = []
-            for msg in self_ref._env.messages:
-                # 广播消息（初始 idea）: 只要 cause_by 在 watch 里就接受
-                if msg.send_to == "":
-                    if not self_ref.watch_actions or msg.cause_by in self_ref.watch_actions:
-                        news.append(msg)
-                # 定向发给自己的消息（对手发言）: 接受
-                elif msg.send_to == self_ref.name:
+            cursor = self_ref._env._role_cursors.get(self_ref.name, 0)
+
+            for i in range(cursor, len(self_ref._env.messages)):
+                msg = self_ref._env.messages[i]
+                # 1. 定向发给自己的消息（对手发言）：总是接收
+                if msg.send_to == self_ref.name:
                     news.append(msg)
-                # 发给其他人: 忽略
+                    continue
+                # 2. 广播消息（初始 idea 等）：只有 cause_by 在 watch_actions 中时才接收
+                if msg.send_to == "":
+                    if self_ref.watch_actions and msg.cause_by in self_ref.watch_actions:
+                        news.append(msg)
+                    continue
+                # 3. 发给其他人：忽略
+
             return news
 
         # 辩论 act：基于 memory 构建上下文，定向发给对手
@@ -301,6 +316,8 @@ class TeamRole(BaseModel):
         object.__setattr__(self, "observe", types.MethodType(debate_observe, self))
         object.__setattr__(self, "_act", types.MethodType(debate_act, self))
         self.opponent_name = opponent_name
+        # 辩论角色必须监听 SpeakAloud 以接收对手发言
+        self.add_watch_action("SpeakAloud")
         return self
     
     async def run(self, round_num: int) -> Optional[TeamMessage]:
@@ -449,6 +466,8 @@ ROLE_TEMPLATES: Dict[str, dict] = {
         "watch_actions": ["WriteReview"],
         "action_types": ["write_test"],
     },
+    # 辩论角色模板已移除，请通过配置面板为 Agent 分配正方/反方/裁判角色
+    # 旧版 debator 保持兼容
     "debator": {
         "name": "Debator",
         "profile": "辩论选手，观点鲜明，语言犀利，擅长逻辑反驳。",

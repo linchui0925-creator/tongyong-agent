@@ -32,6 +32,8 @@ export interface TeamRole {
   llm_model: string
   opponent_name: string
   stance: string
+  debate_side: string
+  debate_position: string
   upstream_roles: string[]
   downstream_roles: string[]
   status: string

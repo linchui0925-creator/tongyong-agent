@@ -89,6 +89,10 @@ def add_role(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
             tpl["opponent_name"] = params["opponent_name"]
         if params.get("stance"):
             tpl["stance"] = params["stance"]
+        if params.get("debate_side"):
+            tpl["debate_side"] = params["debate_side"]
+        if params.get("debate_position"):
+            tpl["debate_position"] = params["debate_position"]
         role = TeamRole.create(**tpl)
         # 模板创建时自动填充上下游连接
         from app.core.multi_agent.role import get_default_connections
@@ -113,6 +117,8 @@ def add_role(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
             llm_model=params.get("llm_model", ""),
             opponent_name=params.get("opponent_name", ""),
             stance=params.get("stance", ""),
+            debate_side=params.get("debate_side", ""),
+            debate_position=params.get("debate_position", ""),
             upstream_roles=params.get("upstream_roles", []),
             downstream_roles=params.get("downstream_roles", []),
         )
@@ -129,6 +135,8 @@ def add_role(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         "llm_model": role.llm_model,
         "opponent_name": role.opponent_name,
         "stance": role.stance,
+        "debate_side": role.debate_side,
+        "debate_position": role.debate_position,
         "status": "hired",
     }
 
@@ -146,6 +154,10 @@ def get_roles(session_id: str) -> List[Dict[str, Any]]:
             "llm_model": r.llm_model,
             "opponent_name": r.opponent_name,
             "stance": r.stance,
+            "debate_side": r.debate_side,
+            "debate_position": r.debate_position,
+            "upstream_roles": r.upstream_roles,
+            "downstream_roles": r.downstream_roles,
             "status": "hired",
         }
         for r in roles
@@ -175,6 +187,8 @@ def update_role(session_id: str, role_name: str, params: Dict[str, Any]) -> Dict
         "llm_model": role.llm_model,
         "opponent_name": role.opponent_name,
         "stance": role.stance,
+        "debate_side": role.debate_side,
+        "debate_position": role.debate_position,
         "upstream_roles": role.upstream_roles,
         "downstream_roles": role.downstream_roles,
         "status": "hired",
@@ -208,14 +222,66 @@ def _build_team(session_id: str, session: Dict[str, Any], roles: List[TeamRole])
             team.hire(role)
     else:
         logger.info(f"[SERVICE] 使用会话已有角色 (count={len(roles)}, mode={mode})")
+
+        # 辩论模式：自动建立对手关系
+        if mode == "debate":
+            _setup_debate_opponents(roles)
+
         for role in roles:
-            logger.info(f"[SERVICE]   角色 {role.name}: upstream={role.upstream_roles}, downstream={role.downstream_roles}, actions={role.action_types}")
+            logger.info(f"[SERVICE]   角色 {role.name}: upstream={role.upstream_roles}, downstream={role.downstream_roles}, actions={role.action_types}, debate_side={role.debate_side}, opponent={role.opponent_name}")
             # 如果角色有对手名（辩论场景），应用辩论覆盖
             if role.opponent_name:
                 role.make_debate_role(opponent_name=role.opponent_name)
-                # 辩论角色还需要监听 SpeakAloud（对手发言）
+                # 辩论角色还需要监听 SpeakAloud/DebateSpeech（对手发言）
                 role.add_watch_action("SpeakAloud")
+                role.add_watch_action("DebateSpeech")
             team.hire(role)
+    return team
+
+
+def _setup_debate_opponents(roles: List[TeamRole]):
+    """
+    辩论模式：根据 debate_side 自动设置对手关系。
+    规则：
+    1. 正方一辩 ↔ 反方一辩
+    2. 正方二辩 ↔ 反方二辩
+    3. 正方三辩 ↔ 反方三辩
+    4. 正方四辩 ↔ 反方四辩
+    5. 如果没有对应的辩位对手，则找同辩位的对方辩手
+    6. 裁判没有对手
+    """
+    positive_roles = [r for r in roles if r.debate_side == "positive"]
+    negative_roles = [r for r in roles if r.debate_side == "negative"]
+
+    # 按辩位排序
+    position_order = {"first": 0, "second": 1, "third": 2, "fourth": 3, "judge": 4, "": 5}
+    positive_roles.sort(key=lambda r: position_order.get(r.debate_position, 5))
+    negative_roles.sort(key=lambda r: position_order.get(r.debate_position, 5))
+
+    # 配对同辩位的正反方
+    for pos_role in positive_roles:
+        if pos_role.debate_position == "judge":
+            continue  # 裁判没有对手
+        # 找同辩位的反方
+        neg_candidates = [r for r in negative_roles if r.debate_position == pos_role.debate_position]
+        if neg_candidates:
+            pos_role.opponent_name = neg_candidates[0].name
+        else:
+            # 没有同辩位，找对方还没有对手的角色
+            unpaired_neg = [r for r in negative_roles if not r.opponent_name and r.debate_position != "judge"]
+            if unpaired_neg:
+                pos_role.opponent_name = unpaired_neg[0].name
+
+    for neg_role in negative_roles:
+        if neg_role.debate_position == "judge":
+            continue
+        if not neg_role.opponent_name:
+            # 找正方还没有对手的角色
+            unpaired_pos = [r for r in positive_roles if not r.opponent_name and r.debate_position != "judge"]
+            if unpaired_pos:
+                neg_role.opponent_name = unpaired_pos[0].name
+
+    logger.info(f"[SERVICE] 辩论对手设置: {[(r.name, r.opponent_name) for r in roles if r.debate_side != 'judge']}")
     return team
 
 

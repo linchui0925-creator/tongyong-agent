@@ -26,6 +26,8 @@ nohup.out
 
 # Data (本地数据)
 data/
+backend/None/
+cache_data_*.json
 
 # Frontend cache
 frontend/.vite/

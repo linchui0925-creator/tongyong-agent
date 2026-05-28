@@ -1,0 +1,45 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.pytest_cache/
+.venv*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local
+.git.bak/
+.DS_Store
+.vercel/
+
+# Logs
+*.log
+nohup.out
+
+# Data (本地数据)
+data/
+
+# Frontend cache
+frontend/.vite/
+
+# Debug and test files
+backend/*.png
+backend/*.html
+backend/test_*.py
+backend/tests/
+frontend/diagnose.html
+frontend/test-*.html
+frontend/view-*.html
+frontend/layout-*.png
+*.png
+
+# Docs
+*.md

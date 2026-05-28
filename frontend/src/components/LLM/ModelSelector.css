@@ -1,0 +1,273 @@
+/**
+ * Model Selector — Warm Theme
+ */
+
+.model-selector {
+  padding: var(--sp-3) var(--sp-4);
+  position: relative;
+}
+
+.model-selector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-3);
+}
+.model-selector-header span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.model-add-btn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-tertiary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  line-height: 1;
+}
+.model-add-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.model-selector-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: border-color var(--t-fast);
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 100%;
+  font-family: var(--font);
+}
+.model-selector-current:hover { border-color: var(--border-hover); }
+.model-selector-current.open { border-color: var(--accent); }
+
+/* Dropdown (opens upward) */
+.model-selector-dropdown {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 100%;
+  margin-bottom: var(--sp-2);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  max-height: 360px;
+  overflow-y: auto;
+  animation: slideUp 0.12s ease;
+}
+
+.model-selector-search {
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+.model-selector-search input {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--t-fast);
+}
+.model-selector-search input:focus { border-color: var(--accent); }
+.model-selector-search input::placeholder { color: var(--text-muted); }
+
+/* Categories */
+.model-categories {
+  display: flex;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.model-category {
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--t-fast);
+  font-family: var(--font);
+}
+.model-category:hover { color: var(--text-secondary); background: var(--bg-hover); }
+.model-category.active { color: var(--accent); background: var(--accent-subtle); }
+
+/* List */
+.model-list {
+  padding: var(--sp-2);
+}
+.model-list-empty {
+  padding: var(--sp-6);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.model-group {
+  margin-bottom: var(--sp-3);
+}
+.model-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-1) var(--sp-2);
+  margin-bottom: var(--sp-1);
+}
+.model-group-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.model-group-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.model-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-item {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all var(--t-fast);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.model-item:hover { background: var(--bg-hover); }
+.model-item.selected { background: var(--accent-subtle); }
+
+.model-item-icon {
+  width: 28px; height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.model-item-info { flex: 1; min-width: 0; }
+.model-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.model-item-provider {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.model-item-check {
+  color: var(--accent);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* ── Saved models in dropdown ────────────────────────── */
+
+.dropdown-saved-models {
+  margin-bottom: var(--sp-1);
+  background: var(--accent-subtle);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1);
+}
+
+.saved-model-in-dropdown .saved-model-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.saved-model-in-dropdown .saved-model-delete {
+  width: 18px;
+  height: 18px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  opacity: 0;
+}
+.saved-model-in-dropdown:hover .saved-model-delete {
+  display: flex;
+  opacity: 1;
+}
+.saved-model-in-dropdown .saved-model-delete:hover {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.saved-model-in-dropdown .saved-model-badge {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.saved-model-in-dropdown .saved-model-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.saved-model-in-dropdown.switching {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--border-light);
+  margin: var(--sp-2) 0;
+}
+
+.saved-model-endpoint {
+  color: var(--text-tertiary);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,38 @@
+.memory-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 8px rgba(124, 74, 45, 0.1);
+    border: 1px solid #E8D5C4;
+}
+
+.memory-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.memory-type {
+    padding: 4px 12px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    background: #C4703A;
+}
+
+.memory-importance {
+    color: #D97706;
+}
+
+.memory-content {
+    color: #7C4A2D;
+    line-height: 1.6;
+    margin-bottom: 8px;
+}
+
+.memory-time {
+    color: #B88B6A;
+    font-size: 12px;
+}

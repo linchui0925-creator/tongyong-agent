@@ -1,0 +1,342 @@
+/**
+ * Personality Panel — Warm Theme
+ */
+
+.personality-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Toolbar */
+.personality-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.personality-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.personality-tab {
+  padding: var(--sp-1) var(--sp-3);
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: all var(--t-fast);
+}
+
+.personality-tab:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.personality-tab.active {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* Content area */
+.personality-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.personality-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+/* ── Editor ── */
+
+.peditor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.peditor-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--danger-subtle);
+  border-bottom: 1px solid rgba(239,68,68,0.15);
+  color: var(--danger);
+  font-size: 13px;
+}
+.peditor-error button {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.peditor-error button:hover { opacity: 1; }
+
+/* Header */
+.peditor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.peditor-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.peditor-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.peditor-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* Add form */
+.peditor-add {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.peditor-add input {
+  flex: 1;
+}
+
+.peditor-add button {
+  flex-shrink: 0;
+}
+
+/* List */
+.peditor-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-4);
+}
+
+.peditor-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+  padding: var(--sp-8);
+  line-height: 1.6;
+}
+
+/* Item */
+.peditor-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: 2px;
+  border-radius: var(--r-sm);
+  transition: background var(--t-fast);
+}
+
+.peditor-item:hover {
+  background: var(--bg-hover);
+}
+
+.peditor-item-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.peditor-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--t-fast);
+}
+
+.peditor-item:hover .peditor-item-actions {
+  opacity: 1;
+}
+
+.peditor-item-actions button {
+  font-size: 13px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+/* Edit inline form */
+.peditor-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.peditor-edit input {
+  flex: 1;
+  min-width: 0;
+}
+
+.peditor-edit-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.peditor-edit-actions button {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Raw modal */
+.peditor-raw-modal {
+  max-width: 640px;
+}
+
+.peditor-raw-textarea {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 200px;
+}
+
+.peditor-raw-info {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+  margin-top: var(--sp-2);
+}
+
+/* ── Stats ── */
+
+.pstats {
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.pstats-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.pstats-card-header {
+  padding: var(--sp-3) var(--sp-4);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.pstats-card-body {
+  padding: var(--sp-4);
+  display: flex;
+  gap: var(--sp-6);
+  flex-direction: column;
+}
+
+.pstats-stat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.pstats-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-feature-settings: 'tnum';
+}
+
+.pstats-stat-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.pstats-bar {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.pstats-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Help */
+.personality-help {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.personality-help-section strong {
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: var(--sp-1);
+}
+.personality-help-section p {
+  margin: 0;
+}
+.personality-help-section ul {
+  margin: 0;
+  padding-left: var(--sp-5);
+}
+.personality-help-section li {
+  margin-bottom: var(--sp-1);
+}

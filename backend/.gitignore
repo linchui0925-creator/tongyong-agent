@@ -1,0 +1,32 @@
+# Environment (真实密钥，不推送)
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.pytest_cache/
+.venv*/
+
+# Logs
+*.log
+nohup.out
+
+# Local Models (LLM weights)
+models/
+
+# Test & Debug files
+test_*.py
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+screenshot.png
+diagnose.html
+test-*.html
+view-*.html
+
+# Dependencies
+dependencies/

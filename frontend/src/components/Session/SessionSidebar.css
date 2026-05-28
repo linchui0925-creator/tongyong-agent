@@ -1,0 +1,199 @@
+/**
+ * Session Sidebar — Warm Theme
+ */
+
+.session-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Header */
+.session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+}
+
+.session-header-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.session-header-btn {
+  width: 24px; height: 24px;
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all var(--t-fast);
+}
+.session-header-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* Create form */
+.session-create {
+  padding: 0 var(--sp-3) var(--sp-3);
+  animation: slideDown 0.12s ease;
+}
+
+.session-create input {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--t-fast);
+}
+.session-create input:focus { border-color: var(--accent); }
+.session-create input::placeholder { color: var(--text-muted); }
+
+.session-create-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.session-create-actions button {
+  flex: 1;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.session-create-confirm { background: var(--accent); color: #fff; }
+.session-create-confirm:hover { background: var(--accent-hover); }
+.session-create-cancel { background: var(--bg-tertiary); color: var(--text-tertiary); }
+.session-create-cancel:hover { background: var(--bg-hover); color: var(--text-secondary); }
+
+/* List */
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--sp-2) var(--sp-2);
+}
+
+.session-list-empty {
+  padding: var(--sp-8) var(--sp-3);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Item */
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: 1px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--t-fast);
+  position: relative;
+}
+.session-item:hover { background: var(--bg-hover); }
+.session-item.active { background: var(--accent-subtle); }
+
+.session-item-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  transition: color var(--t-fast);
+  padding-right: 4px;
+}
+.session-item.active .session-item-name { color: var(--accent); font-weight: 500; }
+
+/* Inline edit */
+.session-edit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.session-edit input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.session-edit-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.session-edit-actions button {
+  width: 22px; height: 22px;
+  border-radius: var(--r-sm);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--t-fast);
+}
+.session-edit-confirm { background: var(--success-subtle); color: var(--success); }
+.session-edit-confirm:hover { background: var(--success); color: #fff; }
+.session-edit-cancel { background: transparent; color: var(--text-muted); }
+.session-edit-cancel:hover { background: var(--bg-hover); color: var(--text-secondary); }
+
+/* Hover actions — absolutely positioned to not steal layout space */
+.session-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+  position: absolute;
+  right: var(--sp-2);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-hover);
+  border-radius: var(--r-sm);
+  padding: 1px;
+}
+.session-item:hover .session-actions { opacity: 1; }
+
+.session-actions button {
+  width: 22px; height: 22px;
+  border-radius: var(--r-sm);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--t-fast);
+  background: transparent;
+  color: var(--text-muted);
+}
+.session-actions button:hover { background: var(--bg-tertiary); color: var(--text-secondary); }
+.session-actions .session-action-delete:hover { background: var(--danger-subtle); color: var(--danger); }

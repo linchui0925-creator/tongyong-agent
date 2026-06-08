@@ -243,18 +243,71 @@ async def stream_chat_langchain(
             astream_config["configurable"] = {"thread_id": thread_id}
 
         # 使用 astream_events 获取流式事件
-        async for event in agent.astream_events(
-            {"messages": input_messages},
-            config=astream_config,
+        # W2-2: 切 thinking (Q1/Q2 必修 — LLM 输出 <think>...</think> 段)
+        #  state machine: 4 状态
+        #  - NORMAL: 普通内容
+        #  - IN_THINK: <think> 内部
+        #  - THINK_DONE_PENDING: 等 </think> 关闭后推 done
+        # 策略: 跟 on_chat_model_stream 同步, 边收边切
+        import re
+        THINK_OPEN = re.compile(r"<think>")
+        THINK_CLOSE = re.compile(r"</think>")
+        think_buf = ""
+        text_buf = ""
+        in_think = False
+        cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+        async for event in agent.astream_events(  # type: ignore[call-overload]
+            input={"messages": input_messages},
+            config=astream_config,  # type: ignore[arg-type]
             version="v2",
         ):
             kind = event.get("event", "")
 
-            # LLM 生成的 token（流式模式）
+            # LLM 生成的 token（流式模式）— W2-2 切 thinking
             if kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and hasattr(chunk, "content") and chunk.content:
-                    yield _content(chunk.content)
+                    text = chunk.content
+                    # usage 也可能挂在 chunk 上 (v2 走 message_metadata)
+                    if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                        for k, v in chunk.usage_metadata.items():
+                            cumulative_usage[k] = cumulative_usage.get(k, 0) + (v or 0)
+                    # 切 thinking/text
+                    pos = 0
+                    while pos < len(text):
+                        if not in_think:
+                            m = THINK_OPEN.search(text, pos)
+                            if m:
+                                if m.start() > pos:
+                                    yield _content(text[pos:m.start()])
+                                pos = m.end()
+                                in_think = True
+                            else:
+                                yield _content(text[pos:])
+                                pos = len(text)
+                        else:
+                            m = THINK_CLOSE.search(text, pos)
+                            if m:
+                                if m.start() > pos:
+                                    yield {
+                                        "type": "thinking_delta",
+                                        "content": text[pos:m.start()],
+                                        "timestamp": _time.time(),
+                                    }
+                                pos = m.end()
+                                in_think = False
+                                yield {
+                                    "type": "thinking_done",
+                                    "timestamp": _time.time(),
+                                }
+                            else:
+                                yield {
+                                    "type": "thinking_delta",
+                                    "content": text[pos:],
+                                    "timestamp": _time.time(),
+                                }
+                                pos = len(text)
 
             # 工具开始
             elif kind == "on_tool_start":
@@ -288,9 +341,16 @@ async def stream_chat_langchain(
                             last = msgs[-1]
                             if isinstance(last, AIMessage):
                                 text = getattr(last, "content", None)
+                                # 收 usage_metadata (W2-2 — 全在 AIMessage 上)
+                                if hasattr(last, "usage_metadata") and last.usage_metadata:
+                                    for k, v in last.usage_metadata.items():
+                                        cumulative_usage[k] = cumulative_usage.get(k, 0) + (v or 0)
                                 is_ai = True
                     elif isinstance(output, AIMessage):
                         text = output.content
+                        if hasattr(output, "usage_metadata") and output.usage_metadata:
+                            for k, v in output.usage_metadata.items():
+                                cumulative_usage[k] = cumulative_usage.get(k, 0) + (v or 0)
                         is_ai = True
                     # 只提取 AIMessage 内容，跳过 ToolMessage 等；去重
                     if is_ai and text and text != last_yielded_text:
@@ -298,7 +358,41 @@ async def stream_chat_langchain(
                         if should_yield:
                             last_yielded_text = text
                             collected_content.append(text)
-                            yield _content(text)
+                            # W2-2: 切 <think>...</think>
+                            #   非流式 LLM (TongYongLLMAdapter._agenerate) 走 on_chain_end
+                            #   完整 text 一次性给 — 用 regex 切
+                            THINK_OPEN_RE = re.compile(r"<think>")
+                            THINK_CLOSE_RE = re.compile(r"</think>")
+                            parts = []
+                            pos = 0
+                            while pos < len(text):
+                                m_open = THINK_OPEN_RE.search(text, pos)
+                                if not m_open:
+                                    parts.append(("text", text[pos:]))
+                                    break
+                                if m_open.start() > pos:
+                                    parts.append(("text", text[pos:m_open.start()]))
+                                m_close = THINK_CLOSE_RE.search(text, m_open.end())
+                                if not m_close:
+                                    # 没关闭 — 整段算 think
+                                    parts.append(("think", text[m_open.end():]))
+                                    break
+                                parts.append(("think", text[m_open.end():m_close.start()]))
+                                pos = m_close.end()
+                            for ptype, ptext in parts:
+                                if ptype == "text" and ptext:
+                                    yield _content(ptext)
+                                elif ptype == "think" and ptext:
+                                    yield {
+                                        "type": "thinking_delta",
+                                        "content": ptext,
+                                        "timestamp": _time.time(),
+                                    }
+                            if any(ptype == "think" for ptype, _ in parts):
+                                yield {
+                                    "type": "thinking_done",
+                                    "timestamp": _time.time(),
+                                }
 
             # 工具完成
             elif kind == "on_tool_end":
@@ -334,6 +428,14 @@ async def stream_chat_langchain(
     full_text = "".join(collected_content)
     if full_text:
         ctx.add_message("assistant", full_text)
+
+    # W2-2: 推 usage (token 用量 — stream.py 收 "usage" 事件)
+    if cumulative_usage and cumulative_usage.get("total_tokens", 0) > 0:
+        yield {
+            "type": "usage",
+            "usage": cumulative_usage,
+            "timestamp": _time.time(),
+        }
 
     yield _done(session_id or "", tools_used, commands_executed)
 

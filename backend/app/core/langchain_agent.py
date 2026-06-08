@@ -11,12 +11,18 @@ LangChain ReAct Agent — 替代 agent.py 中手写 ReAct 循环
     from app.core.langchain_agent import stream_chat_langchain
     async for event in stream_chat_langchain(agent_engine, session_id, message, ...):
         yield event
+
+⚠️ W1-3 必修（2026-06-07）：接 AsyncSqliteSaver 给 langchain 路径持久化 state
+  - 自研 agent.py: 不用 checkpoint (不持久化)
+  - langchain_agent.py: 下面 _make_checkpointer() 工厂 + astream_events config 加
+    thread_id。W1-3 验证: session 改同 thread_id 重启能续上历史。
 """
 
 import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -27,6 +33,32 @@ from app.core.langchain_callbacks import SSEStreamCallback
 from app.llm.langchain_adapter import TongYongLLMAdapter
 from app.tools.langchain_adapter import registry_to_langchain_tools
 from app.tools.registry import registry as _tool_registry
+
+
+# ─────────────────────────────────────────────────────────
+# Checkpointer 工厂 (W1-3)
+# ─────────────────────────────────────────────────────────
+
+_CHECKPOINTER_PATH = Path(__file__).parent.parent / "data" / "lg_checkpoint.sqlite"
+_CHECKPOINTER_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _use_checkpointer():
+    """返 AsyncSqliteSaver 的 asynccontextmanager (CM)
+
+    ⚠️ AsyncSqliteSaver.from_conn_string 是 @asynccontextmanager
+    必须用 await + __aenter__ 拿实例, 不能 await 这个函数本身。
+
+    用法:
+        cm = _use_checkpointer()
+        cp = await cm.__aenter__()
+        try:
+            ...
+        finally:
+            await cm.__aexit__(None, None, None)
+    """
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    return AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTER_PATH))
 
 logger = logging.getLogger(__name__)
 
@@ -72,26 +104,25 @@ async def stream_chat_langchain(
 
     # ── 1. 加载上下文和记忆 ─────────────────────────────
     ctx = agent_engine.context
+    # 必修 1+2 合并（2026-06-07 W1-3 修）：
+    #   之前 if session_id 走 _init_session, else 走 3 件 — _init_session 不存在
+    #   现在统一走 3 件 (base + memory + domain), session_id 存在时
+    #   domain 会按 session 选; 不存在时用 "default" 做兜底。
     if session_id:
-        yield _progress("加载身份认知...")
-        agent_engine._init_session(session_id)
-    else:
-        # 必修 1 配套：旧代码只在 session_id 存在时调 _inject_base_system_prompt，
-        # 但新 session 也要带身份认知（跟 agent.chat() / stream_chat 一致）。
-        # 跟 agent.py line 290-292 保持一致：base + memory + domain 三件必调。
-        try:
-            agent_engine._inject_base_system_prompt()
-        except Exception as e:
-            logger.warning(f"[langchain] 注入 base system prompt 失败: {e}")
-        try:
-            await agent_engine._inject_memory(session_id or "default")
-        except Exception as e:
-            logger.warning(f"[langchain] 注入 memory 失败: {e}")
-        try:
-            await agent_engine._ensure_domain_prompts(session_id or "default")
-        except Exception as e:
-            logger.warning(f"[langchain] 注入 domain 失败: {e}")
-        yield _progress("加载历史对话...")
+        yield _progress(f"加载 session {session_id[:8]}...")
+    try:
+        agent_engine._inject_base_system_prompt()
+    except Exception as e:
+        logger.warning(f"[langchain] 注入 base system prompt 失败: {e}")
+    try:
+        await agent_engine._inject_memory(session_id or "default")
+    except Exception as e:
+        logger.warning(f"[langchain] 注入 memory 失败: {e}")
+    try:
+        await agent_engine._ensure_domain_prompts(session_id or "default")
+    except Exception as e:
+        logger.warning(f"[langchain] 注入 domain 失败: {e}")
+    yield _progress("上下文装配完成")
 
     # 添加用户消息
     ctx.add_message("user", message)
@@ -137,17 +168,40 @@ async def stream_chat_langchain(
         elif msg.role == "assistant":
             chat_history.append(AIMessage(content=msg.content or ""))
 
-    # ── 3. 创建 ReAct Agent ───────────────────────────
+    # ── 3. 创建 ReAct Agent (带 checkpointer) ──────────
     max_iterations = 20
     if hasattr(agent_engine, 'budget'):
         max_iterations = agent_engine.budget.max_rounds
 
-    agent = create_react_agent(
-        model=lc_llm,
-        tools=lc_tools,
-        prompt=system_prompt,
-        debug=True,
-    )
+    # W1-3: 接 AsyncSqliteSaver, session_id 当 thread_id
+    # session_id=None 时, 不用 checkpointer (ephemeral 不污染持久化)
+    thread_id = session_id or f"ephemeral-{_time.time()}"
+    is_persistent = bool(session_id)
+
+    if is_persistent:
+        checkpointer_cm = _use_checkpointer()
+        checkpointer = await checkpointer_cm.__aenter__()
+        try:
+            agent = create_react_agent(
+                model=lc_llm,
+                tools=lc_tools,
+                prompt=system_prompt,
+                checkpointer=checkpointer,
+                debug=True,
+            )
+        except Exception:
+            await checkpointer_cm.__aexit__(None, None, None)
+            checkpointer_cm = None
+            raise
+    else:
+        checkpointer = None
+        checkpointer_cm = None
+        agent = create_react_agent(
+            model=lc_llm,
+            tools=lc_tools,
+            prompt=system_prompt,
+            debug=True,
+        )
 
     # ── 4. 通过 Callbacks 流式执行 ─────────────────────
     collected_content = []
@@ -177,13 +231,21 @@ async def stream_chat_langchain(
         # 构建输入
         input_messages = chat_history + [HumanMessage(content=message)]
 
+        # W1-3: astream_events config 加 thread_id, 接上 checkpointer
+        #   - recursion_limit: 每轮 LLM + Tool 两步
+        #   - configurable.thread_id: session_id 决定持久化 key
+        #   - callbacks: SSE 推流
+        astream_config: dict = {
+            "callbacks": [callback],
+            "recursion_limit": max_iterations * 2,
+        }
+        if is_persistent:
+            astream_config["configurable"] = {"thread_id": thread_id}
+
         # 使用 astream_events 获取流式事件
         async for event in agent.astream_events(
             {"messages": input_messages},
-            config={
-                "callbacks": [callback],
-                "recursion_limit": max_iterations * 2,  # 每轮有 LLM + Tool 两步
-            },
+            config=astream_config,
             version="v2",
         ):
             kind = event.get("event", "")

@@ -23,6 +23,74 @@ logger = logging.getLogger(__name__)
 LANGCHAIN_ROLLOUT_PCT = int(os.getenv("LANGCHAIN_ROLLOUT", "100"))
 
 
+class _StreamMetrics:
+    """
+    W3 切流量埋点 — 每次 /api/chat/stream 调用收集 3 指标:
+      - latency_ms: 从 start 到收尾的耗时
+      - tool_count:  本轮 tool_start 事件数
+      - error_code:  失败时的错误代码 (None=成功)
+
+    输出: 一行 JSON 日志 (logger.info)
+    取舍: 不接 prometheus (避免引入新依赖, 行为验证: 纯文本可 grep)
+    """
+
+    __slots__ = (
+        "session_id",
+        "use_langchain",
+        "request_flag",
+        "override",
+        "rollout_pct",
+        "t0",
+        "tool_count",
+        "error_code",
+        "error_message",
+    )
+
+    def __init__(
+        self,
+        session_id: Optional[str],
+        use_langchain: bool,
+        request_flag: bool,
+        override: Optional[bool],
+        rollout_pct: int,
+    ):
+        self.session_id = session_id
+        self.use_langchain = use_langchain
+        self.request_flag = request_flag
+        self.override = override
+        self.rollout_pct = rollout_pct
+        self.t0 = time.time()
+        self.tool_count = 0
+        self.error_code: Optional[str] = None
+        self.error_message: Optional[str] = None
+
+    def _snapshot(self, status: str) -> dict:
+        latency_ms = round((time.time() - self.t0) * 1000, 1)
+        return {
+            "metric": "stream_chat",
+            "status": status,
+            "session_id": self.session_id,
+            "use_langchain": self.use_langchain,
+            "request_flag": self.request_flag,
+            "override": self.override,
+            "rollout_pct": self.rollout_pct,
+            "latency_ms": latency_ms,
+            "tool_count": self.tool_count,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+        }
+
+    def log_success(self) -> None:
+        """成功收尾: 一行 JSON 进 logger.info (W3-2 切流量监控主信号)"""
+        logger.info("[METRICS] " + json.dumps(self._snapshot("success"), ensure_ascii=False))
+
+    def log_error(self, code: str, message: str) -> None:
+        """失败收尾: error_code + error_message 进 JSON"""
+        self.error_code = code
+        self.error_message = message[:200]  # 截断, 避免日志爆
+        logger.warning("[METRICS] " + json.dumps(self._snapshot("error"), ensure_ascii=False))
+
+
 def _should_use_langchain(
     request_use_langchain: bool,
     session_id: Optional[str],
@@ -97,6 +165,8 @@ async def generate_stream_response(
     - {"type": "content", ...}  → event: content
     - {"type": "done", ...}     → event: done
     """
+    # W3-2 埋点: 在 try 外先初始化 (兜底用, 避免 except 报 unbound)
+    metrics: Optional["_StreamMetrics"] = None
     try:
         from app.main import agent_engine
         if agent_engine is None:
@@ -115,6 +185,14 @@ async def generate_stream_response(
             request_use_langchain=use_langchain,
             session_id=session_id,
             override=langchain_rollout_override,
+        )
+        # W3-2 埋点: 创建 metrics 收集器 (latency/tool_count/error)
+        metrics = _StreamMetrics(
+            session_id=session_id,
+            use_langchain=effective_use_langchain,
+            request_flag=use_langchain,
+            override=langchain_rollout_override,
+            rollout_pct=LANGCHAIN_ROLLOUT_PCT,
         )
         logger.info(
             f"开始流式聊天: session={session_id}, "
@@ -179,6 +257,9 @@ async def generate_stream_response(
                     }
 
                 elif event_type in ("tool_start", "tool_complete", "tool_error"):
+                    # W3-2 埋点: tool_count 累加 (tool_start / tool_complete / tool_error 都算调用)
+                    if event_type == "tool_start":
+                        metrics.tool_count += 1
                     yield {
                         "event": event_type,
                         "data": json.dumps(item)
@@ -290,6 +371,7 @@ async def generate_stream_response(
 
         except Exception as e:
             logger.error(f"流式处理错误: {e}")
+            metrics.log_error("STREAM_ERROR", str(e))
             yield {
                 "event": "error",
                 "data": json.dumps({
@@ -300,10 +382,15 @@ async def generate_stream_response(
             }
             return
 
+        # W3-2 埋点: 成功收尾打 metrics 日志
+        metrics.log_success()
         logger.info(f"流式聊天完成，响应长度: {len(full_response)}")
 
     except Exception as e:
         logger.error(f"流式聊天错误: {e}", exc_info=True)
+        # W3-2 埋点: 兜底 INTERNAL_ERROR (metrics 可能在 agent_engine 初始化前未创建)
+        if metrics is not None:
+            metrics.log_error("INTERNAL_ERROR", str(e))
         yield {
             "event": "error",
             "data": json.dumps({

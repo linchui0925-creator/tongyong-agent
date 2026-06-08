@@ -1,0 +1,18 @@
+--- a/app/core/agent.py
++++ b/app/core/agent.py
+@@ -133,6 +133,14 @@ class AgentEngine:
+             protect_last_n=3,
+             protect_last_n=20,
+         )
+ 
++        # 必修 3 修复（2026-06-07）：
++        # langchain_agent.py:124 用 hasattr(agent_engine, 'budget') 读 max_rounds，
++        # 但之前 __init__ 没建 self.budget，hasattr 永远 False → max_iterations 写死 20。
++        # 修法：把 IterationBudget 提到 __init__ 当 self 属性，让 stream_chat +
++        # stream_chat_langchain 都能复用同一个 budget 实例。
++        # IterationBudget.__post_init__ 会自动从 env 读 ITERATION_MAX_ROUNDS 等。
++        self.budget = IterationBudget()
++
+     def set_ask_response(self, question_id: str, answer: str) -> bool:
+         """存储用户对某个 ask 问题的回答"""
+         self._ask_pending[question_id] = {

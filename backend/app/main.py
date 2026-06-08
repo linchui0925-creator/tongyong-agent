@@ -10,6 +10,7 @@ from app.api import chat, memory, chart, llm
 from app.api import evaluation
 from app.api import dreaming as dreaming_api
 from app.api import skills as skills_api
+from app.api import marketplace as marketplace_api
 from app.api import tool_harness as tool_harness_api
 from app.api.stream import router as stream_router
 from app.core.multi_agent.api import router as team_router
@@ -108,8 +109,14 @@ app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(hermes_router)
 app.include_router(dreaming_api.router)
 app.include_router(skills_api.router)
+app.include_router(marketplace_api.router)
 app.include_router(tool_harness_api.router)
 app.include_router(stream_router, prefix="/api/chat")
+try:
+    from app.api.im_gateway import router as im_gateway_router
+    app.include_router(im_gateway_router)
+except ImportError:
+    pass
 app.include_router(openai_router, prefix="/v1")
 app.include_router(desktop_bridge_router)
 app.include_router(profile_router)
@@ -191,11 +198,13 @@ async def startup_event():
     logger.info(f"{settings.app_name} 启动中...")
     logger.info("=" * 50)
 
-    # 发现并注册所有内置工具，同时生成 tools.md
+    # ── Tools ─────────────────────────────────────────────────────────
+    # 工具定义通过 registry.register() 动态注册；schema 走 OpenAI function calling 协议
+    # （即 `llm.chat(..., tools=tool_schemas)`），agent 推理时**自动可见**。
+    # 不再写盘 domains/tools/tools.md — 那是 P4 (2026-06-02) 删的反模式：
+    # 14KB markdown 镜像只是冗余，LLM 早通过 function calling 协议拿到 schema。
     from app.tools import discover_builtin_tools
-    from app.tools.registry import generate_tools_md
     discover_builtin_tools()
-    generate_tools_md()
 
     # 动态发现 MCP 服务器工具
     try:
@@ -218,6 +227,43 @@ async def startup_event():
             logger.info(f"LLM连接验证: {'成功' if is_available else '失败'}")
         except Exception as e:
             logger.error(f"LLM连接验证失败: {e}")
+
+    # ── IM Gateway 启停 (飞书 / 企业微信 / 微信) ──
+    try:
+        from app.gateway.im import im_gateway_manager, inject_agent_engine, IMPlatform, IMPlatformConfig
+        from app.config import settings as app_settings
+
+        # 注入 AgentEngine — IM adapter 通过 get_agent_engine() 拿
+        inject_agent_engine(agent_engine)
+
+        # 飞书
+        feishu_app_id = getattr(app_settings, "feishu_app_id", "") or ""
+        feishu_app_secret = getattr(app_settings, "feishu_app_secret", "") or ""
+        if feishu_app_id and feishu_app_secret:
+            im_gateway_manager.set_platform_config(
+                IMPlatform.FEISHU,
+                IMPlatformConfig(
+                    platform=IMPlatform.FEISHU,
+                    enabled=getattr(app_settings, "feishu_enabled", False),
+                    allowed_users=getattr(app_settings, "feishu_allowed_users", []),
+                    allow_all_users=getattr(app_settings, "feishu_allow_all_users", False),
+                    default_profile=getattr(app_settings, "feishu_default_profile", "default"),
+                    extra={
+                        "app_id": feishu_app_id,
+                        "app_secret": feishu_app_secret,
+                        "verification_token": getattr(app_settings, "feishu_verification_token", ""),
+                        "encrypt_key": getattr(app_settings, "feishu_encrypt_key", ""),
+                        "domain": getattr(app_settings, "feishu_domain", "feishu"),
+                    },
+                ),
+            )
+        # 企业微信 / 微信服务号 同样模式 — Phase 3/4 启用
+
+        results = await im_gateway_manager.start_all()
+        if results:
+            logger.info(f"IM Gateway 启动结果: {results}")
+    except Exception as e:
+        logger.error(f"IM Gateway 启动失败: {e}", exc_info=True)
     
     logger.info("=" * 50)
     logger.info("应用启动完成")
@@ -228,7 +274,14 @@ async def startup_event():
 async def shutdown_event():
     """应用关闭事件"""
     logger.info("应用正在关闭...")
-    
+
+    # 停止 IM Gateway
+    try:
+        from app.gateway.im import im_gateway_manager
+        await im_gateway_manager.stop_all()
+    except Exception as e:
+        logger.error(f"IM Gateway 关闭异常: {e}")
+
     # 清理资源
     if agent_engine:
         logger.info("清理Agent引擎资源...")

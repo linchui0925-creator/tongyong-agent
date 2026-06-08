@@ -1,3 +1,30 @@
+"""
+AgentEngine - 单 agent 推理循环主引擎。
+
+负责 chat() / stream_chat() 完整流程：
+  1. 构造 session（如不存在）
+  2. 拼装 system prompt 链（base + MEMORY + domain + env + 操作习惯 + RAG top-5 + 全量历史 + 当前 user）
+     详见 _inject_base_system_prompt() / _load_messages_to_context() / _ensure_domain_prompts()
+  3. 调用 LLM
+  4. 处理 tool_calls（多轮 + IterationBudget 控制）
+  5. 落库
+
+关键依赖：
+  - MemoryStorage: 会话/消息/记忆 CRUD
+  - VectorStore: 语义检索 RAG top-5
+  - LLMManager: LLM 切换 + bind_agent_engine 单向注入
+  - ToolRegistry: 工具调用 dispatch
+  - ContextCompressor: 超长时压缩
+  - IterationBudget: tool 轮次控制
+
+注意：
+  - LLM 注入通过 LLMManager.bind_agent_engine() 一次完成；
+    agent.llm 直接访问，**不要再二次 bind**。
+  - self.tools 缓存了 registry.snapshot()，MCP 刷新时 deregister + 重建。
+  - 2026-06-02 修复：之前 system_prompt.py 是死代码（无 caller），
+    现通过 _inject_base_system_prompt() 在 chat()/stream_chat() 第一行调用。
+"""
+
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import asyncio
@@ -109,6 +136,14 @@ class AgentEngine:
             protect_last_n=20,
         )
 
+        # 必修 3 修复（2026-06-07）：
+        # langchain_agent.py:124 用 hasattr(agent_engine, 'budget') 读 max_rounds，
+        # 但之前 __init__ 没建 self.budget，hasattr 永远 False → max_iterations 写死 20。
+        # 修法：把 IterationBudget 提到 __init__ 当 self 属性，让 stream_chat +
+        # stream_chat_langchain 都能复用同一个 budget 实例。
+        # IterationBudget.__post_init__ 会自动从 env 读 ITERATION_MAX_ROUNDS 等。
+        self.budget = IterationBudget()
+
     def set_ask_response(self, question_id: str, answer: str) -> bool:
         """存储用户对某个 ask 问题的回答"""
         if question_id in self._ask_pending:
@@ -173,6 +208,29 @@ class AgentEngine:
         except Exception as e:
             logger.warning(f"领域认知注入失败: {e}")
 
+    def _inject_base_system_prompt(self):
+        """注入 base / capability / skills 三段拼成的 system 提示（每次对话必到）
+
+        走 insert(0) 确保 LLM 看到的第一条就是它，能压住"我是 ChatGPT / Claude"等
+        默认自我认知。修复前此函数从未被调用 → base_prompt + skills_prompt 是死代码。
+        """
+        try:
+            from app.core.system_prompt import get_system_prompt
+            full_prompt = get_system_prompt()
+            if not full_prompt:
+                return
+            self.context.messages.insert(0, Message(
+                role="system",
+                content=full_prompt,
+                created_at=""
+            ))
+            logger.warning(
+                f"[SYS_PROMPT] injected | bytes={len(full_prompt)} | "
+                f"context.messages count after={len(self.context.messages)}"
+            )
+        except Exception as e:
+            logger.warning(f"基础 system prompt 注入失败: {e}")
+
     async def _inject_memory(self, session_id: str):
         """注入平文件记忆内容（MEMORY.md / USER.md）"""
         try:
@@ -235,6 +293,9 @@ class AgentEngine:
             logger.info(f"创建新会话: {session_id}")
 
         # 注入身份认知和记忆（放在上下文最前面，覆盖 LLM 默认认知）
+        # ⚠️ _inject_base_system_prompt 必须最先调 —— base_prompt 里写了"你是同通用Agent"，
+        # 这条要在所有其它 system 之前，让 LLM 把"我是 Tongyong Agent"作为第一认知
+        self._inject_base_system_prompt()
         await self._inject_memory(session_id)
         await self._ensure_domain_prompts(session_id)
 
@@ -522,8 +583,35 @@ class AgentEngine:
         # _classify_error_type, _is_error_result, _has_execution_claim 已提到模块级
         # _validate_final_text 改为调用模块级 _validate_execution_claim
 
-        async def _summarize_from_existing_context(reason: str) -> str:
-            """预算耗尽或工具循环停止时，让模型基于已有 tool 结果生成最终文本。"""
+        async def _with_heartbeat(awaitable, label: str, interval: float = 10.0):
+            """
+            Run an awaitable while yielding periodic heartbeat progress events.
+            Keeps SSE alive during long tool executions / LLM calls.
+
+            Usage:
+                async for ev_type, ev_val in _with_heartbeat(coro, "label"):
+                    if ev_type == "heartbeat":
+                        yield _progress(ev_val)
+                    else:
+                        result = ev_val
+            """
+            task = asyncio.ensure_future(awaitable)
+            t0 = _time.time()
+            try:
+                while not task.done():
+                    await asyncio.sleep(interval)
+                    if not task.done():
+                        elapsed = _time.time() - t0
+                        yield ("heartbeat", f"{label} ({elapsed:.0f}s)")
+                result = task.result()
+                yield ("done", result)
+            except asyncio.CancelledError:
+                task.cancel()
+                raise
+
+        async def _summarize_from_existing_context(reason: str):
+            """预算耗尽或工具循环停止时，让模型基于已有 tool 结果生成最终文本。
+            Yields progress events, then yields ("result", text)."""
             self.context.add_message(
                 "system",
                 f"{reason}\n"
@@ -532,7 +620,12 @@ class AgentEngine:
             )
             summary_messages = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
             try:
-                summary_response = await self.llm.chat(messages=summary_messages, tools=None)
+                _llm_coro = self.llm.chat(messages=summary_messages, tools=None)
+                async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型总结", interval=15.0):
+                    if _ev_type == "heartbeat":
+                        yield _progress(_ev_val)
+                    else:
+                        summary_response = _ev_val
                 # 追踪总结调用 token 使用量
                 if summary_response.usage:
                     cumulative_usage["input_tokens"] += summary_response.usage.get("input_tokens", 0)
@@ -541,17 +634,63 @@ class AgentEngine:
                 cleaned, _thinking = _clean_thinking(summary_response.content or "")
                 is_valid, correction = _validate_execution_claim(cleaned, tools_used, commands_executed)
                 if not is_valid:
-                    return correction or "工具调用已停止，但最终总结与执行记录不一致。"
-                return cleaned or "工具调用已停止，未生成有效总结。"
+                    yield ("result", correction or "工具调用已停止，但最终总结与执行记录不一致。")
+                else:
+                    yield ("result", cleaned or "工具调用已停止，未生成有效总结。")
             except Exception as exc:
                 logger.warning("预算耗尽总结失败: %s", exc, exc_info=True)
-                return f"工具调用已停止，但生成最终总结失败: {exc}"
+                yield ("result", f"工具调用已停止，但生成最终总结失败: {exc}")
 
         def _thinking_delta(text: str):
             return {"type": "thinking_delta", "content": text, "timestamp": _time.time()}
 
         def _thinking_done():
             return {"type": "thinking_done", "timestamp": _time.time()}
+
+        def _usage(snapshot: dict):
+            """实时 token 用量事件 — 每次 LLM 调用后立刻 yield，不等到 done。
+
+            snapshot 应包含 input_tokens / output_tokens / total_tokens / round / cumulative。
+            前端 ModernChatPanel.onUsage 接收后即时刷新 TokenUsageBar。
+            """
+            return {
+                "type": "usage",
+                "usage": {
+                    "input_tokens": snapshot.get("input_tokens", 0),
+                    "output_tokens": snapshot.get("output_tokens", 0),
+                    "total_tokens": snapshot.get("total_tokens", 0),
+                },
+                "round": snapshot.get("round", budget.current_round + 1),
+                "cumulative": {
+                    "input_tokens": cumulative_usage["input_tokens"],
+                    "output_tokens": cumulative_usage["output_tokens"],
+                    "total_tokens": cumulative_usage["total_tokens"],
+                },
+                "timestamp": _time.time(),
+            }
+
+        def _context(chars: int, threshold_tokens: int):
+            """上下文容量事件 — 每轮 LLM 调用前 yield，让前端进度条按真实数据更新。
+
+            chars: 当前 context 字符数；threshold_tokens: 触发被动压缩的 token 阈值。
+            前端用 estimated_tokens / threshold_tokens 算百分比和颜色。
+            """
+            estimated_tokens = int(chars * 0.25)
+            percent = (
+                round(estimated_tokens / threshold_tokens * 100, 1)
+                if threshold_tokens > 0 else 0
+            )
+            return {
+                "type": "context",
+                "context": {
+                    "chars": chars,
+                    "estimated_tokens": estimated_tokens,
+                    "threshold_tokens": threshold_tokens,
+                    "percent": min(percent, 999.9),
+                    "approaching": estimated_tokens >= threshold_tokens * 0.8,
+                },
+                "timestamp": _time.time(),
+            }
 
         def _done():
             return {"type": "done", "session_id": session_id or "",
@@ -613,10 +752,11 @@ class AgentEngine:
             """按并行模式分组工具调用"""
             return _tool_registry.classify_tool_calls(tool_calls)
 
-        async def _execute_safe_parallel(tool_calls: list, tool_mgr) -> Dict[str, Tuple[str, float]]:
-            """并行执行 safe 模式的工具调用，返回 {id: (result, elapsed)}"""
+        async def _execute_safe_parallel(tool_calls: list, tool_mgr):
+            """并行执行 safe 模式的工具调用，yield heartbeat events, 最后 yield result dict"""
             if not tool_calls:
-                return {}
+                yield ("result", {})
+                return
 
             async def _timed(tool_mgr, name, args):
                 t0 = _time.time()
@@ -630,14 +770,27 @@ class AgentEngine:
                 _timed(tool_mgr, tc["function"]["name"], _json.loads(tc["function"]["arguments"]))
                 for tc in tool_calls
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            gather_task = asyncio.ensure_future(asyncio.gather(*tasks, return_exceptions=True))
+            t0 = _time.time()
+            names = ", ".join(tc["function"]["name"] for tc in tool_calls)
+            try:
+                while not gather_task.done():
+                    await asyncio.sleep(10.0)
+                    if not gather_task.done():
+                        elapsed = _time.time() - t0
+                        yield ("heartbeat", f"🔧 {names} 并行执行中 ({elapsed:.0f}s)")
+                results = gather_task.result()
+            except asyncio.CancelledError:
+                gather_task.cancel()
+                raise
+
             out = {}
             for tc, r in zip(tool_calls, results):
                 if isinstance(r, Exception):
                     out[tc["id"]] = (str(r), 0.0)
                 else:
                     out[tc["id"]] = r  # (result_str, elapsed_float)
-            return out
+            yield ("result", out)
 
         def _build_ask_events(tool_result: str, tool_args: dict) -> Optional[list]:
             """检测 tool result 中的 __ASK_BLOCK__: 标记，返回 ask 事件列表"""
@@ -669,6 +822,9 @@ class AgentEngine:
 
         # ── 阶段 1: 加载上下文 ──
         yield _progress("加载身份认知...")
+        # ⚠️ _inject_base_system_prompt 必须最先调 —— 把"我是 Tongyong Agent"压成第一认知
+        # 它内部已经包含 base + capability + skills 三段，不再单独调 get_skills_prompt
+        self._inject_base_system_prompt()
         await self._inject_memory(session_id)
         await self._ensure_domain_prompts(session_id)
 
@@ -676,11 +832,6 @@ class AgentEngine:
         env_prompt = get_env_prompt()
         if env_prompt:
             self.context.add_message("system", env_prompt)
-
-        from app.core.skills_index import get_skills_prompt
-        skills_prompt = get_skills_prompt()
-        if skills_prompt:
-            self.context.add_message("system", skills_prompt)
 
         yield _progress("加载历史对话...")
         historical_messages = await self.memory_storage.get_messages(session_id)
@@ -764,7 +915,12 @@ class AgentEngine:
             while True:
                 # 检查预算是否耗尽
                 if budget.is_exhausted:
-                    final_text = await _summarize_from_existing_context(budget.get_exhausted_message())
+                    final_text = None
+                    async for _ev in _summarize_from_existing_context(budget.get_exhausted_message()):
+                        if isinstance(_ev, tuple) and _ev[0] == "result":
+                            final_text = _ev[1]
+                        else:
+                            yield _ev
                     final_response_chunks.append(final_text)
                     yield _content(final_text)
                     break
@@ -786,12 +942,25 @@ class AgentEngine:
                 if budget.current_round == 0 or remaining_rounds <= 5:
                     if estimated_tokens >= compress_threshold:
                         yield _progress("📦 上下文过长，正在压缩...")
-                        compressed, summary_text = await self.context_compressor.compress(
+                        _comp_coro = self.context_compressor.compress(
                             self.context.get_messages(), self.llm
                         )
+                        async for _ev_type, _ev_val in _with_heartbeat(_comp_coro, "📦 压缩上下文中", interval=15.0):
+                            if _ev_type == "heartbeat":
+                                yield _progress(_ev_val)
+                            else:
+                                compressed, summary_text = _ev_val
                         self.context.messages = compressed
                         self.context._token_estimate = None
                         yield _progress(f"📦 压缩完成: {summary_text[:80]}...")
+                        # 压缩后立刻推送新 context 状态给前端 TokenUsageBar
+                        post_compact_chars = sum(len(m.content or "") for m in self.context.messages)
+                        yield _context(post_compact_chars, self.context_compressor.threshold_tokens)
+
+                # 每轮 LLM 调用前推送 context 容量（前端 TokenUsageBar 用）——
+                # 用"调用前"快照，避免把本轮 LLM 即将产生的 input_tokens 算进 context
+                pre_call_chars = sum(len(m.content or "") for m in self.context.messages)
+                yield _context(pre_call_chars, self.context_compressor.threshold_tokens)
 
                 llm_messages = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
 
@@ -824,12 +993,19 @@ class AgentEngine:
                         if budget.current_round == 0:
                             self.context.add_message("system", cached_prompt_marker)
 
-                    llm_response = await self.llm.chat(messages=llm_messages, tools=tool_schemas)
+                    _llm_coro = self.llm.chat(messages=llm_messages, tools=tool_schemas)
+                    async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应", interval=15.0):
+                        if _ev_type == "heartbeat":
+                            yield _progress(_ev_val)
+                        else:
+                            llm_response = _ev_val
                     # 追踪 token 使用量
                     if llm_response.usage:
                         cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
                         cumulative_usage["output_tokens"] += llm_response.usage.get("output_tokens", 0)
                         cumulative_usage["total_tokens"] += llm_response.usage.get("total_tokens", 0)
+                        # 实时推送 usage 事件给前端 TokenUsageBar（不等 done）
+                        yield _usage(llm_response.usage)
                     if llm_response.has_thinking:
                         for chunk in llm_response.thinking:
                             yield _thinking_delta(chunk)
@@ -840,20 +1016,36 @@ class AgentEngine:
                     fallback_llm = self._try_fallback_llm()
                     if fallback_llm:
                         try:
-                            llm_response = await fallback_llm.chat(messages=llm_messages, tools=tool_schemas)
+                            _llm_coro = fallback_llm.chat(messages=llm_messages, tools=tool_schemas)
+                            async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应(fallback)", interval=15.0):
+                                if _ev_type == "heartbeat":
+                                    yield _progress(_ev_val)
+                                else:
+                                    llm_response = _ev_val
                             # 追踪 fallback token 使用量
                             if llm_response.usage:
                                 cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
                                 cumulative_usage["output_tokens"] += llm_response.usage.get("output_tokens", 0)
                                 cumulative_usage["total_tokens"] += llm_response.usage.get("total_tokens", 0)
+                                yield _usage(llm_response.usage)
                             self.llm = fallback_llm  # 切换成功，更新主 LLM
                             logger.info("LLM fallback 成功，已切换 provider")
                         except Exception as fallback_err:
                             logger.error(f"LLM fallback 也失败: {fallback_err}")
-                            llm_response = await self.llm.chat(messages=llm_messages, tools=None)
+                            _llm_coro = self.llm.chat(messages=llm_messages, tools=None)
+                            async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应(降级)", interval=15.0):
+                                if _ev_type == "heartbeat":
+                                    yield _progress(_ev_val)
+                                else:
+                                    llm_response = _ev_val
                     else:
                         # 无 fallback，降级为无工具请求
-                        llm_response = await self.llm.chat(messages=llm_messages, tools=None)
+                        _llm_coro = self.llm.chat(messages=llm_messages, tools=None)
+                        async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应(降级)", interval=15.0):
+                            if _ev_type == "heartbeat":
+                                yield _progress(_ev_val)
+                            else:
+                                llm_response = _ev_val
                     # 追踪降级调用 token 使用量
                     if llm_response.usage:
                         cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
@@ -882,7 +1074,12 @@ class AgentEngine:
                             _t0 = _time.time()
                             yield _tool_start("terminal", {"command": cmd})
                             try:
-                                result = await tool_mgr.execute("terminal", {"command": cmd})
+                                _term_coro = tool_mgr.execute("terminal", {"command": cmd})
+                                async for _ev_type, _ev_val in _with_heartbeat(_term_coro, "🔧 terminal 执行中", interval=10.0):
+                                    if _ev_type == "heartbeat":
+                                        yield _progress(_ev_val)
+                                    else:
+                                        result = _ev_val
                                 elapsed = _time.time() - _t0
                                 is_error = _is_error_result(result)
                                 yield _tool_complete("terminal", result, elapsed, error=is_error)
@@ -900,7 +1097,12 @@ class AgentEngine:
                                     "content": f"[命令执行结果]\n{result}"
                                 }, ensure_ascii=False))
                                 llm_messages2 = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
-                                llm_response2 = await self.llm.chat(messages=llm_messages2, tools=None)
+                                _llm_coro2 = self.llm.chat(messages=llm_messages2, tools=None)
+                                async for _ev_type, _ev_val in _with_heartbeat(_llm_coro2, "🤔 等待模型响应", interval=15.0):
+                                    if _ev_type == "heartbeat":
+                                        yield _progress(_ev_val)
+                                    else:
+                                        llm_response2 = _ev_val
                                 if llm_response2.content:
                                     cleaned2, thinking2 = _clean_thinking(llm_response2.content)
                                     if thinking2:
@@ -986,7 +1188,12 @@ class AgentEngine:
                             _t0 = _time.time()
                             yield _tool_start("terminal", {"command": cmd})
                             try:
-                                result = await tool_mgr.execute("terminal", {"command": cmd})
+                                _term_coro = tool_mgr.execute("terminal", {"command": cmd})
+                                async for _ev_type, _ev_val in _with_heartbeat(_term_coro, "🔧 terminal 执行中", interval=10.0):
+                                    if _ev_type == "heartbeat":
+                                        yield _progress(_ev_val)
+                                    else:
+                                        result = _ev_val
                                 elapsed = _time.time() - _t0
                                 is_error = _is_error_result(result)
                                 yield _tool_complete("terminal", result, elapsed, error=is_error)
@@ -998,7 +1205,12 @@ class AgentEngine:
                                 }, ensure_ascii=False))
                                 # 再次调用 LLM 生成包含命令结果的最终回复
                                 llm_messages2 = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
-                                llm_response2 = await self.llm.chat(messages=llm_messages2, tools=None)
+                                _llm_coro2 = self.llm.chat(messages=llm_messages2, tools=None)
+                                async for _ev_type, _ev_val in _with_heartbeat(_llm_coro2, "🤔 等待模型响应", interval=15.0):
+                                    if _ev_type == "heartbeat":
+                                        yield _progress(_ev_val)
+                                    else:
+                                        llm_response2 = _ev_val
                                 if llm_response2.content:
                                     cleaned2, thinking2 = _clean_thinking(llm_response2.content)
                                     if thinking2:
@@ -1049,7 +1261,14 @@ class AgentEngine:
                     is_error = True
 
                     try:
-                        tool_result = await tool_mgr.execute(tool_name, args)
+                        _tool_coro = tool_mgr.execute(tool_name, args)
+                        async for _ev_type, _ev_val in _with_heartbeat(
+                            _tool_coro, f"🔧 {tool_name} 执行中", interval=10.0
+                        ):
+                            if _ev_type == "heartbeat":
+                                yield _progress(_ev_val)
+                            else:
+                                tool_result = _ev_val
                         _elapsed = _time.time() - _tool_t0
                         is_error = _is_error_result(tool_result)
                         yield _tool_complete(tool_name, tool_result, _elapsed, error=is_error)
@@ -1100,7 +1319,12 @@ class AgentEngine:
 
                 # 执行 safe 模式（并行）
                 if safe_calls:
-                    safe_results = await _execute_safe_parallel(safe_calls, tool_mgr)
+                    safe_results = {}
+                    async for _ev_type, _ev_val in _execute_safe_parallel(safe_calls, tool_mgr):
+                        if _ev_type == "heartbeat":
+                            yield _progress(_ev_val)
+                        else:
+                            safe_results = _ev_val
                     for tc in safe_calls:
                         tool_name = tc["function"]["name"]
                         args = _json.loads(tc["function"]["arguments"])
@@ -1164,7 +1388,14 @@ class AgentEngine:
                     is_error = True
 
                     try:
-                        tool_result = await tool_mgr.execute(tool_name, args)
+                        _tool_coro = tool_mgr.execute(tool_name, args)
+                        async for _ev_type, _ev_val in _with_heartbeat(
+                            _tool_coro, f"🔧 {tool_name} 执行中", interval=10.0
+                        ):
+                            if _ev_type == "heartbeat":
+                                yield _progress(_ev_val)
+                            else:
+                                tool_result = _ev_val
                         _elapsed = _time.time() - _tool_t0
                         is_error = _is_error_result(tool_result)
                         yield _tool_complete(tool_name, tool_result, _elapsed, error=is_error)
@@ -1226,9 +1457,14 @@ class AgentEngine:
                     if not should_cont:
                         logger.info(f"[Hermes] 循环控制: {reason}")
                         yield _progress(f"[Hermes] {reason}")
-                        final_text = await _summarize_from_existing_context(
+                        final_text = None
+                        async for _ev in _summarize_from_existing_context(
                             f"[循环终止] {reason}\n基于已有工具执行结果生成总结。"
-                        )
+                        ):
+                            if isinstance(_ev, tuple) and _ev[0] == "result":
+                                final_text = _ev[1]
+                            else:
+                                yield _ev
                         final_response_chunks.append(final_text)
                         yield _content(final_text)
                         break
@@ -1242,9 +1478,14 @@ class AgentEngine:
                         # 如果上下文较大，尝试压缩后给一次额外机会
                         if estimated_tokens >= self.context_compressor.threshold_tokens * 0.5:
                             yield _progress("📦 预算即将耗尽，尝试最后一次压缩...")
-                            compressed, summary_text = await self.context_compressor.compress(
+                            _comp_coro = self.context_compressor.compress(
                                 self.context.get_messages(), self.llm
                             )
+                            async for _ev_type, _ev_val in _with_heartbeat(_comp_coro, "📦 压缩上下文中", interval=15.0):
+                                if _ev_type == "heartbeat":
+                                    yield _progress(_ev_val)
+                                else:
+                                    compressed, summary_text = _ev_val
                             self.context.messages = compressed
                             self.context._token_estimate = None
                             # 给一次额外轮次
@@ -1252,7 +1493,12 @@ class AgentEngine:
                             budget.grace_used = budget.grace_calls - 1
                             yield _progress(f"📦 压缩完成，获得额外执行机会: {summary_text[:80]}...")
                             continue
-                    final_text = await _summarize_from_existing_context(budget.get_exhausted_message())
+                    final_text = None
+                    async for _ev in _summarize_from_existing_context(budget.get_exhausted_message()):
+                        if isinstance(_ev, tuple) and _ev[0] == "result":
+                            final_text = _ev[1]
+                        else:
+                            yield _ev
                     final_response_chunks.append(final_text)
                     yield _content(final_text)
                     break
@@ -1420,6 +1666,108 @@ class AgentEngine:
 
     async def get_conversation_history(self, session_id: str) -> List[Message]:
         return await self.memory_storage.get_messages(session_id)
+
+    async def compress_session_history(self, session_id: str) -> Dict[str, Any]:
+        """用户主动触发的上下文压缩（前端 /api/chat/compress 端点调用）。
+
+        工作流：
+        1. 读 session 全部消息
+        2. 调 ContextCompressor.compress() — LLM summarization 缩中间消息
+        3. 清空原 messages，写回压缩后的版本
+        4. 返回 before/after 统计给前端刷新 TokenUsageBar
+
+        设计选择（不重写 stream_chat 内部逻辑）：
+        - 复用 ContextCompressor.compress() —— 跟被动压缩共用同一套算法
+        - 直接操作 memory_storage（持久化层）—— 不依赖 self.context，避免和正在
+          进行的 stream_chat 抢占
+        - 压缩完成后清 self.context 缓存 —— 下次 stream_chat 启动会重新从 storage 加载
+        """
+        if not self.llm:
+            return {"success": False, "error": "LLM 未初始化，无法压缩"}
+
+        messages = await self.memory_storage.get_messages(session_id)
+        if not messages:
+            return {
+                "success": True,
+                "session_id": session_id,
+                "before_messages": 0,
+                "after_messages": 0,
+                "before_tokens": 0,
+                "after_tokens": 0,
+                "saved_pct": 0.0,
+                "summary": "",
+            }
+
+        before_chars = sum(len(m.content or "") for m in messages)
+        before_tokens = int(before_chars * 0.25)
+
+        # 触发阈值检查（< MIN_COMPRESS_CHARS 时 should_compress 返 False）
+        if not self.context_compressor.should_compress(messages):
+            return {
+                "success": True,
+                "session_id": session_id,
+                "before_messages": len(messages),
+                "after_messages": len(messages),
+                "before_tokens": before_tokens,
+                "after_tokens": before_tokens,
+                "saved_pct": 0.0,
+                "summary": "上下文尚未达到压缩阈值，未做改动",
+                "skipped": True,
+            }
+
+        compressed, summary_text = await self.context_compressor.compress(messages, self.llm)
+        after_chars = sum(len(m.content or "") for m in compressed)
+        after_tokens = int(after_chars * 0.25)
+        saved_pct = (
+            round((before_chars - after_chars) / before_chars * 100, 1)
+            if before_chars > 0 else 0.0
+        )
+
+        # 写回 storage：先清后插（保留压缩后消息的 created_at，不重置时间戳）
+        await self.memory_storage.clear_messages(session_id)
+        for m in compressed:
+            await self.memory_storage.add_message(session_id, m.role, m.content)
+
+        # 如果当前 self.context 持有此 session 的消息，置空让它下次重载
+        if self.context.messages:
+            self.context.clear()
+
+        logger.warning(
+            "[COMPRESS] manual | session=%s | %d→%d msgs, %d→%d tokens, saved %.1f%%",
+            session_id, len(messages), len(compressed),
+            before_tokens, after_tokens, saved_pct,
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "before_messages": len(messages),
+            "after_messages": len(compressed),
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "saved_pct": saved_pct,
+            "summary": summary_text[:200],
+        }
+
+    async def get_session_context_stats(self, session_id: str) -> Dict[str, Any]:
+        """读 session 当前 context 容量（不修改任何状态），前端启动时用来初始化 TokenUsageBar。"""
+        messages = await self.memory_storage.get_messages(session_id)
+        chars = sum(len(m.content or "") for m in messages)
+        estimated_tokens = int(chars * 0.25)
+        threshold_tokens = self.context_compressor.threshold_tokens
+        percent = (
+            round(estimated_tokens / threshold_tokens * 100, 1)
+            if threshold_tokens > 0 else 0
+        )
+        return {
+            "session_id": session_id,
+            "message_count": len(messages),
+            "chars": chars,
+            "estimated_tokens": estimated_tokens,
+            "threshold_tokens": threshold_tokens,
+            "percent": min(percent, 999.9),
+            "approaching": estimated_tokens >= threshold_tokens * 0.8,
+        }
 
     async def get_shared_memories(self, query: str, k: int = 5) -> List[Memory]:
         if not self.llm:

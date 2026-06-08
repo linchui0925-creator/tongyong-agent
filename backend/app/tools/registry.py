@@ -11,8 +11,9 @@ Architecture:
 Key differences from hermes-agent:
 - 不把工具清单写死进 system prompt
 - Agent 通过 registry.get_schemas() 获取 function calling schema
-- 工具能力描述通过 env_capabilities.py 动态生成
-- 工具 discovery 通过 grep/ls 方式自我感知（读 tools.md 或 registry）
+- 工具能力描述通过 env_capabilities.py 动态生成（按 toolset 分组的人类可读清单）
+- 工具集清单 + schema 都走结构化 API（registry / API tools 参数），**没有** tools.md 这类 markdown 镜像
+  （P4 2026-06-02 删了 generate_tools_md() 写盘——那是反模式）
 """
 
 import ast
@@ -441,87 +442,6 @@ def discover_builtin_tools() -> List[str]:
         logger.info(f"已加载工具模块: {', '.join(imported)}")
 
     return imported
-
-
-def generate_tools_md():
-    """将所有已注册工具生成 domains/tools/tools.md，供 Agent 动态检索"""
-    _pkg = Path(__file__).resolve().parent.parent
-    _TOOLS_MD_PATH = _pkg / "domains" / "tools" / "tools.md"
-
-    tools_by_toolset = {}
-    for entry in registry._snapshot_entries():
-        if entry.check_fn:
-            try:
-                if not entry.check_fn():
-                    continue
-            except Exception:
-                pass
-        tools_by_toolset.setdefault(entry.toolset, []).append(entry)
-
-    toolset_labels = {
-        "file": "📁 文件操作",
-        "terminal": "💻 终端命令",
-        "browser": "🌐 浏览器自动化",
-        "web": "🔍 网络搜索",
-        "desktop": "🖥️ macOS 桌面",
-        "android": "📱 Android 设备",
-        "interactive": "❓ 交互提问",
-        "skill": "🎯 Skill 工具",
-        "agent": "🔀 多 Agent 委派",
-    }
-
-    lines = [
-        "你内置了工具执行框架，通过 **function calling（函数调用）** 执行操作。",
-        "",
-        "## 核心规则：必须用 function calling，不要在文字中假装执行",
-        "",
-        "在文字中描述工具操作 = 没有实际执行。你必须直接调用对应的函数（tool_calls）。",
-        "",
-        "## 可用工具清单",
-        "",
-        "遇到任务时，如果不确定该用什么工具，**先读取以下清单**，根据工具的 description 判断最合适的工具。",
-        "工具描述中的 **必填参数**（required）和 **可选参数**（optional）来自工具的 JSON schema。",
-        "",
-    ]
-
-    for ts, label in toolset_labels.items():
-        entries = tools_by_toolset.get(ts, [])
-        if not entries:
-            continue
-        lines.append(f"### {label}\n")
-        for e in sorted(entries, key=lambda x: x.name):
-            lines.append(f"#### `{e.name}`")
-            lines.append(e.description.strip())
-            schema = e.schema if isinstance(e.schema, dict) else {}
-            params = schema.get("properties", {})
-            required = schema.get("required", [])
-            if params:
-                lines.append("")
-                lines.append("**参数：**")
-                for pname, pinfo in params.items():
-                    ptype = pinfo.get("type", "any")
-                    pdesc = pinfo.get("description", "").replace("\n", " ")
-                    req = "【必填】" if pname in required else "【可选】"
-                    enum = pinfo.get("enum")
-                    enum_str = f"（枚举: {', '.join(enum)}）" if enum else ""
-                    default = f"，默认: {pinfo.get('default')}" if "default" in pinfo else ""
-                    lines.append(f"- `{pname}` ({ptype}) {req} {pdesc}{enum_str}{default}")
-            lines.append("")
-
-    lines.extend([
-        "## 使用规则",
-        "1. 直接调函数，不要用文字描述执行过程",
-        "2. 工具结果会自动展示，你基于结果回复即可",
-        "3. 只说不做 = 欺骗用户",
-    ])
-
-    content = "\n".join(lines)
-    try:
-        _TOOLS_MD_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _TOOLS_MD_PATH.write_text(content, encoding="utf-8")
-        logger.info(f"tools.md 已生成，共 {len(registry.get_all_tool_names())} 个工具")
-    except Exception as ex:
-        logger.warning(f"生成 tools.md 失败: {ex}")
 
 
 # MCP tool discovery (可被 model_tools.py 调用)

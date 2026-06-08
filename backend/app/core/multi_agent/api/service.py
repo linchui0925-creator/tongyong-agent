@@ -4,7 +4,7 @@ Multi-Agent Team API - 业务逻辑服务
 
 from typing import Dict, List, Optional, Any
 import logging
-import asyncio
+import threading
 
 from app.core.multi_agent.session_store import TeamSessionStore
 from app.core.multi_agent.team import Team
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _store: Optional[TeamSessionStore] = None
 # 会话 ID → Team 实例（内存中运行中的 Team）
 _active_teams: Dict[str, Team] = {}
-_teams_lock = asyncio.Lock()
+_teams_lock = threading.Lock()
 
 
 def get_store() -> TeamSessionStore:
@@ -29,16 +29,17 @@ def get_store() -> TeamSessionStore:
 
 
 def get_active_team(session_id: str) -> Optional[Team]:
-    return _active_teams.get(session_id)
+    with _teams_lock:
+        return _active_teams.get(session_id)
 
 
-async def set_active_team(session_id: str, team: Team):
-    async with _teams_lock:
+def set_active_team(session_id: str, team: Team):
+    with _teams_lock:
         _active_teams[session_id] = team
 
 
-async def remove_active_team(session_id: str):
-    async with _teams_lock:
+def remove_active_team(session_id: str):
+    with _teams_lock:
         _active_teams.pop(session_id, None)
 
 
@@ -60,7 +61,7 @@ def get_session(session_id: str) -> Optional[Dict[str, Any]]:
 
 async def delete_session(session_id: str):
     # 清除内存中的 Team
-    await remove_active_team(session_id)
+    remove_active_team(session_id)
     get_store().delete_session(session_id)
     logger.info(f"[SERVICE] 删除会话: {session_id}")
 
@@ -93,6 +94,12 @@ def add_role(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
             tpl["debate_side"] = params["debate_side"]
         if params.get("debate_position"):
             tpl["debate_position"] = params["debate_position"]
+        if params.get("llm_provider"):
+            tpl["llm_provider"] = params["llm_provider"]
+        if params.get("llm_model"):
+            tpl["llm_model"] = params["llm_model"]
+        if "use_agent" in params:
+            tpl["use_agent"] = params["use_agent"]
         role = TeamRole.create(**tpl)
         # 模板创建时自动填充上下游连接
         from app.core.multi_agent.role import get_default_connections
@@ -121,10 +128,11 @@ def add_role(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
             debate_position=params.get("debate_position", ""),
             upstream_roles=params.get("upstream_roles", []),
             downstream_roles=params.get("downstream_roles", []),
+            use_agent=params.get("use_agent", False),
         )
 
     get_store().add_role(session_id, role)
-    logger.info(f"[SERVICE] 添加角色: {role.name} → 会话 {session_id}")
+    logger.info(f"[SERVICE] 添加角色: {role.name} → 会话 {session_id} (use_agent={role.use_agent})")
     return {
         "name": role.name, "profile": role.profile,
         "watch_actions": role.watch_actions,
@@ -137,6 +145,7 @@ def add_role(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         "stance": role.stance,
         "debate_side": role.debate_side,
         "debate_position": role.debate_position,
+        "use_agent": role.use_agent,
         "status": "hired",
     }
 
@@ -158,6 +167,7 @@ def get_roles(session_id: str) -> List[Dict[str, Any]]:
             "debate_position": r.debate_position,
             "upstream_roles": r.upstream_roles,
             "downstream_roles": r.downstream_roles,
+            "use_agent": r.use_agent,
             "status": "hired",
         }
         for r in roles
@@ -191,6 +201,7 @@ def update_role(session_id: str, role_name: str, params: Dict[str, Any]) -> Dict
         "debate_position": role.debate_position,
         "upstream_roles": role.upstream_roles,
         "downstream_roles": role.downstream_roles,
+        "use_agent": role.use_agent,
         "status": "hired",
     }
 
@@ -207,13 +218,16 @@ def _build_team(session_id: str, session: Dict[str, Any], roles: List[TeamRole])
     if mode == "leader_pipeline":
         mode = "pipeline"
     timeout = config.get("timeout", 0)
-    team = Team(name=session["name"], mode=mode, timeout=timeout)
+    db_path = get_store().db_path
+    team = Team(name=session["name"], mode=mode, timeout=timeout, session_id=session_id, db_path=db_path)
 
     # 图路由模式：无角色时自动配置四角色（含默认连接图）
     if mode == "pipeline" and not roles:
-        logger.info(f"[SERVICE] 流水线模式，自动配置 Leader/Coder/Tester/Reviewer")
+        from app.services.llm_manager import LLMManager
+        current_provider = LLMManager().get_current_provider()
+        logger.info(f"[SERVICE] 流水线模式，自动配置 Leader/Coder/Tester/Reviewer (llm={current_provider})")
         for tpl_name in ("leader", "coder", "tester", "reviewer"):
-            role = create_role_from_template(tpl_name)
+            role = create_role_from_template(tpl_name, llm_provider=current_provider)
             # 填充默认上下游连接
             up, down = get_default_connections(tpl_name)
             role.upstream_roles = up
@@ -223,9 +237,17 @@ def _build_team(session_id: str, session: Dict[str, Any], roles: List[TeamRole])
     else:
         logger.info(f"[SERVICE] 使用会话已有角色 (count={len(roles)}, mode={mode})")
 
-        # 辩论模式：自动建立对手关系
+        # 辩论模式：自动建立对手关系并持久化
         if mode == "debate":
             _setup_debate_opponents(roles)
+            # 持久化 opponent_name 到数据库
+            store = get_store()
+            for role in roles:
+                if role.opponent_name:
+                    try:
+                        store.update_role(session_id, role.name, {"opponent_name": role.opponent_name})
+                    except Exception as e:
+                        logger.warning(f"[SERVICE] 持久化对手失败: {role.name} -> {e}")
 
         for role in roles:
             logger.info(f"[SERVICE]   角色 {role.name}: upstream={role.upstream_roles}, downstream={role.downstream_roles}, actions={role.action_types}, debate_side={role.debate_side}, opponent={role.opponent_name}")
@@ -282,7 +304,6 @@ def _setup_debate_opponents(roles: List[TeamRole]):
                 neg_role.opponent_name = unpaired_pos[0].name
 
     logger.info(f"[SERVICE] 辩论对手设置: {[(r.name, r.opponent_name) for r in roles if r.debate_side != 'judge']}")
-    return team
 
 
 # ── Connections ─────────────────────────────────────────
@@ -335,7 +356,7 @@ async def run_team_stream(
 
     team = _build_team(session_id, session, roles)
 
-    await set_active_team(session_id, team)
+    set_active_team(session_id, team)
     get_store().update_session_status(session_id, "running")
 
     try:
@@ -361,7 +382,7 @@ async def run_team_stream(
         get_store().update_session_status(session_id, "error")
         yield {"type": "error", "message": str(e)}
     finally:
-        await remove_active_team(session_id)
+        remove_active_team(session_id)
 
 
 # ── Run ─────────────────────────────────────────
@@ -381,7 +402,7 @@ async def run_team(
     team = _build_team(session_id, session, roles)
 
     # 3. 写入内存
-    await set_active_team(session_id, team)
+    set_active_team(session_id, team)
 
     # 4. 更新状态
     get_store().update_session_status(session_id, "running")
@@ -397,7 +418,7 @@ async def run_team(
         # 7. 更新状态
         get_store().update_session_status(session_id, "completed")
     finally:
-        await remove_active_team(session_id)
+        remove_active_team(session_id)
 
     return {
         "session_id": session_id,
@@ -612,3 +633,310 @@ def list_marketplace_skills() -> List[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"[MARKET] 获取技能列表失败: {e}")
         return []
+
+
+# ══════════════════════════════════════════════════════════
+# v2 — Scheduler / TaskQueue / Workspace 服务
+# ══════════════════════════════════════════════════════════
+
+# 全局 Scheduler 缓存（session_id → Scheduler）
+_schedulers: Dict[str, Any] = {}
+_schedulers_lock = threading.Lock()
+
+
+def get_scheduler(session_id: str) -> Optional[Any]:
+    with _schedulers_lock:
+        return _schedulers.get(session_id)
+
+
+def _get_session_db_path(session_id: str) -> str:
+    """获取数据库路径（与 TeamSessionStore 共用）"""
+    store = get_store()
+    return store.db_path
+
+
+def init_session_v2(session_id: str, max_concurrent: int = 4, claim_ttl_seconds: int = 300) -> None:
+    """
+    初始化 v2 会话：
+    1. TaskQueue.init() 建表（幂等）
+    2. 创建 Scheduler 实例并缓存
+    """
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()  # 幂等建表
+
+    from app.core.multi_agent.scheduler import Scheduler
+    sch = Scheduler(
+        session_id=session_id,
+        db_path=db_path,
+        max_concurrent=max_concurrent,
+        claim_ttl_seconds=claim_ttl_seconds,
+    )
+    with _schedulers_lock:
+        _schedulers[session_id] = sch
+    logger.info(f"[SERVICE] v2 init: session={session_id}, Scheduler(max={max_concurrent})")
+
+
+def create_task(
+    session_id: str,
+    description: str,
+    task_type: str = "",
+    priority: int = 0,
+    created_by: str = "",
+) -> Dict[str, Any]:
+    """创建任务并入队"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.enqueue(
+        session_id=session_id,
+        description=description,
+        task_type=task_type,
+        created_by=created_by,
+        priority=priority,
+    )
+    # 发布事件（同步写入 DB）
+    from app.core.multi_agent.event_bus import EventBus
+    EventBus.get_instance().publish_sync(
+        event_type="task.pending",
+        payload={"task_id": rec.id, "description": description, "created_by": created_by},
+        source=created_by or "system",
+        task_id=rec.id,
+        session_id=session_id,
+    )
+    return _task_record_to_detail(rec, queue, session_id)
+
+
+def list_tasks(session_id: str, state: Optional[str] = None) -> List[Dict[str, Any]]:
+    """列出任务（可按 state 过滤）"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    records = queue.list_by_session(session_id, states=[state] if state else None)
+    return [_task_record_to_status(r) for r in records]
+
+
+def get_task_detail(session_id: str, task_id: str) -> Optional[Dict[str, Any]]:
+    """获取任务详情（含依赖边）"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.get(task_id)
+    if not rec:
+        return None
+    links_result = queue.get_children(task_id)
+    from app.core.multi_agent.api.schemas import TaskLinkResponse
+    links = []
+    for child_rec in links_result:
+        links.append(TaskLinkResponse(
+            id="",
+            parent_id=task_id,
+            child_id=child_rec.id,
+            link_type="subtask",
+        ))
+    return _task_record_to_detail(rec, queue, session_id, links=links)
+
+
+def claim_task(session_id: str, task_id: str, agent_name: str, ttl_seconds: int = 300):
+    """Agent 认领任务"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.get(task_id)
+    if not rec:
+        return False, None
+    ok = queue.claim(task_id, agent_name, ttl_seconds=ttl_seconds)
+    rec2 = queue.get(task_id)
+    return ok, rec2
+
+
+def complete_task(session_id: str, task_id: str, agent_name: str, result_summary: str = "") -> tuple:
+    """标记任务完成"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.get(task_id)
+    if not rec:
+        return False, None
+    ok = queue.complete(task_id, agent_name, result_summary=result_summary)
+    rec2 = queue.get(task_id)
+    return ok, rec2
+
+
+def reject_task(session_id: str, task_id: str, agent_name: str, reason: str = "") -> tuple:
+    """拒绝任务"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.get(task_id)
+    if not rec:
+        return False, None
+    ok = queue.reject(task_id, agent_name, reason=reason)
+    rec2 = queue.get(task_id)
+    return ok, rec2
+
+
+def link_tasks(session_id: str, parent_id: str, child_id: str, link_type: str = "blocks") -> Dict[str, Any]:
+    """建立父子依赖边"""
+    from app.core.multi_agent.task_queue import TaskQueue
+
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.get(parent_id)
+    if not rec:
+        raise ValueError(f"Parent task not found: {parent_id}")
+    result = queue.link(parent_id, child_id, link_type=link_type)
+    return {"parent_id": parent_id, "child_id": child_id, "link_type": link_type, "created": result}
+
+
+async def decompose_task(session_id: str, task_id: str) -> Dict[str, Any]:
+    """分解任务（调用 LLM 将父任务拆为子任务）"""
+    from app.core.multi_agent.task_queue import TaskQueue
+    db_path = _get_session_db_path(session_id)
+    queue = TaskQueue(db_path)
+    queue.init()
+    rec = queue.get(task_id)
+    if not rec:
+        raise ValueError(f"Task not found: {task_id}")
+
+    # 获取 Scheduler 进行 LLM 分解
+    sch = get_scheduler(session_id)
+    if not sch:
+        raise ValueError(f"Scheduler not initialized for session {session_id}")
+
+    # 获取 LLM 实例用于任务分解
+    from app.services.llm_manager import LLMManager
+    from app.llm.factory import get_llm
+    llm_mgr = LLMManager()
+    provider = llm_mgr.get_current_provider()
+    api_key = llm_mgr.get_api_key(provider)
+    llm = get_llm(provider, api_key) if api_key else None
+    children = await sch._decompose_requirement(rec.description, llm)
+
+    child_ids = []
+    for child_desc in children:
+        child_rec = queue.enqueue(
+            session_id=session_id,
+            description=child_desc,
+            task_type="subtask",
+            created_by="scheduler",
+            input_summary=rec.description,
+        )
+        queue.link(task_id, child_rec.id, link_type="blocks")
+        child_ids.append(child_rec.id)
+
+    return {
+        "parent_task_id": task_id,
+        "child_task_ids": child_ids,
+        "count": len(child_ids),
+    }
+
+
+def get_workspace_content(session_id: str, task_id: str, sub: str = "files") -> Dict[str, Any]:
+    """读取 workspace 文件或目录列表"""
+    from app.core.multi_agent.workspace import get_workspace
+
+    ws = get_workspace(task_id)
+    if not ws.exists():
+        raise FileNotFoundError(f"Workspace not found for task: {task_id}")
+
+    base = ws.base / sub
+    if sub == "files" or sub == "worktree":
+        # 返回文件树
+        files = {}
+        for p in ws.base.rglob("*"):
+            if p.is_file():
+                rel = p.relative_to(ws.base)
+                try:
+                    content = p.read_text(errors="replace")
+                    files[str(rel)] = {"size": p.stat().st_size, "content": content[:500]}
+                except Exception:
+                    files[str(rel)] = {"size": p.stat().st_size, "content": "<binary>"}
+        return {"task_id": task_id, "workspace_path": str(ws.base), "files": files}
+    else:
+        # 读取单个文件
+        if not base.exists():
+            raise FileNotFoundError(f"File not found: {sub}")
+        content = base.read_text(errors="replace")
+        return {
+            "task_id": task_id,
+            "file_path": str(base),
+            "content": content,
+            "size": len(content),
+        }
+
+
+def get_scheduler_status(session_id: str) -> Optional[Dict[str, Any]]:
+    """获取 Scheduler 状态"""
+    sch = get_scheduler(session_id)
+    if not sch:
+        return None
+    return sch.stats()
+
+
+def stop_scheduler(session_id: str) -> bool:
+    """停止 Scheduler"""
+    sch = get_scheduler(session_id)
+    if not sch:
+        return False
+    sch.stop()  # 同步方法，仅设置 _running = False
+    with _schedulers_lock:
+        _schedulers.pop(session_id, None)
+    return True
+
+
+# ── helpers ─────────────────────────────────────────
+
+def _task_record_to_status(rec) -> Dict[str, Any]:
+    return {
+        "id": rec.id,
+        "state": rec.state,
+        "task_type": rec.task_type,
+        "description": rec.description,
+        "assigned_to": rec.assigned_to,
+        "created_by": rec.created_by,
+        "priority": rec.priority,
+        "created_at": rec.created_at,
+        "updated_at": rec.updated_at,
+        "started_at": rec.started_at or "",
+        "completed_at": rec.completed_at or "",
+        "result_summary": rec.result_summary or "",
+    }
+
+
+def _task_record_to_detail(rec, queue, session_id, links=None) -> Dict[str, Any]:
+    from app.core.multi_agent.api.schemas import TaskLinkResponse
+    all_links = links or []
+    return {
+        "id": rec.id,
+        "session_id": session_id,
+        "state": rec.state,
+        "task_type": rec.task_type,
+        "description": rec.description,
+        "assigned_to": rec.assigned_to,
+        "created_by": rec.created_by,
+        "workspace_path": rec.workspace_path or "",
+        "input_summary": rec.input_summary or "",
+        "result_summary": rec.result_summary or "",
+        "priority": rec.priority,
+        "created_at": rec.created_at,
+        "updated_at": rec.updated_at,
+        "started_at": rec.started_at or "",
+        "completed_at": rec.completed_at or "",
+        "links": [TaskLinkResponse(id=l.id, parent_id=l.parent_id, child_id=l.child_id, link_type=l.link_type) for l in all_links],
+    }

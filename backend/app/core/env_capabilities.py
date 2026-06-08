@@ -2,9 +2,12 @@
 env_capabilities - 运行时环境能力检测
 
 双轨架构：
-- 工具描述：通过 API `tools` 参数传递（来自 registry.get_schemas()）
-- 工具索引：system prompt 里只说"读 tools.md"
+- 工具描述：通过 API `tools` 参数传递（来自 registry.get_schemas()，function calling 协议）
+- 工具索引：本模块的 generate_capability_prompt() 按 toolset 分组生成人类可读清单
 - Skills 索引：在 system prompt 文本里（见 skills_index.py）
+
+P4 (2026-06-02) 起不再写盘 domains/tools/tools.md——LLM 推理时通过 function calling
+协议直接拿到 schema，不再需要 14KB markdown 镜像。
 """
 
 import logging
@@ -89,15 +92,19 @@ _TOOLSET_LABELS = {
 
 
 def generate_capability_prompt() -> str:
-    """工具集索引（双轨风格：不在这里放工具描述）
+    """工具集索引（按 toolset 分组的人类可读清单）。
 
-    工具描述通过 API `tools` 参数传递。
-    Agent 想知道详细描述时，用 read_file('domains/tools/tools.md') 读取。
+    工具描述通过 API `tools` 参数走 function calling 协议传给 LLM，
+    本函数只生成"按 toolset 分组的工具名列表"——给 LLM 一个高层概览，
+    让它知道"有哪些类别的工具可用"，不重复 tools schema 本身。
+
+    注意：P4 (2026-06-02) 之前这里曾提示 agent 用 read_file('tools.md')
+    读 14KB markdown 镜像，那是反模式——已删除。
     """
     lines = ["## 可用工具集\n"]
     lines.append(
         "**工具描述通过 API 的 `tools` 参数传递，Agent 推理时自动看到。**\n"
-        "**想查看详细描述时，用 `read_file('domains/tools/tools.md')` 读取。**"
+        "**（本节只列工具集分组和工具名索引；详细 schema 在 function calling 协议里。）**"
     )
 
     try:

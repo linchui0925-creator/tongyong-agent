@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { streamChat, generateMessageId } from '../../api/stream';
+import { streamChat, generateMessageId, compressSessionContext, getContextStats } from '../../api/stream';
 import { getSessionMessages } from '../../api/memory';
 import { submitClarifyAnswer } from '../../api/chat';
 import { createEvaluation } from '../../api/evaluation';
-import { Message } from '../../types';
+import { Message, ContextInfo } from '../../types';
 import './ModernChatPanel.css';
 
 // ── Helpers ─────────────────────────────────────────
@@ -81,20 +81,103 @@ function CodeBlock({ code }: { code: string }) {
 }
 
 // ── Typing Indicator ─────────────────────────────────────────
-function TypingIndicator() {
+function TypingIndicator({ currentTool, toolElapsed, progressText, heartbeat }: {
+  currentTool?: { name: string; emoji?: string; startTime: number } | null;
+  toolElapsed?: number;
+  progressText?: string;
+  heartbeat?: string | null;
+}) {
+  // 优先级: heartbeat (5s+ 无事件兜底) > currentTool (工具调用中) > progressText (后端 progress) > 默认三个点
+  let label: string | null = null;
+  let icon = '💭';
+  if (heartbeat) {
+    label = heartbeat;
+    icon = heartbeat.startsWith('⏳') ? '⏳' : '💭';
+  } else if (currentTool) {
+    const emoji = currentTool.emoji || '🔧';
+    const sec = (toolElapsed ?? 0).toFixed(1);
+    label = `${currentTool.name} · ${sec}s`;
+    icon = emoji;
+  } else if (progressText) {
+    label = progressText;
+    icon = '💭';
+  }
   return (
     <div className="chat-bubble-row">
       <div className="chat-bubble-avatar">🤖</div>
-      <div className="chat-bubble">
-        <div className="chat-bubble-body" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {[0, 1, 2].map(i => (
-            <div key={i} style={{
-              width: 7, height: 7, borderRadius: '50%', background: '#C0B8B0',
-              animation: `thinkingBounce 1.2s infinite ${i * 0.2}s`,
-            }} />
-          ))}
+      <div className="chat-bubble chat-bubble--typing">
+        <div className="chat-bubble-body" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '2px 0' }}>
+          <span style={{ display: 'inline-flex', gap: 4 }} aria-hidden>
+            {[0, 1, 2].map(i => (
+              <span key={i} style={{
+                width: 8, height: 8, borderRadius: '50%', background: 'var(--brand-primary, #4F7A4A)', display: 'inline-block',
+                animation: `thinkingBounce 1.2s infinite ${i * 0.2}s`,
+              }} />
+            ))}
+          </span>
+          {icon && <span style={{ fontSize: 15 }}>{icon}</span>}
+          {label && (
+            <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--text-primary, #222)' }}>
+              {label}
+            </span>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Token Usage Bar ─────────────────────────────────────────
+// 显示在 .chat-input 上方，实时反映 context 容量 + 主动压缩按钮。
+// 数据源：后端 SSE "context" 事件 + 主动调 /api/chat/compress。
+// 颜色随百分比变化：<50% 绿（安全）/ 50-80% 黄（注意）/ >80% 红（接近阈值）。
+function TokenUsageBar({
+  contextInfo,
+  isCompressing,
+  savedFlash,
+  onCompress,
+}: {
+  contextInfo: ContextInfo | null;
+  isCompressing: boolean;
+  savedFlash: string | null;
+  onCompress: () => void;
+}) {
+  if (!contextInfo) {
+    return (
+      <div className="token-usage-bar token-usage-bar--idle">
+        <span className="token-usage-label">tokens</span>
+        <span className="token-usage-value">— / —</span>
+        <span className="token-usage-percent">0%</span>
+      </div>
+    );
+  }
+  const { estimated_tokens, threshold_tokens, percent, approaching } = contextInfo;
+  const level = percent >= 80 ? 'danger' : percent >= 50 ? 'warn' : 'ok';
+  return (
+    <div className={`token-usage-bar token-usage-bar--${level}`}>
+      <span className="token-usage-label">tokens</span>
+      <span className="token-usage-value">
+        {estimated_tokens.toLocaleString()} / {threshold_tokens.toLocaleString()}
+      </span>
+      <div className="token-usage-track">
+        <div
+          className="token-usage-fill"
+          style={{ width: `${Math.min(percent, 100)}%` }}
+        />
+        {/* 50% 阈值标记 — 被动压缩临界值 */}
+        <div className="token-usage-marker token-usage-marker--threshold" title="被动压缩临界值（50%）" />
+      </div>
+      <span className="token-usage-percent">{percent.toFixed(1)}%</span>
+      {approaching && <span className="token-usage-warning" title="接近压缩阈值">⚠</span>}
+      {savedFlash && <span className="token-usage-flash">{savedFlash}</span>}
+      <button
+        className="token-usage-compress-btn"
+        onClick={onCompress}
+        disabled={isCompressing}
+        title="主动压缩上下文（LLM summarization）"
+      >
+        {isCompressing ? '⏳ 压缩中' : '🗜 压缩'}
+      </button>
     </div>
   );
 }
@@ -126,17 +209,18 @@ function MessageBubble({
       <div className="chat-bubble-content">
         <div className={`chat-bubble ${isError ? 'chat-bubble--error' : ''} ${msg.executionClaimMismatch ? 'chat-bubble--mismatch' : ''}`}>
           <div className="chat-bubble-body">
+            {/* 阶段 1 思考动效已迁移到 TypingIndicator 组件（消息列表底部），避免重复 */}
             {blocks.length === 1 && blocks[0].type === 'text' ? (
               <>
-                {msg.content || (isStreaming ? '' : '')}
-                {isStreaming && <span className="chat-cursor" />}
+                {msg.content}
+                {isStreaming && msg.content && <span className="chat-cursor" />}
               </>
             ) : (
               blocks.map((b, i) =>
                 b.type === 'code' ? (
                   <CodeBlock key={i} code={b.content} />
                 ) : (
-                  <span key={i}>{b.content}{isStreaming && i === blocks.length - 1 ? <span className="chat-cursor" /> : null}</span>
+                  <span key={i}>{b.content}{isStreaming && msg.content && i === blocks.length - 1 ? <span className="chat-cursor" /> : null}</span>
                 )
               )
             )}
@@ -199,6 +283,8 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const [progressText, setProgressText] = useState<string>('');
   const [elapsed, setElapsed] = useState<number>(0);
   const [currentTool, setCurrentTool] = useState<{name: string; emoji: string; startTime: number} | null>(null);
+  const currentToolRef = useRef<{name: string; emoji: string; startTime: number} | null>(null);
+  useEffect(() => { currentToolRef.current = currentTool; }, [currentTool]);
   const [toolElapsed, setToolElapsed] = useState<number>(0);
   const [expandedThinkingMsgId, setExpandedThinkingMsgId] = useState<string | null>(null);
   const [waitingQuestion, setWaitingQuestion] = useState<{question: string; choices: string[]; id: string} | null>(null);
@@ -208,6 +294,14 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const [, setExecutionSummary] = useState<string[]>([]);
   // Token 使用量
   const [tokenUsage, setTokenUsage] = useState<{input: number; output: number; total: number} | null>(null);
+  // 上下文容量信息（驱动 TokenUsageBar）— SSE 实时更新 + 启动时 / 切 session 时从
+  // /api/chat/context-stats 拉一次初始值
+  const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
+  // 主动压缩进行中状态（按钮 disabled）
+  const [isCompressing, setIsCompressing] = useState(false);
+  // 压缩完成后短时显示的"节省了 X%"提示（3s 后自动清空）
+  const [savedFlash, setSavedFlash] = useState<string | null>(null);
+  const savedFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -259,6 +353,37 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
     if (currentSessionId) loadMessages(currentSessionId);
   }, [currentSessionId, loadMessages]);
 
+  // 切 session / 启动时拉一次 context 容量（给 TokenUsageBar 初始值）
+  useEffect(() => {
+    if (!currentSessionId) {
+      setContextInfo(null);
+      return;
+    }
+    let cancelled = false;
+    getContextStats(currentSessionId).then((stats) => {
+      if (cancelled) return;
+      if (stats && !stats.error && stats.threshold_tokens !== undefined) {
+        setContextInfo({
+          chars: stats.chars ?? 0,
+          estimated_tokens: stats.estimated_tokens ?? 0,
+          threshold_tokens: stats.threshold_tokens,
+          percent: stats.percent ?? 0,
+          approaching: stats.approaching ?? false,
+        });
+      }
+    }).catch((err) => {
+      console.warn('[TokenUsageBar] getContextStats 失败:', err);
+    });
+    return () => { cancelled = true; };
+  }, [currentSessionId]);
+
+  // 清理 savedFlash timer 防止 unmount 后 setState
+  useEffect(() => {
+    return () => {
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+    };
+  }, []);
+
   // Auto-scroll — only when user is near the bottom
   const handleScroll = useCallback(() => {
     const el = messagesRef.current;
@@ -276,8 +401,60 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
 
   // Cleanup timer on unmount
   useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    };
   }, []);
+
+  // Heartbeat — 当 SSE 长时间没事件时，主动在状态栏显示"还在思考…(Xs)"
+  // 解决 LLM 推理停顿（content 发完后等 5-30s 才发 tool_call）时用户以为已完成的痛点
+  const lastEventTimeRef = useRef<number>(Date.now());
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const thinkingStartedRef = useRef<boolean>(false);  // 思考阶段是否已推过 progressText (避免频繁 setState)
+  const startHeartbeat = (msgId: string) => {
+    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    lastEventTimeRef.current = Date.now();
+    heartbeatRef.current = setInterval(() => {
+      const gap = Math.floor((Date.now() - lastEventTimeRef.current) / 1000);
+      if (gap >= 5) {
+        const tool = currentToolRef.current;
+        const label = tool
+          ? `⏳ ${tool.name} 执行中… (${gap}s)`
+          : `💭 还在思考… (${gap}s)`;
+        setProgressText(prev => {
+          if (prev && !prev.startsWith('💭') && !prev.startsWith('⏳')) return prev;
+          return label;
+        });
+        setMessages(prev => prev.map(m =>
+          m.id === msgId && m.status === 'streaming'
+            ? { ...m, progressLabel: label }
+            : m
+        ));
+      }
+    }, 5000);
+  };
+  const stopHeartbeat = () => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+  };
+  const markActive = () => { lastEventTimeRef.current = Date.now(); };
+
+  // Tab title 实时反映 agent 状态（用户在 tab 切换走也能看到在不在工作）
+  useEffect(() => {
+    const baseTitle = 'TongYong Agent';
+    if (isStreaming) {
+      const stage = progressText || '思考中…';
+      document.title = `⏳ ${stage} - ${baseTitle}`;
+    } else if (errorMessage) {
+      document.title = `❌ 错误 - ${baseTitle}`;
+    } else {
+      document.title = baseTitle;
+    }
+    return () => { document.title = baseTitle; };
+  }, [isStreaming, progressText, errorMessage]);
 
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
@@ -314,9 +491,19 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         setIsStreaming(true);
         setProgressText('连接中...');
         setExpandedThinkingMsgId(null);
+        thinkingStartedRef.current = false;
+        startHeartbeat(aid);
+        markActive();
       },
       onProgress: (content) => {
         setProgressText(content);
+        markActive();
+        // 同步把进度写进 assistant 消息体，让用户看到 "🤔 加载历史对话..." 等状态
+        setMessages(prev => prev.map(m =>
+          m.id === aid && m.status === 'streaming'
+            ? { ...m, progressLabel: content }
+            : m
+        ));
         // 记录步骤：完成上一个步骤，标记当前步骤
         if (content && content !== progressText) {
           setStepHistory(prev => {
@@ -332,6 +519,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       onToolStart: (toolName, _args, emoji) => {
         setToolElapsed(0);
         setCurrentTool({ name: toolName, emoji, startTime: Date.now() });
+        markActive();
         // 工具启动：完成当前步骤，记录工具步骤
         setStepHistory(prev => {
           const updated = prev.map(s => s.status === 'current' ? { ...s, status: 'done' as const } : s);
@@ -341,20 +529,24 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       },
       onToolComplete: (toolName, preview, duration, emoji) => {
         setCurrentTool(null);
+        markActive();
         if (preview) {
           setExecutionSummary(prev => [...prev.slice(-5), `${emoji} ${toolName} (${duration.toFixed(1)}s): ${preview}`]);
         }
       },
       onToolError: (toolName, error, emoji) => {
         setCurrentTool(null);
+        markActive();
         setExecutionSummary(prev => [...prev.slice(-5), `${emoji} ${toolName} 出错: ${error}`]);
       },
       onToolFeedback: (content) => {
+        markActive();
         if (content) {
           setExecutionSummary(prev => [...prev.slice(-5), content]);
         }
       },
       onBudgetWarning: (content) => {
+        markActive();
         if (content) {
           setExecutionSummary(prev => [...prev.slice(-5), content]);
         }
@@ -363,21 +555,31 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         setMessages(prev => prev.map(m =>
           m.id === aid ? { ...m, thinking: (m.thinking || '') + content } : m
         ));
+        // 思考阶段首次 delta 才推 progressText（避免频繁 setState）
+        if (!thinkingStartedRef.current) {
+          thinkingStartedRef.current = true;
+          setProgressText('💭 思考中…');
+        }
+        markActive();
       },
-      onThinkingDone: () => {
-        // thinking done
-      },
+      onThinkingDone: () => { markActive(); },
       onAsk: (question, choices, question_id) => {
         setWaitingQuestion({ question, choices, id: question_id });
         setWaitingAnswer('');
         setIsStreaming(false);
         setProgressText('等待回答...');
+        markActive();
       },
       onUsage: (input, output, total) => {
         setTokenUsage({ input, output, total });
       },
+      onContext: (info) => {
+        // 实时 context 容量快照（每轮 LLM 调用前/压缩后推）— 直接 setState 触发重渲染
+        setContextInfo(info);
+      },
       onContent: (_chunk, full) => {
         setProgressText('');
+        markActive();
         // 提取 thinking 内容并过滤
         const thinkMatch = full.match(/<think>([\s\S]*?)晖/);
         const thinking = thinkMatch ? thinkMatch[1] : '';
@@ -388,6 +590,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       },
       onDone: (data) => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        stopHeartbeat();
         setProgressText('');
         setCurrentTool(null);
         setStepHistory([]);  // 完成时清空步骤历史
@@ -419,6 +622,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       },
       onError: (err) => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        stopHeartbeat();
         setProgressText('');
         setErrorMessage(err);
         setStepHistory([]);
@@ -435,6 +639,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
 
   const handleStop = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopHeartbeat();
     abortRef.current?.abort();
     setIsStreaming(false);
     setIsLoading(false);
@@ -445,6 +650,52 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       m.status === 'streaming' ? { ...m, status: 'completed' as const } : m
     ));
   }, []);
+
+  // 主动压缩（TokenUsageBar 按钮触发）。
+  // 调 POST /api/chat/compress：
+  //   - 默认尊重 should_compress 阈值，未达则返回 skipped
+  //   - force=true 跳过阈值检查
+  // 压缩完成后用返回的 after_tokens 立即刷新 TokenUsageBar，
+  // 并显示 3s 绿色 "✓ 节省了 X%" flash 让用户得到反馈。
+  const handleCompress = useCallback(async (force: boolean = false) => {
+    if (!currentSessionId || isCompressing) return;
+    setIsCompressing(true);
+    try {
+      const result = await compressSessionContext(currentSessionId, force);
+      if (result.success) {
+        // 重新拉一次精确容量（compress API 走的是 storage 写回，百分比会立刻变）
+        const stats = await getContextStats(currentSessionId);
+        if (stats && !stats.error && stats.threshold_tokens !== undefined) {
+          setContextInfo({
+            chars: stats.chars ?? 0,
+            estimated_tokens: stats.estimated_tokens ?? 0,
+            threshold_tokens: stats.threshold_tokens,
+            percent: stats.percent ?? 0,
+            approaching: stats.approaching ?? false,
+          });
+        }
+        if (result.skipped) {
+          setSavedFlash('未达阈值');
+        } else {
+          const saved = result.saved_pct ?? 0;
+          setSavedFlash(`✓ 节省 ${saved.toFixed(0)}% (${result.before_tokens}→${result.after_tokens} tok)`);
+        }
+        if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+        savedFlashTimerRef.current = setTimeout(() => setSavedFlash(null), 3000);
+      } else {
+        setSavedFlash(`✗ 压缩失败: ${result.error || '未知错误'}`);
+        if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+        savedFlashTimerRef.current = setTimeout(() => setSavedFlash(null), 3000);
+      }
+    } catch (err: any) {
+      console.error('[handleCompress] 失败:', err);
+      setSavedFlash(`✗ 错误: ${err?.message || String(err)}`);
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+      savedFlashTimerRef.current = setTimeout(() => setSavedFlash(null), 3000);
+    } finally {
+      setIsCompressing(false);
+    }
+  }, [currentSessionId, isCompressing]);
 
   const handleDelete = useCallback((id: string) => {
     setMessages(prev => prev.filter(m => m.id !== id));
@@ -535,7 +786,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                 </div>
               );
             })}
-            {isStreaming && <TypingIndicator />}
+            {isStreaming && <TypingIndicator currentTool={currentTool} toolElapsed={toolElapsed} progressText={progressText} />}
           </>
         )}
         <div ref={messagesEndRef} />
@@ -602,14 +853,27 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                     onStart: () => {
                       setIsStreaming(true);
                       setProgressText('继续中...');
+                      thinkingStartedRef.current = false;
+                      startHeartbeat(aid);
+                      markActive();
                     },
-                    onProgress: (content) => setProgressText(content),
+                    onProgress: (content) => {
+                      setProgressText(content);
+                      markActive();
+                      setMessages(prev => prev.map(m =>
+                        m.id === aid && m.status === 'streaming'
+                          ? { ...m, progressLabel: content }
+                          : m
+                      ));
+                    },
                     onToolStart: (toolName, _args, emoji) => {
                       setToolElapsed(0);
                       setCurrentTool({ name: toolName, emoji, startTime: Date.now() });
+                      markActive();
                     },
                     onToolComplete: (toolName, preview, duration, emoji) => {
                       setCurrentTool(null);
+                      markActive();
                       if (preview) {
                         setExecutionSummary(prev => [...prev.slice(-5), `${emoji} ${toolName} (${duration.toFixed(1)}s): ${preview}`]);
                       }
@@ -632,11 +896,46 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                       setMessages(prev => prev.map(m =>
                         m.id === aid ? { ...m, thinking: (m.thinking || '') + content } : m
                       ));
+                      if (!thinkingStartedRef.current) {
+                        thinkingStartedRef.current = true;
+                        setProgressText('💭 思考中…');
+                      }
+                      markActive();
                     },
                     onThinkingDone: () => {},
                     onAsk: (question, choices, question_id) => {
                       setWaitingQuestion({ question, choices, id: question_id });
                       setWaitingAnswer('');
+                    },
+                    onContext: (info) => {
+                      setContextInfo(info);
+                    },
+                    onDone: () => {
+                      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+                      stopHeartbeat();
+                      setProgressText('');
+                      setStepHistory([]);
+                      setMessages(prev => prev.map(m =>
+                        m.id === aid ? { ...m, status: 'completed' as const } : m
+                      ));
+                      setIsStreaming(false);
+                      setIsLoading(false);
+                      setCurrentTool(null);
+                      abortRef.current = null;
+                    },
+                    onError: (err) => {
+                      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+                      stopHeartbeat();
+                      setProgressText('');
+                      setStepHistory([]);
+                      setErrorMessage(err);
+                      setMessages(prev => prev.map(m =>
+                        m.id === aid ? { ...m, status: 'error' as const, error: err } : m
+                      ));
+                      setIsStreaming(false);
+                      setIsLoading(false);
+                      setCurrentTool(null);
+                      abortRef.current = null;
                     },
                   }, waitingQuestion.id, choice);
                 }}
@@ -669,34 +968,55 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                       { id: aid, role: 'assistant', content: '', timestamp: Date.now(), status: 'streaming' as const },
                     ]);
                     abortRef.current = streamChat(answer, currentSessionId || undefined, true, {
-                      onStart: () => { setIsStreaming(true); setProgressText('继续中...'); },
-                      onProgress: (content) => setProgressText(content),
-                      onToolStart: (toolName, _args, emoji) => { setToolElapsed(0); setCurrentTool({ name: toolName, emoji, startTime: Date.now() }); },
+                      onStart: () => { setIsStreaming(true); setProgressText('继续中...'); thinkingStartedRef.current = false; startHeartbeat(aid); markActive(); },
+                      onProgress: (content) => {
+                        setProgressText(content);
+                        markActive();
+                        setMessages(prev => prev.map(m =>
+                          m.id === aid && m.status === 'streaming'
+                            ? { ...m, progressLabel: content }
+                            : m
+                        ));
+                      },
+                      onToolStart: (toolName, _args, emoji) => { setToolElapsed(0); setCurrentTool({ name: toolName, emoji, startTime: Date.now() }); markActive(); },
                       onToolComplete: (toolName, preview, duration, emoji) => {
                         setCurrentTool(null);
+                        markActive();
                         if (preview) {
                           setExecutionSummary(prev => [...prev.slice(-5), `${emoji} ${toolName} (${duration.toFixed(1)}s): ${preview}`]);
                         }
                       },
                       onToolError: (toolName, error, emoji) => {
                         setCurrentTool(null);
+                        markActive();
                         setExecutionSummary(prev => [...prev.slice(-5), `${emoji} ${toolName} 出错: ${error}`]);
                       },
                       onToolFeedback: (content) => {
+                        markActive();
                         if (content) {
                           setExecutionSummary(prev => [...prev.slice(-5), content]);
                         }
                       },
                       onBudgetWarning: (content) => {
+                        markActive();
                         if (content) {
                           setExecutionSummary(prev => [...prev.slice(-5), content]);
                         }
                       },
-                      onThinkingDelta: (content) => { setMessages(prev => prev.map(m => m.id === aid ? { ...m, thinking: (m.thinking || '') + content } : m)); },
-                      onThinkingDone: () => {},
-                      onAsk: (question, choices, question_id) => { setWaitingQuestion({ question, choices, id: question_id }); setWaitingAnswer(''); },
+                      onThinkingDelta: (content) => {
+                        setMessages(prev => prev.map(m => m.id === aid ? { ...m, thinking: (m.thinking || '') + content } : m));
+                        if (!thinkingStartedRef.current) {
+                          thinkingStartedRef.current = true;
+                          setProgressText('💭 思考中…');
+                        }
+                        markActive();
+                      },
+                      onThinkingDone: () => { markActive(); },
+                      onAsk: (question, choices, question_id) => { setWaitingQuestion({ question, choices, id: question_id }); setWaitingAnswer(''); markActive(); },
+                      onContext: (info) => { setContextInfo(info); },
                       onContent: (_chunk, full) => {
                         setProgressText('');
+                        markActive();
                         const thinkMatch = full.match(/<think>([\s\S]*?)晖/);
                         const thinking = thinkMatch ? thinkMatch[1] : '';
                         const displayContent = full.replace(/<think>[\s\S]*?晖/g, '').trim();
@@ -704,6 +1024,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                       },
                       onDone: () => {
                         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+                        stopHeartbeat();
                         setProgressText('');
                         setStepHistory([]);
                         setMessages(prev => prev.map(m =>
@@ -716,6 +1037,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                       },
                       onError: (err) => {
                         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+                        stopHeartbeat();
                         setProgressText('');
                         setStepHistory([]);
                         setErrorMessage(err);
@@ -737,6 +1059,13 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
           )}
         </div>
       )}
+
+      <TokenUsageBar
+        contextInfo={contextInfo}
+        isCompressing={isCompressing}
+        savedFlash={savedFlash}
+        onCompress={() => handleCompress(false)}
+      />
 
       <div className="chat-input">
         <div className="chat-input-box">

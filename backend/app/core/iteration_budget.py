@@ -123,7 +123,3 @@ class IterationBudget:
             "请基于已有结果生成最终回复。"
         )
 
-    def reset(self):
-        """重置预算状态"""
-        self.current_round = 0
-        self.grace_used = 0

@@ -1,3 +1,17 @@
+"""
+关系型记忆存储 - raw sqlite3 薄封装（不用 ORM）。
+
+5 张表：sessions / messages / memories / settings / evaluations。
+- raw sqlite3 是有意选择：避免 SQLAlchemy async 复杂 + 启动开销。
+- profile_id 参数化路径：./data/tongyong.db（default） vs
+  ./data/hermes/profiles/{id}/tongyong.db（多 profile）。
+- 所有 API 是同步的；上层 AgentEngine / 路由 用 run_in_executor 包成异步。
+
+被使用方：
+  - AgentEngine (core/agent.py)：sessions + messages CRUD
+  - MemoryAPI (api/memory.py)：memories + settings CRUD
+  - EvaluationAPI (api/evaluation.py)：evaluations 表
+"""
 import sqlite3
 from typing import List, Optional, Dict, Any
 from datetime import datetime

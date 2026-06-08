@@ -36,6 +36,9 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             commands_executed: data.commands_executed,
             processing_time: data.processing_time,
             usage: data.usage,
+            round: data.round,
+            cumulative: data.cumulative,
+            context: data.context,
         };
     } catch (error) {
         console.error('解析SSE事件数据失败:', error);
@@ -232,6 +235,13 @@ function handleStreamEvent(
             }
             break;
 
+        case 'context':
+            // 上下文容量快照 — 驱动 TokenUsageBar
+            if (event.context) {
+                callbacks.onContext?.(event.context);
+            }
+            break;
+
         case 'thinking_delta':
             callbacks.onThinkingDelta?.(event.content || '');
             break;
@@ -291,4 +301,76 @@ export async function testStreamEndpoint(): Promise<boolean> {
  */
 export function generateMessageId(): string {
     return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * 主动压缩 session 历史上下文（前端 TokenUsageBar 触发）。
+ *
+ * 调后端 POST /api/chat/compress：
+ *   - force=false（默认）：尊重 should_compress 阈值，未达则返回 {skipped: true}
+ *   - force=true：跳过阈值检查直接压
+ *
+ * 返回 {success, before/after tokens, saved_pct, summary, skipped}，
+ * 前端用 before/after 刷新 TokenUsageBar 进度条。
+ */
+export async function compressSessionContext(
+    sessionId: string,
+    force: boolean = false,
+): Promise<{
+    success: boolean;
+    session_id?: string;
+    before_messages?: number;
+    after_messages?: number;
+    before_tokens?: number;
+    after_tokens?: number;
+    saved_pct?: number;
+    summary?: string;
+    skipped?: boolean;
+    forced?: boolean;
+    error?: string;
+}> {
+    try {
+        const response = await fetch(`${API_BASE_URL}/compress`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, force }),
+        });
+        if (!response.ok) {
+            return { success: false, error: `HTTP ${response.status}` };
+        }
+        return await response.json();
+    } catch (error: any) {
+        console.error('[compressSessionContext] 失败:', error);
+        return { success: false, error: error?.message || String(error) };
+    }
+}
+
+/**
+ * 读 session 当前 context 容量（前端启动 / 切 session 时用来初始化 TokenUsageBar）。
+ *
+ * 调后端 GET /api/chat/context-stats/{session_id}，返回
+ * {chars, estimated_tokens, threshold_tokens, percent, approaching, message_count}。
+ */
+export async function getContextStats(
+    sessionId: string,
+): Promise<{
+    session_id?: string;
+    message_count?: number;
+    chars?: number;
+    estimated_tokens?: number;
+    threshold_tokens?: number;
+    percent?: number;
+    approaching?: boolean;
+    error?: string;
+}> {
+    try {
+        const response = await fetch(`${API_BASE_URL}/context-stats/${encodeURIComponent(sessionId)}`);
+        if (!response.ok) {
+            return { error: `HTTP ${response.status}` };
+        }
+        return await response.json();
+    } catch (error: any) {
+        console.error('[getContextStats] 失败:', error);
+        return { error: error?.message || String(error) };
+    }
 }

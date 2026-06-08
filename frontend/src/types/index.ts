@@ -22,6 +22,8 @@ export interface Message {
     toolsUsed?: string[];
     commandsExecuted?: string[];
     executionClaimMismatch?: boolean;
+    /** 流式输出过程中后端推送的阶段描述（如 "正在思考..."），渲染在气泡里 */
+    progressLabel?: string;
 }
 
 /** 会话信息接口 */
@@ -53,7 +55,8 @@ export interface ChatResponse {
 /** 流式事件类型 */
 export type StreamEventType = 'start' | 'content' | 'done' | 'error' | 'progress'
     | 'tool_start' | 'tool_complete' | 'tool_error' | 'tool_feedback'
-    | 'thinking_delta' | 'thinking_done' | 'ask' | 'budget_warning';
+    | 'thinking_delta' | 'thinking_done' | 'ask' | 'budget_warning'
+    | 'usage' | 'context';
 
 /** 工具事件数据 */
 export interface ToolEvent {
@@ -93,6 +96,25 @@ export interface StreamEvent {
         output_tokens?: number;
         total_tokens?: number;
     };
+    /** 当前 LLM 调用所在轮次（usage 事件专属） */
+    round?: number;
+    /** 累计 token 用量（usage 事件专属） */
+    cumulative?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        total_tokens?: number;
+    };
+    /** 上下文容量快照（context 事件专属）— 前端 TokenUsageBar 用 */
+    context?: ContextInfo;
+}
+
+/** 上下文容量信息 — 后端 _context() 事件载荷，驱动 TokenUsageBar */
+export interface ContextInfo {
+    chars: number;
+    estimated_tokens: number;
+    threshold_tokens: number;
+    percent: number;          // estimated_tokens / threshold_tokens * 100
+    approaching: boolean;     // estimated_tokens >= threshold_tokens * 0.8
 }
 
 /** SSE事件源 */
@@ -120,6 +142,8 @@ export interface SSECallbacks {
     onAsk?: (question: string, choices: string[], question_id: string) => void;
     /** Token 使用量更新（实时） */
     onUsage?: (inputTokens: number, outputTokens: number, totalTokens: number) => void;
+    /** 上下文容量更新（实时）— 每次 LLM 调用前/压缩后推，TokenUsageBar 用 */
+    onContext?: (info: ContextInfo) => void;
 }
 
 /** UI主题配置 */

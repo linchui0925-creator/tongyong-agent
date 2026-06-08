@@ -1,3 +1,16 @@
+"""
+Memory API - 会话 / 消息 / 记忆的 CRUD 路由。
+
+挂载点：/api/memory/* (在 main.py 注册)
+职责划分：
+  - /sessions            会话管理（list / create / get / delete）
+  - /sessions/{id}/messages  会话内消息（list / add）
+  - /memories            全量记忆（search / add / update / delete）
+  - /settings            用户级设置（key-value 存储）
+
+所有 Pydantic Request model 定义在本文件顶部；操作逻辑直接走 MemoryStorage
+（同步 API，路由用 sync 函数 + FastAPI 自动 run_in_threadpool）。
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
@@ -10,23 +23,28 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 class CreateSessionRequest(BaseModel):
+    """新建会话请求。"""
     name: str
 
 class UpdateSessionRequest(BaseModel):
+    """更新会话名请求。"""
     name: str
 
 class SearchRequest(BaseModel):
+    """向量记忆搜索请求。"""
     query: str
     k: int = 10
     session_id: Optional[str] = None
 
 class AddMemoryRequest(BaseModel):
+    """新增记忆请求。"""
     type: str
     content: str
     importance: int = 1
     session_id: Optional[str] = None
 
 class UpdateMemoryRequest(BaseModel):
+    """更新记忆内容请求。"""
     content: str
     importance: Optional[int] = None
 

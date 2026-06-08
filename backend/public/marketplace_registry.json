@@ -1,0 +1,535 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-02T02:50:19.764322+00:00",
+  "etag": null,
+  "sources": {
+    "hongmaple0820/scale-engine": {
+      "owner": "hongmaple0820",
+      "repo": "scale-engine",
+      "last_fetch": "2026-06-01T03:16:04.523856+00:00",
+      "skill_count": 8,
+      "skills": [
+        {
+          "name": "api-design",
+          "path": "skills/api-design/SKILL.md",
+          "category": "general",
+          "description": "RESTful API conventions",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 922
+        },
+        {
+          "name": "code-review",
+          "path": "skills/code-review/SKILL.md",
+          "category": "general",
+          "description": "Code quality review checklist",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 910
+        },
+        {
+          "name": "documentation",
+          "path": "skills/documentation/SKILL.md",
+          "category": "general",
+          "description": "Documentation writing standards",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 759
+        },
+        {
+          "name": "performance",
+          "path": "skills/performance/SKILL.md",
+          "category": "general",
+          "description": "Optimization patterns",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 880
+        },
+        {
+          "name": "planning",
+          "path": "skills/planning/SKILL.md",
+          "category": "general",
+          "description": "Architecture planning template",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 816
+        },
+        {
+          "name": "refactoring",
+          "path": "skills/refactoring/SKILL.md",
+          "category": "general",
+          "description": "Safe refactoring steps",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 962
+        },
+        {
+          "name": "release",
+          "path": "skills/release/SKILL.md",
+          "category": "general",
+          "description": "[no description] Trigger",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 3471
+        },
+        {
+          "name": "security-audit",
+          "path": "skills/security-audit/SKILL.md",
+          "category": "general",
+          "description": "OWASP Top 10 security checklist",
+          "version": "1.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 1271
+        }
+      ]
+    },
+    "anthropics/skills": {
+      "owner": "anthropics",
+      "repo": "skills",
+      "last_fetch": "2026-06-02T02:50:19.764266+00:00",
+      "skill_count": 17,
+      "skills": [
+        {
+          "name": "algorithmic-art",
+          "path": "skills/algorithmic-art/SKILL.md",
+          "category": "general",
+          "description": "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 19735,
+          "files": [
+            {
+              "path": "skills/algorithmic-art/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/algorithmic-art/SKILL.md",
+              "size": 19769,
+              "sha": "634f6fa42e4e697fa6afd293acd7fb8246574876",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "brand-guidelines",
+          "path": "skills/brand-guidelines/SKILL.md",
+          "category": "general",
+          "description": "Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand colors or style guidelines, visual formatting",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2235,
+          "files": [
+            {
+              "path": "skills/brand-guidelines/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/brand-guidelines/SKILL.md",
+              "size": 2235,
+              "sha": "47c72c607bdb5dd81bdea5de2b5e4f3992a5fd59",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "canvas-design",
+          "path": "skills/canvas-design/SKILL.md",
+          "category": "general",
+          "description": "Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create ori",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 11937,
+          "files": [
+            {
+              "path": "skills/canvas-design/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/SKILL.md",
+              "size": 11939,
+              "sha": "9f63fee82de84cd4230e1d0e322247b61eb4c94c",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "doc-coauthoring",
+          "path": "skills/doc-coauthoring/SKILL.md",
+          "category": "general",
+          "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This wor",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 15815,
+          "files": [
+            {
+              "path": "skills/doc-coauthoring/SKILL.md",
+              "size": 15815,
+              "sha": "a5a69839ef4a161131d80b6daef10037a9686f4a",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "docx",
+          "path": "skills/docx/SKILL.md",
+          "category": "general",
+          "description": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of 'Word doc', 'word document', '.docx', or requests to produce ",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 20056,
+          "files": [
+            {
+              "path": "skills/docx/LICENSE.txt",
+              "size": 1467,
+              "sha": "c55ab42224874608473643de0a85736b7fec0730",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/SKILL.md",
+              "size": 20084,
+              "sha": "2951e559989765293b6fbf83942378a3c2d0cba6",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "frontend-design",
+          "path": "skills/frontend-design/SKILL.md",
+          "category": "general",
+          "description": "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples inclu",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 4440,
+          "files": [
+            {
+              "path": "skills/frontend-design/LICENSE.txt",
+              "size": 10174,
+              "sha": "f433b1a53f5b830a205fd2df78e2b34974656c7b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/frontend-design/SKILL.md",
+              "size": 4440,
+              "sha": "5be498e2585843c7137bf9a74e262f57415de5ce",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "internal-comms",
+          "path": "skills/internal-comms/SKILL.md",
+          "category": "general",
+          "description": "A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal com",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 1511,
+          "files": [
+            {
+              "path": "skills/internal-comms/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/internal-comms/SKILL.md",
+              "size": 1511,
+              "sha": "56ea935b74f371bfeb4c7d3c19d5139df866e73b",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "mcp-builder",
+          "path": "skills/mcp-builder/SKILL.md",
+          "category": "general",
+          "description": "Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate externa",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 9059,
+          "files": [
+            {
+              "path": "skills/mcp-builder/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/mcp-builder/SKILL.md",
+              "size": 9092,
+              "sha": "8a1a77a47d141967b246adb4da4f91037578ff7d",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "pdf",
+          "path": "skills/pdf/SKILL.md",
+          "category": "general",
+          "description": "Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple PDFs into one, splitting PDFs apart, rota",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 8035,
+          "files": [
+            {
+              "path": "skills/pdf/LICENSE.txt",
+              "size": 1467,
+              "sha": "c55ab42224874608473643de0a85736b7fec0730",
+              "type": "blob"
+            },
+            {
+              "path": "skills/pdf/SKILL.md",
+              "size": 8072,
+              "sha": "d3e046a5ae107a6cb23cfb16c219837094ab35d3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/pdf/forms.md",
+              "size": 11854,
+              "sha": "6e7e1e0d9e6ae17215db3e130aea3c3c546487e6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/pdf/reference.md",
+              "size": 16692,
+              "sha": "41400bf4fc67f15fb062d43695ec92f078226023",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "pptx",
+          "path": "skills/pptx/SKILL.md",
+          "category": "general",
+          "description": "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from a",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 9128,
+          "files": [
+            {
+              "path": "skills/pptx/LICENSE.txt",
+              "size": 1467,
+              "sha": "c55ab42224874608473643de0a85736b7fec0730",
+              "type": "blob"
+            },
+            {
+              "path": "skills/pptx/SKILL.md",
+              "size": 9182,
+              "sha": "df5000e17ef60ecf400e65bfcd3c58ff88b604c3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/pptx/editing.md",
+              "size": 6885,
+              "sha": "f873e8a04ab20b5a79543ea28729149cfd70ef2c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/pptx/pptxgenjs.md",
+              "size": 12819,
+              "sha": "6bfed908c9001d047b65995a8eb8b2097340da76",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "skill-creator",
+          "path": "skills/skill-creator/SKILL.md",
+          "category": "general",
+          "description": "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 32987,
+          "files": [
+            {
+              "path": "skills/skill-creator/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/skill-creator/SKILL.md",
+              "size": 33168,
+              "sha": "65b3a402dbd09b8e83f9d637c6b553875189085c",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "slack-gif-creator",
+          "path": "skills/slack-gif-creator/SKILL.md",
+          "category": "general",
+          "description": "Knowledge and utilities for creating animated GIFs optimized for Slack. Provides constraints, validation tools, and animation concepts. Use when users request animated GIFs for Slack like \"make me a G",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 7841,
+          "files": [
+            {
+              "path": "skills/slack-gif-creator/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/SKILL.md",
+              "size": 7841,
+              "sha": "16660d8ceb77af47986bba1c9176c2ff3f287a91",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/requirements.txt",
+              "size": 66,
+              "sha": "8bc4493e9163cb513d4be38ab9fe5c1ff763e0d7",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "theme-factory",
+          "path": "skills/theme-factory/SKILL.md",
+          "category": "general",
+          "description": "Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc. There are 10 pre-set themes with colors/fonts that you can apply to any artifact t",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 3124,
+          "files": [
+            {
+              "path": "skills/theme-factory/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/theme-factory/SKILL.md",
+              "size": 3124,
+              "sha": "90dfceaf2ecdc191a4dcfb0069768a9560638998",
+              "type": "blob"
+            },
+            {
+              "path": "skills/theme-factory/theme-showcase.pdf",
+              "size": 124310,
+              "sha": "24495d145c95917aba3a3445f7105444b6f7cfcc",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "web-artifacts-builder",
+          "path": "skills/web-artifacts-builder/SKILL.md",
+          "category": "general",
+          "description": "Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state manag",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 3073,
+          "files": [
+            {
+              "path": "skills/web-artifacts-builder/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/web-artifacts-builder/SKILL.md",
+              "size": 3087,
+              "sha": "8b39b19f259b4216ecb07574741dd8eaa9863a07",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "webapp-testing",
+          "path": "skills/webapp-testing/SKILL.md",
+          "category": "general",
+          "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser l",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 3861,
+          "files": [
+            {
+              "path": "skills/webapp-testing/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/webapp-testing/SKILL.md",
+              "size": 3913,
+              "sha": "4726215301db64a0cc4d41fc3219c61f37a30f4a",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "xlsx",
+          "path": "skills/xlsx/SKILL.md",
+          "category": "general",
+          "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .csv, or .tsv file (e.g., add",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 11455,
+          "files": [
+            {
+              "path": "skills/xlsx/LICENSE.txt",
+              "size": 1467,
+              "sha": "c55ab42224874608473643de0a85736b7fec0730",
+              "type": "blob"
+            },
+            {
+              "path": "skills/xlsx/SKILL.md",
+              "size": 11463,
+              "sha": "c5c881be9ebaa2bfcdd02f97de2ebd711ab78803",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "template-skill",
+          "path": "template/SKILL.md",
+          "category": "general",
+          "description": "Replace with description of the skill and when Claude should use it.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 140,
+          "files": [
+            {
+              "path": "template/SKILL.md",
+              "size": 140,
+              "sha": "50a4f9b104357d96361e257adb70454604cd15c0",
+              "type": "blob"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

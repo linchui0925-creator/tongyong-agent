@@ -1,3 +1,18 @@
+"""
+向量记忆存储 - ChromaDB PersistentClient 的薄封装。
+
+提供 4 个核心操作：
+  - add_memory(memory)        写入向量（带 metadata: user_id, importance, created_at）
+  - search(query, k=5)        语义检索 top-k
+  - get_all()                 全量导出（dreaming engine 用来跨用户整合）
+  - delete(memory_id)         按 vector_id 删
+
+注意：
+  - chromadb 缺失时所有 API 返回空（不抛异常）— 见 _ensure_chromadb_imported
+  - embedding 维度 = 1024（DEFAULT_EMBEDDING_DIM），集合名 = "memories"
+  - persistent 路径默认 ./data/chroma，可被 profile_id 覆盖
+  - 跨用户共享层独立 collection "memories_shared"，dreaming engine 写
+"""
 from typing import List, Optional
 from app.core.base import Memory
 import logging

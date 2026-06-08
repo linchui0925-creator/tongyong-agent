@@ -57,13 +57,21 @@ class HermesConstraintEngine:
     3. 承诺的行动必须有对应的工具调用记录
     """
 
-    def __init__(self, max_empty_results: int = 3, max_tool_rounds: int = 10):
+    def __init__(self, max_empty_results: int = 3, max_tool_rounds: Optional[int] = None):
         self.execution_log: List[ExecutionRecord] = []
         self.commitments: List[CommitmentRecord] = []
         self._last_tool_result: Optional[str] = None
         self._last_tool_name: Optional[str] = None
 
         # 循环控制参数
+        # max_tool_rounds 默认值优先级: 显式参数 > HERMES_MAX_TOOL_ROUNDS env > ITERATION_MAX_ROUNDS env > 50
+        if max_tool_rounds is None:
+            import os as _os
+            _env = _os.getenv("HERMES_MAX_TOOL_ROUNDS") or _os.getenv("ITERATION_MAX_ROUNDS")
+            try:
+                max_tool_rounds = max(1, int(_env)) if _env else 50
+            except ValueError:
+                max_tool_rounds = 50
         self.max_empty_results = max_empty_results  # 连续空结果阈值
         self.max_tool_rounds = max_tool_rounds       # 最大工具轮次
         self._consecutive_empty = 0                  # 连续空结果计数

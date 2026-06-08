@@ -16,6 +16,9 @@ from app.core.multi_agent.api.schemas import (
     SendMessageRequest, ToolsResponse, ToolsetInfo, ToolInfo, RoleTemplatesResponse,
     AgentTemplateRequest, AgentTemplateResponse, ImportAgentRequest,
     ConnectionCreateRequest, ConnectionResponse,
+    # v2 schemas
+    TaskStatusResponse, TaskDetailResponse, TaskLinkResponse,
+    WorkspaceFileResponse, CreateSessionV2Request,
 )
 from app.core.multi_agent.api import service
 
@@ -310,3 +313,130 @@ async def import_marketplace_agent(agent_id: str, req: ImportAgentRequest):
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════
+# v2 任务队列 API（Scheduler + TaskQueue）
+# ══════════════════════════════════════════════════════════
+
+@router.post("/sessions/{session_id}/v2/init", response_model=SessionResponse)
+async def init_session_v2(session_id: str, req: CreateSessionV2Request):
+    """
+    初始化 v2 会话：创建 session + 初始化 TaskQueue 表 + 创建 Scheduler。
+
+    对应旧的 create_session，但同时：
+    1. 调用 TaskQueue.init() 建 tasks/task_links/team_events 表
+    2. 在 service 层创建并缓存 Scheduler 实例
+    """
+    session = service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    try:
+        service.init_session_v2(session_id, max_concurrent=req.max_concurrent, claim_ttl_seconds=req.claim_ttl_seconds)
+        return SessionResponse(**session)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/tasks", response_model=TaskDetailResponse)
+async def create_task(session_id: str, description: str, task_type: str = "", priority: int = 0, created_by: str = ""):
+    """创建新任务（入队 pending）"""
+    session = service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    try:
+        result = service.create_task(session_id, description, task_type, priority, created_by)
+        return TaskDetailResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/sessions/{session_id}/tasks", response_model=List[TaskStatusResponse])
+async def list_tasks(session_id: str, state: str = ""):
+    """列出任务（可选按 state 过滤）"""
+    tasks = service.list_tasks(session_id, state=state if state else None)
+    return [TaskStatusResponse(**t) for t in tasks]
+
+
+@router.get("/sessions/{session_id}/tasks/{task_id}", response_model=TaskDetailResponse)
+async def get_task(session_id: str, task_id: str):
+    """获取任务详情（含依赖边）"""
+    result = service.get_task_detail(session_id, task_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return TaskDetailResponse(**result)
+
+
+@router.post("/sessions/{session_id}/tasks/{task_id}/claim")
+async def claim_task(session_id: str, task_id: str, agent_name: str, ttl_seconds: int = 300):
+    """Agent 认领任务（claim）"""
+    ok, record = service.claim_task(session_id, task_id, agent_name, ttl_seconds)
+    if not ok:
+        raise HTTPException(status_code=409, detail="任务已被认领或不存在")
+    return {"ok": True, "task_id": task_id, "assigned_to": record.assigned_to, "state": record.state}
+
+
+@router.post("/sessions/{session_id}/tasks/{task_id}/complete")
+async def complete_task(session_id: str, task_id: str, agent_name: str, result_summary: str = ""):
+    """标记任务完成"""
+    ok, record = service.complete_task(session_id, task_id, agent_name, result_summary)
+    if not ok:
+        raise HTTPException(status_code=409, detail="任务无法完成（可能未认领或已结束）")
+    return {"ok": True, "task_id": task_id, "state": record.state, "result_summary": record.result_summary}
+
+
+@router.post("/sessions/{session_id}/tasks/{task_id}/reject")
+async def reject_task(session_id: str, task_id: str, agent_name: str, reason: str = ""):
+    """拒绝任务"""
+    ok, record = service.reject_task(session_id, task_id, agent_name, reason)
+    if not ok:
+        raise HTTPException(status_code=409, detail="任务无法拒绝")
+    return {"ok": True, "task_id": task_id, "state": record.state}
+
+
+@router.post("/sessions/{session_id}/tasks/{task_id}/link")
+async def link_tasks(session_id: str, task_id: str, child_id: str, link_type: str = "blocks"):
+    """建立父子依赖边（parent blocks child）"""
+    try:
+        result = service.link_tasks(session_id, task_id, child_id, link_type)
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/tasks/decompose")
+async def decompose_task(session_id: str, task_id: str):
+    """分解任务（调用 LLM 将父任务拆为子任务）"""
+    try:
+        result = await service.decompose_task(session_id, task_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/sessions/{session_id}/tasks/{task_id}/workspace")
+async def get_workspace_files(session_id: str, task_id: str, sub: str = "files"):
+    """读取 workspace 目录内容或文件"""
+    try:
+        result = service.get_workspace_content(session_id, task_id, sub)
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/sessions/{session_id}/scheduler/status")
+async def get_scheduler_status(session_id: str):
+    """获取 Scheduler 运行状态（注册 Agent 数、并发槽位）"""
+    status = service.get_scheduler_status(session_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Scheduler 未初始化，请先调用 POST /sessions/{id}/v2/init")
+    return status
+
+
+@router.post("/sessions/{session_id}/scheduler/stop")
+async def stop_scheduler(session_id: str):
+    """停止 Scheduler（取消所有运行中的 Agent Task）"""
+    ok = service.stop_scheduler(session_id)
+    return {"ok": ok}

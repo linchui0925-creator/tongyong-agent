@@ -1,3 +1,10 @@
+"""
+对话上下文管理器 - token 感知 + 自动压缩。
+
+负责把 history 消息列表压缩到 max_tokens 限制内，保留关键信息。
+被 AgentEngine._load_messages_to_context() 调用，作为 system prompt 注入链的
+倒数第二段（"全量历史"）。
+"""
 from typing import List, Optional
 from datetime import datetime
 import json

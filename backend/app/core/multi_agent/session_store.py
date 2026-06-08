@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -22,23 +23,39 @@ logger = logging.getLogger(__name__)
 class TeamSessionStore:
     """
     团队会话存储（SQLite）
-    
+
     表结构:
     - team_sessions: 团队会话元数据
     - team_roles: 角色配置（不含运行时状态）
     - team_messages: 消息历史
+
+    使用线程局部长连接，避免每次操作创建/销毁连接。
     """
-    
+
     def __init__(self, db_path: str = "./data/team_sessions.db"):
         self.db_path = db_path
+        self._local = threading.local()
         os.makedirs(Path(db_path).parent, exist_ok=True)
         self._init_tables()
 
     def _connect(self) -> sqlite3.Connection:
-        """创建数据库连接（启用 WAL 模式 + 并发安全）"""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
+        """获取线程局部长连接（首次调用时创建，之后复用）"""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            self._local.conn = conn
         return conn
+
+    def close(self):
+        """关闭当前线程的数据库连接"""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
 
     def _init_tables(self):
         conn = self._connect()
@@ -115,6 +132,10 @@ class TeamSessionStore:
             c.execute("ALTER TABLE team_roles ADD COLUMN debate_position TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
+        try:
+            c.execute("ALTER TABLE team_roles ADD COLUMN use_agent INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
         # Agent 连接图
         c.execute("""
@@ -154,8 +175,75 @@ class TeamSessionStore:
         """)
 
         conn.commit()
-        conn.close()
-    
+
+        # ── 新增：tasks 表（任务队列）────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id              TEXT PRIMARY KEY,
+                session_id     TEXT NOT NULL,
+                state          TEXT NOT NULL DEFAULT 'pending',
+                task_type      TEXT NOT NULL DEFAULT '',
+                description    TEXT NOT NULL DEFAULT '',
+                assigned_to    TEXT NOT NULL DEFAULT '',
+                created_by     TEXT NOT NULL DEFAULT '',
+                workspace_path TEXT NOT NULL DEFAULT '',
+                input_summary  TEXT NOT NULL DEFAULT '',
+                result_summary TEXT NOT NULL DEFAULT '',
+                claim_lock     TEXT,
+                claim_expires  TEXT,
+                priority       INTEGER NOT NULL DEFAULT 0,
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL,
+                started_at     TEXT,
+                completed_at   TEXT
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to)")
+
+        # ── 新增：task_links 表（依赖图）───────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS task_links (
+                id           TEXT PRIMARY KEY,
+                parent_id    TEXT NOT NULL,
+                child_id     TEXT NOT NULL,
+                link_type    TEXT NOT NULL DEFAULT 'subtask',
+                created_at   TEXT NOT NULL,
+                FOREIGN KEY (parent_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY (child_id)  REFERENCES tasks(id) ON DELETE CASCADE,
+                UNIQUE(parent_id, child_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_links_parent ON task_links(parent_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_links_child  ON task_links(child_id)")
+
+        # ── 新增：team_events 表（事件总线持久化）──────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS team_events (
+                id          TEXT PRIMARY KEY,
+                type        TEXT NOT NULL,
+                payload     TEXT NOT NULL DEFAULT '{}',
+                source      TEXT NOT NULL DEFAULT '',
+                task_id     TEXT NOT NULL DEFAULT '',
+                session_id  TEXT NOT NULL DEFAULT '',
+                created_at  TEXT NOT NULL
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON team_events(session_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_events_task   ON team_events(task_id)")
+
+        # ── agent_templates 扩展字段 ───────────────────────────
+        for col, default in [
+            ("triggers_on",  "[]"),
+            ("outputs_to",   "[]"),
+            ("requires_from","[]"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE agent_templates ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
+            except sqlite3.OperationalError:
+                pass  # 已存在
+
     def _row_to_session(self, row) -> Dict[str, Any]:
         return {
             "id": row[0],
@@ -179,7 +267,6 @@ class TeamSessionStore:
             (session_id, name, "idle", json.dumps(config or {}), now, now)
         )
         conn.commit()
-        conn.close()
         return {
             "id": session_id, "name": name, "status": "idle",
             "config": config or {}, "created_at": now, "updated_at": now
@@ -190,7 +277,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM team_sessions WHERE id = ?", (session_id,))
         row = c.fetchone()
-        conn.close()
+        conn.commit()
         return self._row_to_session(row) if row else None
     
     def list_sessions(self) -> List[Dict[str, Any]]:
@@ -198,7 +285,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM team_sessions ORDER BY created_at DESC")
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
         return [self._row_to_session(r) for r in rows]
     
     def update_session_status(self, session_id: str, status: str):
@@ -207,7 +294,6 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("UPDATE team_sessions SET status=?, updated_at=? WHERE id=?", (status, now, session_id))
         conn.commit()
-        conn.close()
     
     def delete_session(self, session_id: str):
         conn = self._connect()
@@ -217,7 +303,6 @@ class TeamSessionStore:
         c.execute("DELETE FROM team_connections WHERE session_id=?", (session_id,))
         c.execute("DELETE FROM team_sessions WHERE id=?", (session_id,))
         conn.commit()
-        conn.close()
     
     # ── Role CRUD ─────────────────────────────────────────
     
@@ -229,8 +314,8 @@ class TeamSessionStore:
             """INSERT INTO team_roles
                (id, session_id, name, profile, watch_actions, action_types, tool_permission,
                 llm_provider, llm_model, opponent_name, action_configs, stance,
-                upstream_roles, downstream_roles, debate_side, debate_position)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                upstream_roles, downstream_roles, debate_side, debate_position, use_agent)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 role_id, session_id, role.name, role.profile,
                 json.dumps(role.watch_actions),
@@ -243,10 +328,10 @@ class TeamSessionStore:
                 json.dumps(role.downstream_roles),
                 role.debate_side,
                 role.debate_position,
+                1 if role.use_agent else 0,
             )
         )
         conn.commit()
-        conn.close()
         return {"id": role_id, "name": role.name, "session_id": session_id}
     
     def get_roles(self, session_id: str) -> List[TeamRole]:
@@ -254,7 +339,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM team_roles WHERE session_id=?", (session_id,))
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
 
         roles = []
         for r in rows:
@@ -265,6 +350,7 @@ class TeamSessionStore:
             downstream_roles = json.loads(r[13]) if len(r) > 13 else []
             debate_side = r[14] if len(r) > 14 else ""
             debate_position = r[15] if len(r) > 15 else ""
+            use_agent = bool(r[16]) if len(r) > 16 else False
             role = TeamRole(
                 name=r[2], profile=r[3],
                 watch_actions=json.loads(r[4]),
@@ -277,6 +363,7 @@ class TeamSessionStore:
                 downstream_roles=downstream_roles,
                 debate_side=debate_side,
                 debate_position=debate_position,
+                use_agent=use_agent,
             )
             role.set_actions(role.action_types)
             roles.append(role)
@@ -287,7 +374,6 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("DELETE FROM team_roles WHERE session_id=? AND name=?", (session_id, role_name))
         conn.commit()
-        conn.close()
 
     def update_role(self, session_id: str, role_name: str, data: Dict[str, Any]) -> Optional[TeamRole]:
         """更新角色字段（profile, watch_actions, action_types, upstream_roles, downstream_roles 等）"""
@@ -300,7 +386,7 @@ class TeamSessionStore:
         c = conn.cursor()
 
         # 可更新字段
-        simple_fields = {"profile", "llm_provider", "llm_model", "opponent_name", "stance", "debate_side", "debate_position"}
+        simple_fields = {"profile", "llm_provider", "llm_model", "opponent_name", "stance", "debate_side", "debate_position", "use_agent"}
         json_fields = {"watch_actions", "action_types", "action_configs", "upstream_roles", "downstream_roles"}
 
         updates = []
@@ -314,7 +400,7 @@ class TeamSessionStore:
                 values.append(json.dumps(value))
 
         if not updates:
-            conn.close()
+            conn.commit()
             return self.get_role_by_name(session_id, role_name)
 
         values.append(session_id)
@@ -324,7 +410,6 @@ class TeamSessionStore:
             values
         )
         conn.commit()
-        conn.close()
 
         return self.get_role_by_name(session_id, role_name)
 
@@ -334,7 +419,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM team_roles WHERE session_id=? AND name=?", (session_id, role_name))
         row = c.fetchone()
-        conn.close()
+        conn.commit()
         if not row:
             return None
         tool_perm_dict = json.loads(row[6])
@@ -344,6 +429,7 @@ class TeamSessionStore:
         downstream_roles = json.loads(row[13]) if len(row) > 13 else []
         debate_side = row[14] if len(row) > 14 else ""
         debate_position = row[15] if len(row) > 15 else ""
+        use_agent = bool(row[16]) if len(row) > 16 else False
         role = TeamRole(
             name=row[2], profile=row[3],
             watch_actions=json.loads(row[4]),
@@ -356,6 +442,7 @@ class TeamSessionStore:
             downstream_roles=downstream_roles,
             debate_side=debate_side,
             debate_position=debate_position,
+            use_agent=use_agent,
         )
         role.set_actions(role.action_types)
         return role
@@ -406,7 +493,6 @@ class TeamSessionStore:
             )
         )
         conn.commit()
-        conn.close()
         return self.get_template(template_id)
 
     def list_templates(self) -> List[Dict[str, Any]]:
@@ -414,7 +500,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM agent_templates ORDER BY updated_at DESC")
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
         return [self._row_to_template(r) for r in rows]
 
     def get_template(self, template_id: str) -> Optional[Dict[str, Any]]:
@@ -422,7 +508,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM agent_templates WHERE id=?", (template_id,))
         row = c.fetchone()
-        conn.close()
+        conn.commit()
         return self._row_to_template(row) if row else None
 
     def get_template_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -430,7 +516,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM agent_templates WHERE name=?", (name,))
         row = c.fetchone()
-        conn.close()
+        conn.commit()
         return self._row_to_template(row) if row else None
 
     def update_template(self, template_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -451,14 +537,13 @@ class TeamSessionStore:
                 fields.append(f"{json_key}=?")
                 values.append(json.dumps(data[json_key]))
         if not fields:
-            conn.close()
+            conn.commit()
             return self.get_template(template_id)
         fields.append("updated_at=?")
         values.append(now)
         values.append(template_id)
         c.execute(f"UPDATE agent_templates SET {', '.join(fields)} WHERE id=?", values)
         conn.commit()
-        conn.close()
         return self.get_template(template_id)
 
     def delete_template(self, template_id: str):
@@ -466,14 +551,13 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("DELETE FROM agent_templates WHERE id=?", (template_id,))
         conn.commit()
-        conn.close()
 
     def list_template_categories(self) -> List[str]:
         conn = self._connect()
         c = conn.cursor()
         c.execute("SELECT DISTINCT category FROM agent_templates WHERE category != '' ORDER BY category")
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
         return [r[0] for r in rows]
 
     # ── Connection CRUD ─────────────────────────────────────────
@@ -488,7 +572,6 @@ class TeamSessionStore:
             (conn_id, session_id, from_role, to_role, match_cause, now)
         )
         conn.commit()
-        conn.close()
         return {"id": conn_id, "session_id": session_id, "from_role": from_role, "to_role": to_role, "match_cause": match_cause}
 
     def get_connections(self, session_id: str) -> List[Dict[str, Any]]:
@@ -496,7 +579,7 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("SELECT * FROM team_connections WHERE session_id=? ORDER BY created_at", (session_id,))
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
         return [
             {"id": r[0], "session_id": r[1], "from_role": r[2], "to_role": r[3], "match_cause": r[4]}
             for r in rows
@@ -511,7 +594,7 @@ class TeamSessionStore:
             (session_id, role_name)
         )
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
         return [
             {"id": r[0], "session_id": r[1], "from_role": r[2], "to_role": r[3], "match_cause": r[4]}
             for r in rows
@@ -522,7 +605,6 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("DELETE FROM team_connections WHERE session_id=? AND from_role=? AND to_role=?", (session_id, from_role, to_role))
         conn.commit()
-        conn.close()
 
     def delete_connections_for_role(self, session_id: str, role_name: str):
         """删除角色所有相关连接（删除角色时调用）"""
@@ -530,7 +612,6 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("DELETE FROM team_connections WHERE session_id=? AND (from_role=? OR to_role=?)", (session_id, role_name, role_name))
         conn.commit()
-        conn.close()
 
     def update_role_connections(self, session_id: str, *role_names: str):
         """根据 team_connections 表同步更新指定角色的 upstream/downstream 字段"""
@@ -566,7 +647,6 @@ class TeamSessionStore:
             )
 
         conn.commit()
-        conn.close()
 
     # ── Message CRUD ─────────────────────────────────────────
     
@@ -584,7 +664,6 @@ class TeamSessionStore:
             )
         )
         conn.commit()
-        conn.close()
     
     def get_messages(self, session_id: str) -> List[TeamMessage]:
         conn = self._connect()
@@ -594,7 +673,7 @@ class TeamSessionStore:
             (session_id,)
         )
         rows = c.fetchall()
-        conn.close()
+        conn.commit()
         
         msgs = []
         for r in rows:
@@ -610,4 +689,3 @@ class TeamSessionStore:
         c = conn.cursor()
         c.execute("DELETE FROM team_messages WHERE session_id=?", (session_id,))
         conn.commit()
-        conn.close()

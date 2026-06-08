@@ -1,3 +1,9 @@
+"""
+网关 Profile 配置 - 多 LLM provider / 网关端口的 profile 模型。
+
+每个 profile = 一组 LLM 配置 + 可选独立 OpenAI-兼容网关端口。
+被 gateway/openai_api.py 加载 + profile_router.py 路由。
+"""
 from datetime import datetime
 from typing import Optional
 

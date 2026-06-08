@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { TeamRole, RoleTemplatesResponse } from '../../api/team'
 import { C, inputStyle } from './constants'
 
@@ -10,7 +10,7 @@ const Icons = {
 }
 
 function Avatar({ name, size = 36, side }: { name: string; size?: number; side?: string }) {
-  const n = name.toLowerCase()
+  const n = (name || '').toLowerCase()
   let emoji = '🤖'
   if (n.includes('coder') || n.includes('程序')) emoji = '👨‍💻'
   else if (n.includes('tester') || n.includes('测试')) emoji = '🧪'
@@ -27,7 +27,7 @@ function Avatar({ name, size = 36, side }: { name: string; size?: number; side?:
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: size * 0.4, flexShrink: 0,
     }}>
-      {emoji}{name[0]?.toUpperCase()}
+      {emoji}{(name || '?')[0]?.toUpperCase() || '?'}
     </div>
   )
 }
@@ -41,21 +41,21 @@ function RoleConfigPanel({
   onClose: () => void
   sessionMode?: string
 }) {
-  const [name, setName] = useState(role.name)
-  const [profile, setProfile] = useState(role.profile || '')
-  const [watchActions, setWatchActions] = useState(role.watch_actions.join(', '))
-  const [actionTypes, setActionTypes] = useState(role.action_types.join(', '))
-  const [upstream, setUpstream] = useState<string[]>(role.upstream_roles || [])
-  const [downstream, setDownstream] = useState<string[]>(role.downstream_roles || [])
-  const [llmProvider, setLlmProvider] = useState(role.llm_provider || 'deepseek')
-  const [llmModel, setLlmModel] = useState(role.llm_model || '')
+  const [name, setName] = useState(role?.name || '')
+  const [profile, setProfile] = useState(role?.profile || '')
+  const [watchActions, setWatchActions] = useState((role?.watch_actions || []).join(', '))
+  const [actionTypes, setActionTypes] = useState((role?.action_types || []).join(', '))
+  const [upstream, setUpstream] = useState<string[]>(role?.upstream_roles || [])
+  const [downstream, setDownstream] = useState<string[]>(role?.downstream_roles || [])
+  const [llmProvider, setLlmProvider] = useState(role?.llm_provider || 'deepseek')
+  const [llmModel, setLlmModel] = useState(role?.llm_model || '')
   // 辩论相关
-  const [opponentName, setOpponentName] = useState(role.opponent_name || '')
-  const [stance, setStance] = useState(role.stance || '')
-  const [debateSide, setDebateSide] = useState(role.debate_side || '')
-  const [debatePosition, setDebatePosition] = useState(role.debate_position || '')
+  const [opponentName, setOpponentName] = useState(role?.opponent_name || '')
+  const [stance, setStance] = useState(role?.stance || '')
+  const [debateSide, setDebateSide] = useState(role?.debate_side || '')
+  const [debatePosition, setDebatePosition] = useState(role?.debate_position || '')
 
-  const others = allRoles.filter(r => r.name !== role.name)
+  const others = allRoles.filter(r => r.name && r.name !== (role?.name || ''))
   const isDebateMode = sessionMode === 'debate'
 
   // 辩论模式：选择阵营/辩位时自动设置动作类型和监听动作
@@ -70,6 +70,22 @@ function RoleConfigPanel({
     }
   }, [isDebateMode, debateSide, debatePosition])
 
+  // Sync state when role prop changes (e.g., clicking different agent)
+  useEffect(() => {
+    setName(role?.name || '')
+    setProfile(role?.profile || '')
+    setWatchActions((role?.watch_actions || []).join(', '))
+    setActionTypes((role?.action_types || []).join(', '))
+    setUpstream(role?.upstream_roles || [])
+    setDownstream(role?.downstream_roles || [])
+    setLlmProvider(role?.llm_provider || 'deepseek')
+    setLlmModel(role?.llm_model || '')
+    setOpponentName(role?.opponent_name || '')
+    setStance(role?.stance || '')
+    setDebateSide(role?.debate_side || '')
+    setDebatePosition(role?.debate_position || '')
+  }, [role])
+
   const toggleUpstream = (n: string) => {
     setUpstream(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n])
   }
@@ -82,8 +98,12 @@ function RoleConfigPanel({
     const parsedWatchActions = watchActions.split(',').map(s => s.trim()).filter(Boolean)
     const parsedActionTypes = actionTypes.split(',').map(s => s.trim()).filter(Boolean)
 
+    // Use name state directly (not role.name) in case role changed during edit
+    const roleName = name.trim() || role?.name || ''
+    if (!roleName) return // Don't save if no name
+
     const data: Partial<TeamRole> & { name: string } = {
-      name: name.trim(), profile,
+      name: roleName, profile,
       watch_actions: parsedWatchActions,
       action_types: parsedActionTypes,
       llm_provider: llmProvider, llm_model: llmModel,
@@ -96,25 +116,26 @@ function RoleConfigPanel({
       if (debatePosition) data.debate_position = debatePosition
       // 辩论模式下自动设置监听动作和动作类型
       data.watch_actions = ['UserRequirement', 'DebateSpeech']
-      data.action_types = ['debate_speech']
+      data.action_types = debateSide === 'judge' ? ['debate_judge'] : ['debate_speech']
     } else {
       // 图路由模式：保存上下游关系
       data.upstream_roles = upstream
       data.downstream_roles = downstream
     }
-    onSave(role.name, data)
+    onSave(roleName, data)
   }
 
   return (
     <div style={{
-      background: '#1E140D', borderRadius: 10, padding: 12,
+      background: '#1E140D', borderRadius: 10, padding: 16,
       border: `1px solid ${C.accent}44`,
-      display: 'flex', flexDirection: 'column', gap: 8,
+      display: 'flex', flexDirection: 'column', gap: 10,
       animation: 'slideDown 0.2s ease',
+      minWidth: 420,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <Avatar name={role.name} size={24} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>配置: {role.name}</span>
+        <Avatar name={role?.name || ''} size={24} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>配置: {role?.name || ''}</span>
         <button onClick={onClose} style={{
           marginLeft: 'auto', background: 'transparent', border: 'none',
           color: '#A0674A', cursor: 'pointer', fontSize: 14, padding: '2px 6px',
@@ -124,7 +145,19 @@ function RoleConfigPanel({
       </div>
 
       <input value={name} onChange={e => setName(e.target.value)} placeholder="名称" style={{ ...inputStyle }} />
-      <input value={profile} onChange={e => setProfile(e.target.value)} placeholder="身份描述（system prompt）" style={{ ...inputStyle }} />
+      <textarea
+        value={profile}
+        onChange={e => setProfile(e.target.value)}
+        placeholder="身份描述（system prompt）"
+        rows={5}
+        style={{
+          ...inputStyle,
+          minHeight: 100,
+          resize: 'vertical',
+          fontFamily: 'inherit',
+          lineHeight: 1.5,
+        }}
+      />
       <div style={{ display: 'flex', gap: 6 }}>
         <input value={watchActions} onChange={e => setWatchActions(e.target.value)} placeholder="监听动作" style={{ ...inputStyle, flex: 1 }} />
         <input value={actionTypes} onChange={e => setActionTypes(e.target.value)} placeholder="动作类型" style={{ ...inputStyle, flex: 1 }} />
@@ -189,27 +222,33 @@ function RoleConfigPanel({
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {others.length === 0 ? (
                 <span style={{ fontSize: 10, color: '#A0674A' }}>暂无其他 Agent</span>
-              ) : others.map(o => (
-                <label key={o.name} onClick={() => toggleUpstream(o.name)} style={{
-                  display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
-                  padding: '3px 8px', borderRadius: 6, fontSize: 11,
-                  background: upstream.includes(o.name) ? '#3B82F644' : '#FFFFFF12',
-                  color: upstream.includes(o.name) ? '#93C5FD' : '#A0674A',
-                  border: `1px solid ${upstream.includes(o.name) ? '#3B82F666' : 'transparent'}`,
-                  transition: 'all 0.1s',
-                }}>
-                  <span style={{
-                    width: 10, height: 10, borderRadius: 3, display: 'flex',
-                    alignItems: 'center', justifyContent: 'center',
-                    background: upstream.includes(o.name) ? '#3B82F6' : 'transparent',
-                    border: `1px solid ${upstream.includes(o.name) ? '#3B82F6' : '#666'}`,
-                    fontSize: 8, color: '#fff',
-                  }}>
-                    {upstream.includes(o.name) ? '✓' : ''}
-                  </span>
-                  {o.name}
-                </label>
-              ))}
+              ) : (
+                others.map(o => {
+                  if (!o.name) return null
+                  const isActive = upstream.includes(o.name)
+                  return (
+                    <label key={o.name} onClick={() => toggleUpstream(o.name)} style={{
+                      display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
+                      padding: '3px 8px', borderRadius: 6, fontSize: 11,
+                      background: isActive ? '#3B82F644' : '#FFFFFF12',
+                      color: isActive ? '#93C5FD' : '#A0674A',
+                      border: `1px solid ${isActive ? '#3B82F666' : 'transparent'}`,
+                      transition: 'all 0.1s',
+                    }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: 3, display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                        background: isActive ? '#3B82F6' : 'transparent',
+                        border: `1px solid ${isActive ? '#3B82F6' : '#666'}`,
+                        fontSize: 8, color: '#fff',
+                      }}>
+                        {isActive ? '✓' : ''}
+                      </span>
+                      {o.name}
+                    </label>
+                  )
+                })
+              )}
             </div>
           </div>
 
@@ -219,27 +258,33 @@ function RoleConfigPanel({
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {others.length === 0 ? (
                 <span style={{ fontSize: 10, color: '#A0674A' }}>暂无其他 Agent</span>
-              ) : others.map(o => (
-                <label key={o.name} onClick={() => toggleDownstream(o.name)} style={{
-                  display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
-                  padding: '3px 8px', borderRadius: 6, fontSize: 11,
-                  background: downstream.includes(o.name) ? '#F59E0B44' : '#FFFFFF12',
-                  color: downstream.includes(o.name) ? '#FCD34D' : '#A0674A',
-                  border: `1px solid ${downstream.includes(o.name) ? '#F59E0B66' : 'transparent'}`,
-                  transition: 'all 0.1s',
-                }}>
-                  <span style={{
-                    width: 10, height: 10, borderRadius: 3, display: 'flex',
-                    alignItems: 'center', justifyContent: 'center',
-                    background: downstream.includes(o.name) ? '#F59E0B' : 'transparent',
-                    border: `1px solid ${downstream.includes(o.name) ? '#F59E0B' : '#666'}`,
-                    fontSize: 8, color: '#fff',
-                  }}>
-                    {downstream.includes(o.name) ? '✓' : ''}
-                  </span>
-                  {o.name}
-                </label>
-              ))}
+              ) : (
+                others.map(o => {
+                  if (!o.name) return null
+                  const isActive = downstream.includes(o.name)
+                  return (
+                    <label key={o.name} onClick={() => toggleDownstream(o.name)} style={{
+                      display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
+                      padding: '3px 8px', borderRadius: 6, fontSize: 11,
+                      background: isActive ? '#F59E0B44' : '#FFFFFF12',
+                      color: isActive ? '#FCD34D' : '#A0674A',
+                      border: `1px solid ${isActive ? '#F59E0B66' : 'transparent'}`,
+                      transition: 'all 0.1s',
+                    }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: 3, display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                        background: isActive ? '#F59E0B' : 'transparent',
+                        border: `1px solid ${isActive ? '#F59E0B' : '#666'}`,
+                        fontSize: 8, color: '#fff',
+                      }}>
+                        {isActive ? '✓' : ''}
+                      </span>
+                      {o.name}
+                    </label>
+                  )
+                })
+              )}
             </div>
           </div>
         </>
@@ -356,11 +401,14 @@ export function RoleList({
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '8px 10px', background: '#2A1F14',
                 borderRadius: configRole === r.name ? '8px 8px 0 0' : 8,
-                border: `1px solid ${configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent'}`,
-                borderBottom: configRole === r.name ? 'none' : undefined,
-                cursor: 'pointer', transition: 'border 0.15s',
+                borderWidth: 1, borderStyle: 'solid',
+                borderColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',
+                borderBottomWidth: configRole === r.name ? 0 : 1,
+                borderBottomStyle: configRole === r.name ? 'none' : 'solid',
+                borderBottomColor: 'transparent',
+                cursor: 'pointer', transition: 'borderColor 0.15s',
               }}>
-              <Avatar name={r.name} size={28} side={r.debate_side} />
+              <Avatar name={(r as any).name || ''} size={28} side={r.debate_side} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{r.name}</div>
                 {sessionMode === 'debate' && r.debate_side ? (
@@ -383,7 +431,7 @@ export function RoleList({
                   </div>
                 ) : (
                   <div style={{ fontSize: 10, color: '#A0674A', marginTop: 1 }}>
-                    {r.watch_actions?.join(', ') || '无监听'}
+                    {(r.watch_actions || []).join(', ') || '无监听'}
                   </div>
                 )}
                 {(r.upstream_roles?.length > 0 || r.downstream_roles?.length > 0) && sessionMode !== 'debate' && (

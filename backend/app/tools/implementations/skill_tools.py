@@ -18,12 +18,13 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from app.tools.registry import registry
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # ── 路径配置 ────────────────────────────────────────────
 
-_SKILLS_BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "hermes" / "skills"
+_SKILLS_BASE_DIR = Path(settings.hermes_skills_dir)
 
 # ── 缓存（避免每次请求都扫描文件系统）───────────────────────
 

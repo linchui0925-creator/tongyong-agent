@@ -3,12 +3,13 @@ TeamRole - Multi-Agent 角色抽象
 角色 = 名称 + 描述 + 动作列表 + 监听规则 + 工具权限
 """
 
+from collections import deque
 from pydantic import BaseModel, Field, PrivateAttr
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 import logging
 
 from app.core.multi_agent.message import TeamMessage, new_message
-from app.core.multi_agent.action import TeamAction, get_action_class, create_action
+from app.core.multi_agent.actions import TeamAction, get_action_class, create_action
 from app.core.multi_agent.tool_permission import ToolPermission
 
 if TYPE_CHECKING:
@@ -46,6 +47,9 @@ class TeamRole(BaseModel):
     llm_provider: str = "deepseek"
     llm_model: str = ""
 
+    # Agent 模式
+    use_agent: bool = False  # True 时跳过 _think/_act，走 LangChain ReAct Agent
+
     # 连接图（上下游关系）
     upstream_roles: List[str] = Field(default_factory=list)   # 上游 Agent 名称列表
     downstream_roles: List[str] = Field(default_factory=list) # 下游 Agent 名称列表
@@ -58,7 +62,7 @@ class TeamRole(BaseModel):
     
     # 运行时（不持久化）
     _rc: Optional[RoleContext] = PrivateAttr(default=None)
-    _memory: List[TeamMessage] = PrivateAttr(default_factory=list)  # noqa: N816
+    _memory: deque = PrivateAttr(default_factory=lambda: deque(maxlen=100))  # noqa: N816
     _env: Optional["Environment"] = PrivateAttr(default=None)  # noqa: N816
     
     # ── 动作管理 ─────────────────────────────────────────
@@ -237,7 +241,9 @@ class TeamRole(BaseModel):
             has_error = True
 
         # 构造消息（send_to: 优先取动作指定的目标，否则广播）
+        # 读取后立即重置，防止残留状态污染后续轮次
         send_to = todo.send_to or ""
+        todo.send_to = ""
         msg = new_message(
             content=result,
             role="assistant",
@@ -253,6 +259,141 @@ class TeamRole(BaseModel):
         # 存入记忆
         self.add_memory(msg)
 
+        return msg
+
+    # ── Agent 模式 ─────────────────────────────────────────
+
+    def _infer_task_type(self) -> str:
+        """从角色名推断 TaskPayload.task_type"""
+        return {"Coder": "code", "Tester": "test", "Reviewer": "review"}.get(self.name, "task")
+
+    def _infer_cause_by(self) -> str:
+        """从角色名推断消息 cause_by"""
+        return {"Coder": "WriteCode", "Tester": "WriteTest", "Reviewer": "WriteReview"}.get(self.name, "AgentAction")
+
+    async def _run_as_agent(self) -> Optional[TeamMessage]:
+        """
+        用 LangChain ReAct Agent 替代 _think() + _act()。
+        Agent 可自主使用 workspace 工具和 registry 工具完成任务。
+        """
+        from langchain_core.messages import AIMessage, HumanMessage
+        from langgraph.prebuilt import create_react_agent
+        from app.llm.langchain_adapter import TongYongLLMAdapter
+        from app.core.multi_agent.actions.base import _get_llm_for_role, LLMError
+        from app.core.multi_agent.agent_tools import build_workspace_tools, get_filtered_registry_tools
+        from app.core.multi_agent.message import TaskPayload, new_message
+
+        # 1. 从 news 提取任务上下文
+        description = ""
+        original_req = ""
+        upstream_context = ""
+        feedback_text = ""
+        task_id = ""
+
+        for msg in reversed(self._rc.news):
+            p = TaskPayload.from_message(msg)
+            if p:
+                description = description or p.description or ""
+                original_req = original_req or p.original_requirement or ""
+                upstream_context = upstream_context or p.context or p.result or ""
+                task_id = task_id or p.task_id or ""
+                if p.feedback:
+                    fb = p.feedback[-1]
+                    feedback_text = f"退回理由: {fb.reason}\n修改建议: {', '.join(fb.suggestions)}"
+                if description:
+                    break
+            elif msg.role in ("user", "assistant") and msg.content:
+                description = description or msg.content
+
+        if not description:
+            description = "请根据上下文完成任务"
+
+        logger.info(f"[AGENT] {self.name} 任务描述: {description[:100]}..., 来源消息数: {len(self._rc.news)}")
+
+        # 2. 获取 LLM
+        base_llm = _get_llm_for_role(self)
+        if not base_llm:
+            raise LLMError(f"LLM 未配置 (provider={self.llm_provider})")
+        lc_llm = TongYongLLMAdapter(base_llm)
+
+        # 3. 获取工具
+        tools = []
+        if task_id:
+            from app.core.multi_agent.workspace import get_workspace
+            ws = get_workspace(task_id, create=True)
+            if ws:
+                ws.init()
+                tools.extend(build_workspace_tools(ws))
+
+        tools.extend(get_filtered_registry_tools(self.tool_permission))
+        logger.info(f"[AGENT] {self.name} 可用工具: {[t.name for t in tools]}")
+
+        # 4. 构建 system prompt
+        system_prompt = self.build_system_prompt()
+        task_context = f"""
+
+## 当前任务
+描述: {description}
+原始需求: {original_req or description}
+"""
+        if upstream_context:
+            task_context += f"上游产出:\n{upstream_context[:3000]}\n"
+        if feedback_text:
+            task_context += f"\n退回反馈:\n{feedback_text}\n"
+        task_context += "\n请通过工具完成任务，最终输出完整的工作成果。"
+
+        full_prompt = system_prompt + task_context
+
+        # 5. 创建并执行 Agent
+        agent = create_react_agent(
+            model=lc_llm,
+            tools=tools,
+            prompt=full_prompt,
+        )
+
+        collected = []
+        async for event in agent.astream_events(
+            {"messages": [HumanMessage(content=description)]},
+            config={"recursion_limit": self.tool_permission.max_tool_turns * 2},
+            version="v2",
+        ):
+            kind = event.get("event", "")
+            if kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    collected.append(chunk.content)
+            elif kind == "on_chain_end":
+                output = event.get("data", {}).get("output")
+                if output and isinstance(output, dict) and "messages" in output:
+                    last = output["messages"][-1]
+                    if isinstance(last, AIMessage) and last.content:
+                        collected.append(last.content)
+
+        final_text = "".join(collected) if collected else "(Agent 未产生输出)"
+
+        # 6. 包装为 TaskPayload → TeamMessage
+        from app.core.multi_agent.actions.base import TeamAction
+        result_code = TeamAction._parse_code(final_text) if self._infer_task_type() == "code" else final_text
+
+        payload = TaskPayload(
+            task_id=task_id,
+            task_type=self._infer_task_type(),
+            status="completed",
+            description=description,
+            original_requirement=original_req,
+            result=result_code,
+        )
+
+        send_to = self.upstream_roles[0] if self.upstream_roles else "Leader"
+        msg = new_message(
+            content=payload.to_content(),
+            role="assistant",
+            sent_from=self.name,
+            send_to=send_to,
+            cause_by=self._infer_cause_by(),
+        )
+        self.add_memory(msg)
+        logger.info(f"[AGENT] {self.name} 完成任务，结果长度: {len(final_text)}")
         return msg
 
     # ── 辩论角色（覆盖 observe + act）────────────────────────────────
@@ -280,8 +421,11 @@ class TeamRole(BaseModel):
             news: List[TeamMessage] = []
             cursor = self_ref._env._role_cursors.get(self_ref.name, 0)
 
-            for i in range(cursor, len(self_ref._env.messages)):
-                msg = self_ref._env.messages[i]
+            all_msgs = self_ref._env.get_all_messages()
+            for msg in all_msgs:
+                # 跳过已读消息（sequence <= cursor）
+                if msg.sequence is not None and msg.sequence <= cursor:
+                    continue
                 # 1. 定向发给自己的消息（对手发言）：总是接收
                 if msg.send_to == self_ref.name:
                     news.append(msg)
@@ -340,12 +484,29 @@ class TeamRole(BaseModel):
             self._mark_read()
             return None
 
-        # 3. 思考：选择动作
+        # 3. Agent 模式：跳过 _think/_act，直接运行 ReAct Agent
+        if self.use_agent:
+            try:
+                msg = await self._run_as_agent()
+                self._mark_read()
+                return msg
+            except Exception as e:
+                logger.error(f"[ROLE] {self.name} Agent 执行失败: {e}", exc_info=True)
+                msg = new_message(
+                    content=f"Agent 执行失败: {e}",
+                    role="assistant",
+                    sent_from=self.name,
+                    cause_by="AgentError",
+                    metadata={"error": True},
+                )
+                self._mark_read()
+                return msg
+
+        # 4. 流水线模式：思考 → 行动
         if not await self._think():
             self._mark_read()
             return None
 
-        # 4. 行动：执行并返回消息
         msg = await self._act()
         self._mark_read()
         return msg
@@ -435,10 +596,12 @@ ROLE_TEMPLATES: Dict[str, dict] = {
             "2) 遵循 PEP8 规范，注重错误处理和边界条件"
             "3) 代码必须可直接运行"
             "4) 收到退回时，根据 Leader 指明的修改要求精确修改代码"
+            "你有文件读写和终端工具可用，请用 workspace_write 写入代码，用 workspace_terminal 运行验证。"
             "编写完成后提交给 Leader 审批。"
         ),
         "watch_actions": ["DistributeTask"],
         "action_types": ["write_code"],
+        "use_agent": True,
     },
     "reviewer": {
         "name": "Reviewer",
@@ -448,10 +611,12 @@ ROLE_TEMPLATES: Dict[str, dict] = {
             "2) 检查潜在 bug、代码异味、性能问题和安全漏洞"
             "3) 给出评分(1-10)和具体改进建议"
             "4) 收到退回时，给出更深入的分析和更具体的建议"
+            "你有文件读写和终端工具可用，请用 workspace_read 读取代码，用 workspace_terminal 运行 lint/pytest。"
             "审查完成后提交给 Leader 审批。"
         ),
         "watch_actions": ["WriteCode"],
         "action_types": ["write_review"],
+        "use_agent": True,
     },
     "tester": {
         "name": "Tester",
@@ -461,10 +626,12 @@ ROLE_TEMPLATES: Dict[str, dict] = {
             "2) 覆盖正常流程、边界条件和异常场景"
             "3) 追求高测试覆盖率"
             "4) 收到退回时，根据 Leader 指明的修改要求改进测试用例"
+            "你有文件读写和终端工具可用，请用 workspace_write 写入测试，用 workspace_terminal 运行 pytest。"
             "编写完成后提交给 Leader 审批。"
         ),
         "watch_actions": ["WriteReview"],
         "action_types": ["write_test"],
+        "use_agent": True,
     },
     # 辩论角色模板已移除，请通过配置面板为 Agent 分配正方/反方/裁判角色
     # 旧版 debator 保持兼容

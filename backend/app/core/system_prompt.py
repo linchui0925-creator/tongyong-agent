@@ -2,10 +2,11 @@
 SystemPromptGenerator - System Prompt生成器
 
 双轨架构：
-- Tools（工具）→ API `tools` 参数传递（不在这里放描述）
+- Tools（工具）→ API `tools` 参数传递（function calling 协议，schema 走结构化 JSON）
 - Skills（技能）→ System Prompt 文本里作为索引
 
-Agent 想知道工具详情时，用 read_file('domains/tools/tools.md') 自我感知。
+Tools 不再写盘 tools.md——P4 (2026-06-02) 删除。详细 schema 由 registry 在
+function calling 协议里直接传 LLM，markdown 镜像冗余且不一致。
 """
 
 from app.core.capabilities import CapabilityManager
@@ -41,10 +42,7 @@ class SystemPromptGenerator:
 
 **你通过 function calling 执行操作。**
 
-工具清单和描述通过 API 的 `tools` 参数传递，模型推理时自动看到。
-
-**Agent 想知道工具详情时，用 `read_file('domains/tools/tools.md')` 读取完整描述和参数 schema。**
-该文件由代码自动维护，保持与实际可用工具同步。
+工具清单和描述通过 API 的 `tools` 参数传递，模型推理时自动看到。**不要**调用 `read_file` 读工具详情——`tools` 参数已经包含完整 schema。
 
 ## 执行纪律
 

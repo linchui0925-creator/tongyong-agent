@@ -1,3 +1,9 @@
+"""
+领域基础数据模型 - Message / Session / Memory / ToolResult。
+
+被 agent / memory / api 等多模块引用，**禁止改字段名**（会破 SQLite schema 迁移）。
+新增字段时：Optional 字段 + 默认值，向后兼容。
+"""
 from pydantic import BaseModel
 from typing import Optional, Any
 

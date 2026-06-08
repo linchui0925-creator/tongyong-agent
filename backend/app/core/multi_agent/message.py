@@ -147,6 +147,8 @@ class TaskPayload(BaseModel):
         """从 TeamMessage.content 反序列化（兼容纯文本回退）"""
         try:
             data = json.loads(msg.content)
+            if not isinstance(data, dict):
+                return None
             return cls(**data)
         except (json.JSONDecodeError, ValidationError):
             return None
@@ -156,6 +158,8 @@ class TaskPayload(BaseModel):
         """从字符串反序列化"""
         try:
             data = json.loads(content)
+            if not isinstance(data, dict):
+                return None
             return cls(**data)
         except (json.JSONDecodeError, ValidationError):
             return None

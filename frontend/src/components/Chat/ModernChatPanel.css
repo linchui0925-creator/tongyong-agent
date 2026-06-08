@@ -270,6 +270,37 @@
   border-radius: 1px;
 }
 
+/* Thinking pulse — 显示在消息气泡里，agent 思考阶段时可见 */
+.chat-thinking-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary, #888);
+  font-size: 13px;
+  font-style: italic;
+}
+.chat-thinking-pulse-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #6B8DD6);
+  animation: thinkingBounce 1.2s infinite ease-in-out;
+}
+.chat-thinking-pulse-dot:nth-child(1) { animation-delay: 0s; }
+.chat-thinking-pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+.chat-thinking-pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+.chat-thinking-pulse-label {
+  margin-left: 4px;
+  color: var(--text-secondary, #666);
+  font-style: normal;
+  font-weight: 500;
+}
+@keyframes thinkingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+
 @keyframes blink {
   50% { opacity: 0; }
 }
@@ -422,6 +453,163 @@
 
 .chat-delete:hover {
   color: var(--danger);
+}
+
+/* ========== Token Usage Bar ==========
+ * 显示在 .chat-input 上方，实时反映 context 容量 + 主动压缩按钮
+ * 颜色随百分比：<50% 绿（安全）/ 50-80% 黄（注意）/ >80% 红（接近阈值）
+ * 设计要点：
+ *   - 进度条 fill 用 % 宽度，配合 marker 标记 50% 阈值位置
+ *   - 压缩按钮在右侧 hover 时变色，让用户明确可点
+ *   - savedFlash 是 3s 自动消失的临时提示，用绿色脉冲一次
+ */
+.token-usage-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  padding: var(--sp-2, 8px) var(--sp-5, 20px);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated, #fafafa);
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.token-usage-bar--ok {
+  background: var(--bg-elevated, #fafafa);
+}
+.token-usage-bar--warn {
+  background: #fff8e1;
+}
+.token-usage-bar--danger {
+  background: #ffebee;
+}
+.token-usage-bar--idle {
+  opacity: 0.5;
+}
+
+.token-usage-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary, #888);
+  min-width: 38px;
+}
+
+.token-usage-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--text-primary, #333);
+  min-width: 130px;
+}
+
+.token-usage-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  background: var(--border, #e0e0e0);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 80px;
+}
+
+.token-usage-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--brand-primary, #4F7A4A);
+  transition: width 0.3s ease, background 0.3s;
+}
+
+.token-usage-bar--warn .token-usage-fill {
+  background: #f59e0b;
+}
+.token-usage-bar--danger .token-usage-fill {
+  background: #dc2626;
+}
+
+.token-usage-marker {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--danger, #dc2626);
+  opacity: 0.6;
+  z-index: 1;
+}
+
+.token-usage-marker--threshold {
+  /* 50% 阈值标记 — 触发被动压缩的临界值 */
+  left: 50%;
+}
+
+.token-usage-percent {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 50px;
+  text-align: right;
+}
+
+.token-usage-bar--warn .token-usage-percent {
+  color: #b45309;
+}
+.token-usage-bar--danger .token-usage-percent {
+  color: #dc2626;
+}
+
+.token-usage-warning {
+  color: var(--danger, #dc2626);
+  font-size: 14px;
+  animation: tokenWarningPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tokenWarningPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.token-usage-flash {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #d1fae5;
+  color: #065f46;
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+  animation: tokenFlashFade 3s ease-in-out;
+}
+
+@keyframes tokenFlashFade {
+  0% { opacity: 0; transform: translateX(-4px); }
+  10%, 80% { opacity: 1; transform: translateX(0); }
+  100% { opacity: 0; }
+}
+
+.token-usage-compress-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border, #d4d4d4);
+  border-radius: 6px;
+  background: var(--bg-primary, white);
+  color: var(--text-primary, #333);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.token-usage-compress-btn:hover:not(:disabled) {
+  background: var(--brand-primary, #4F7A4A);
+  color: white;
+  border-color: var(--brand-primary, #4F7A4A);
+  transform: translateY(-1px);
+}
+
+.token-usage-compress-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ========== Input Area ========== */

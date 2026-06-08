@@ -403,15 +403,26 @@ async def stream_chat_langchain(
                 if len(str(output).strip()) > 120:
                     preview += "..."
                 is_error = str(output).startswith("工具执行失败") if output else False
-                yield {
-                    "type": "tool_complete",
-                    "tool_name": tool_name,
-                    "result_preview": preview,
-                    "duration": 0,
-                    "error": is_error,
-                    "emoji": emoji,
-                    "timestamp": _time.time(),
-                }
+                # W2-3: 工具异常推 tool_error (而非 tool_complete, 跟 stream.py 收 11 类对齐)
+                if is_error:
+                    yield {
+                        "type": "tool_error",
+                        "tool_name": tool_name,
+                        "result_preview": preview,
+                        "error": str(output)[:500],
+                        "emoji": emoji,
+                        "timestamp": _time.time(),
+                    }
+                else:
+                    yield {
+                        "type": "tool_complete",
+                        "tool_name": tool_name,
+                        "result_preview": preview,
+                        "duration": 0,
+                        "error": False,
+                        "emoji": emoji,
+                        "timestamp": _time.time(),
+                    }
 
         # 推送最终内容（如果 astream_events 没有推送完整内容）
         # Agent 的最终输出在 messages 的最后一条
@@ -429,11 +440,39 @@ async def stream_chat_langchain(
     if full_text:
         ctx.add_message("assistant", full_text)
 
+    # W2-3: 推 context 事件 (上下文容量 — stream.py 收 "context" 事件)
+    #   schema: {"context": {"message_count": N, "threshold": T, ...}}
+    msg_count = len(ctx.messages) if hasattr(ctx, "messages") else 0
+    yield {
+        "type": "context",
+        "context": {
+            "message_count": msg_count,
+            "threshold": 10,
+        },
+        "timestamp": _time.time(),
+    }
+
+    # W2-3: 推 budget_warning 事件 (IterationBudget 共享)
+    #   schema: {"content": "已用 N/50 轮"} (stream.py 收的是 content 字符串)
+    budget = getattr(agent_engine, "budget", None)
+    if budget is not None:
+        current = getattr(budget, "current_round", 0)
+        max_rounds = getattr(budget, "max_rounds", 50)
+        yield {
+            "type": "budget_warning",
+            "content": f"已用 {current}/{max_rounds} 轮 (current_round={current}, max_rounds={max_rounds})",
+            "timestamp": _time.time(),
+        }
+
     # W2-2: 推 usage (token 用量 — stream.py 收 "usage" 事件)
+    #   schema: {"usage": {input/output/total_tokens}, "round": N, "cumulative": {...}}
     if cumulative_usage and cumulative_usage.get("total_tokens", 0) > 0:
         yield {
             "type": "usage",
             "usage": cumulative_usage,
+            "round": getattr(agent_engine.budget, "current_round", 0)
+                if getattr(agent_engine, "budget", None) else 0,
+            "cumulative": cumulative_usage,
             "timestamp": _time.time(),
         }
 

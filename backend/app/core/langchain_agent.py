@@ -146,7 +146,7 @@ async def stream_chat_langchain(
     system_prompt = ""
     try:
         ctx_system_msgs = [
-            m for m in agent_engine.ctx.messages if m.role == "system"
+            m for m in agent_engine.context.messages if m.role == "system"
         ]
         if ctx_system_msgs:
             system_prompt = "\n\n".join(

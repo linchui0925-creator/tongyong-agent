@@ -20,6 +20,15 @@ FRONTEND_PID="$LOG_DIR/frontend.pid"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 WATCHDOG_LOG="$LOG_DIR/watchdog.log"
 
+# W4-5 (2026-06-09): 加后端 watch — Hermes terminal(background=true) ~1.5h 后会
+#   给 bg session 发 13s SIGTERM 干掉 uvicorn (无 Traceback, 干净退出),
+#   表现为 :8000 ECONNREFUSED。 治法: watchdog 30s 轮询 :8000 端口,
+#   掉了直接用 exec form 拉起 uvicorn (不走 dev-up.sh, 那条走 shell-level
+#   nohup & 会被 Hermes 沙箱拒)。
+BACKEND_PORT=8000
+BACKEND_PID="$LOG_DIR/backend.pid"
+BACKEND_CMD="cd \"$ROOT/backend\" && \"$ROOT/backend/.venv/bin/python\" -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+
 MODE="${1:-loop}"
 
 log() {
@@ -56,6 +65,32 @@ restart_frontend() {
   fi
 }
 
+# W4-5: 后端重启。 关键: 用 subshell + nohup + </dev/null 走完全独立 session,
+#   摆脱 Hermes 父进程 13s SIGTERM 限制。 (macOS 没 setsid, nohup 是 portable 替代)
+restart_backend() {
+  log "[watchdog] backend 不健康 (:$BACKEND_PORT 无人监听)，开始重启"
+  rm -f "$BACKEND_PID"
+  pids=$(lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN -t 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    log "[watchdog] 杀掉残留 $BACKEND_PORT 监听: $pids"
+    kill -9 $pids 2>/dev/null || true
+    sleep 1
+  fi
+  # (subshell) 切断变量, nohup 忽略 SIGHUP, </dev/null 切断 stdin
+  #   </dev/null 必不可少, 否则 Hermes 父进程 close stdin 会传信号
+  ( nohup bash -c "$BACKEND_CMD" >>"$LOG_DIR/backend.log" 2>&1 </dev/null & )
+  sleep 4
+  # 拉起后新进程不在本 shell 的 job table, 用 lsof 找最新监听 pid
+  local new_pid
+  new_pid=$(lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)
+  if [[ -n "$new_pid" ]]; then
+    echo "$new_pid" > "$BACKEND_PID"
+    log "[watchdog] backend 重启成功 pid=$new_pid (:$BACKEND_PORT 已监听)"
+  else
+    log "[watchdog] backend 重启失败, 见 $LOG_DIR/backend.log"
+  fi
+}
+
 check_once() {
   local healthy=true reason=""
   if ! pid_alive "$FRONTEND_PID"; then
@@ -72,12 +107,23 @@ check_once() {
     log "[watchdog] frontend UNHEALTHY: $reason"
     restart_frontend
   fi
+
+  # W4-5: 后端健康检查 — Hermes 父进程 13s SIGTERM 干掉 uvicorn 的兜底
+  if ! is_port_listening "$BACKEND_PORT"; then
+    log "[watchdog] backend UNHEALTHY: :$BACKEND_PORT 无人监听"
+    restart_backend
+  else
+    log "[watchdog] backend healthy (:$BACKEND_PORT listening)"
+  fi
 }
 
 case "$MODE" in
   status)
-    pid_alive "$FRONTEND_PID" && echo "pidfile: $(cat "$FRONTEND_PID") (alive)" || echo "pidfile: down"
-    is_port_listening 5173 && echo "port 5173: listening" || echo "port 5173: not listening"
+    pid_alive "$FRONTEND_PID" && echo "frontend pidfile: $(cat "$FRONTEND_PID") (alive)" || echo "frontend pidfile: down"
+    is_port_listening 5173 && echo "frontend port 5173: listening" || echo "frontend port 5173: not listening"
+    # W4-5
+    pid_alive "$BACKEND_PID" && echo "backend  pidfile: $(cat "$BACKEND_PID") (alive)" || echo "backend  pidfile: down"
+    is_port_listening "$BACKEND_PORT" && echo "backend  port $BACKEND_PORT: listening" || echo "backend  port $BACKEND_PORT: not listening"
     ;;
   once)
     check_once

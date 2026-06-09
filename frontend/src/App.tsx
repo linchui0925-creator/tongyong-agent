@@ -12,6 +12,7 @@ import { SkillManagement } from './components/Skills/SkillManagement'
 import PersonalityPanel from './components/Personality/PersonalityPanel'
 import EvaluationDashboard from './components/Evaluation/EvaluationDashboard'
 import { TeamPanel } from './components/Team/TeamPanel'
+import ErrorBoundary from './components/common/ErrorBoundary'
 import { getSessions } from './api/memory'
 import './App.css'
 
@@ -80,24 +81,27 @@ function App() {
         </aside>
 
         <main className="app-main">
-          {activeTab === 'chat' && (
-            <ModernChatPanel initialSessionId={currentSessionId} />
-          )}
-          {activeTab === 'memory' && (
-            <MemoryPanel
-              currentSessionId={currentSessionId}
-              onSessionChange={setCurrentSessionId}
-              onRefreshSessions={loadSessions}
-            />
-          )}
-          {activeTab === 'skills' && <SkillManagement />}
-          {activeTab === 'personality' && <PersonalityPanel />}
-          {activeTab === 'dreaming' && <DreamingPanel />}
-          {activeTab === 'profiles' && <ProfileSelector />}
-          {activeTab === 'evaluation' && (
-            <EvaluationDashboard currentSessionId={currentSessionId} />
-          )}
-          {activeTab === 'team' && <TeamPanel />}
+          {/* ErrorBoundary 只包面板区：单个 tab 组件崩了不会把 sidebar + header 一起带走 */}
+          <ErrorBoundary>
+            {activeTab === 'chat' && (
+              <ModernChatPanel initialSessionId={currentSessionId} />
+            )}
+            {activeTab === 'memory' && (
+              <MemoryPanel
+                currentSessionId={currentSessionId}
+                onSessionChange={setCurrentSessionId}
+                onRefreshSessions={loadSessions}
+              />
+            )}
+            {activeTab === 'skills' && <SkillManagement />}
+            {activeTab === 'personality' && <PersonalityPanel />}
+            {activeTab === 'dreaming' && <DreamingPanel />}
+            {activeTab === 'profiles' && <ProfileSelector />}
+            {activeTab === 'evaluation' && (
+              <EvaluationDashboard currentSessionId={currentSessionId} />
+            )}
+            {activeTab === 'team' && <TeamPanel />}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

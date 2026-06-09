@@ -151,13 +151,18 @@ function TokenUsageBar({
       </div>
     );
   }
-  const { estimated_tokens, threshold_tokens, percent, approaching } = contextInfo;
+  // 缺字段兜底：某些上下文聚合路径可能没填 estimated/threshold，
+  // 直接 ?? 0 避免 .toLocaleString() 抛 TypeError 把整条 React 树打挂。
+  const estimated = typeof contextInfo.estimated_tokens === 'number' ? contextInfo.estimated_tokens : 0;
+  const threshold = typeof contextInfo.threshold_tokens === 'number' ? contextInfo.threshold_tokens : 0;
+  const percent = typeof contextInfo.percent === 'number' ? contextInfo.percent : 0;
+  const approaching = Boolean(contextInfo.approaching);
   const level = percent >= 80 ? 'danger' : percent >= 50 ? 'warn' : 'ok';
   return (
     <div className={`token-usage-bar token-usage-bar--${level}`}>
       <span className="token-usage-label">tokens</span>
       <span className="token-usage-value">
-        {estimated_tokens.toLocaleString()} / {threshold_tokens.toLocaleString()}
+        {estimated.toLocaleString()} / {threshold.toLocaleString()}
       </span>
       <div className="token-usage-track">
         <div

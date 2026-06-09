@@ -32,6 +32,10 @@ cache_data_*.json
 # Frontend cache
 frontend/.vite/
 
+# Local tool caches (not committed)
+.codegraph/
+.hermes/
+
 # Debug and test files
 backend/*.png
 backend/*.html

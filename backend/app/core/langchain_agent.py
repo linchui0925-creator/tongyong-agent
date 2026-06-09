@@ -168,6 +168,21 @@ async def stream_chat_langchain(
         elif msg.role == "assistant":
             chat_history.append(AIMessage(content=msg.content or ""))
 
+    # ── 滑动窗口截断：保留首 2 条（开场语境）+ 末 20 条（最近对话） ──
+    # 触发场景：minimaxi.com 等短窗口 provider 在历史累计 60 条 messages 时
+    # 会返回 400 "context window exceeds limit (2013)"，把整轮 agent 调用打挂、
+    # SSE 流只 yield done、前端看到空白响应。截断后老 session 也能继续走通。
+    # 阈值取保守值 22（首2+末20），给 system prompt + 当前 user 消息留余量。
+    KEEP_HEAD = 2
+    KEEP_TAIL = 20
+    if len(chat_history) > KEEP_HEAD + KEEP_TAIL:
+        dropped = len(chat_history) - KEEP_HEAD - KEEP_TAIL
+        logger.info(
+            f"[langchain] 截断 chat_history: {len(chat_history)} 条 → "
+            f"首 {KEEP_HEAD} + 末 {KEEP_TAIL}（丢弃中间 {dropped} 条）"
+        )
+        chat_history = chat_history[:KEEP_HEAD] + chat_history[-KEEP_TAIL:]
+
     # ── 3. 创建 ReAct Agent (带 checkpointer) ──────────
     max_iterations = 20
     if hasattr(agent_engine, 'budget'):

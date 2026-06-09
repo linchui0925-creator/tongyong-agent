@@ -132,9 +132,10 @@ class DebateSpeechAction(TeamAction):
                 topic = msg.content
                 break
 
-        # 获取辩手位置和阵营
-        position = getattr(role, "debate_position", "first")
-        side = getattr(role, "debate_side", "positive" if "正方" in role.name else "negative")
+        # 获取辩手位置和阵营。role.py:60 定义 debate_side: str = "" (默认空串),
+        #   不能用 getattr fallback (永远拿不到 default)。 用 or-trick: 空串/None 走 name 推断
+        position = role.debate_position or "first"
+        side = role.debate_side or ("positive" if "正方" in role.name else "negative")
         stance = role.stance or ("正方" if side == "positive" else "反方")
 
         # 根据辩位确定职责

@@ -353,7 +353,7 @@ export function RoleList({
           background: showForm ? '#FFFFFF22' : C.accent, color: '#fff',
           border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
         }}>
-          {showForm ? '取消' : `${Icons.plus} 添加`}
+          {showForm ? '取消' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>{Icons.plus} 添加</span>}
         </button>
       </div>
 

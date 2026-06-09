@@ -155,19 +155,20 @@ class Team(BaseModel):
         logger.info(f"[TEAM] 开始流式运行: {idea[:50]}... (mode={self.mode}, max {n_round} rounds, cursor_reset={current_seq})")
 
         # ── 初始消息：用户任务 ────────────────────────────
+        # bug fix: 原代码要求 debate_side in ("positive","negative") 才收 start_msg，
+        #   但 UI 允许未填阵营保存 → 全部跳过 → 0 消息死锁。改为全部辩手都收 (裁判也收以便观察)。
         if self.mode == "debate":
             for role in self._roles.values():
-                if getattr(role, "debate_side", "") in ("positive", "negative"):
-                    start_msg = new_message(
-                        content=idea,
-                        role="user",
-                        sent_from="user",
-                        send_to=role.name,
-                        cause_by="UserRequirement",
-                    )
-                    await self._env.publish_async(start_msg)
-                    self._result_messages.append(start_msg)
-                    yield start_msg
+                start_msg = new_message(
+                    content=idea,
+                    role="user",
+                    sent_from="user",
+                    send_to=role.name,
+                    cause_by="UserRequirement",
+                )
+                await self._env.publish_async(start_msg)
+                self._result_messages.append(start_msg)
+                yield start_msg
         else:
             start_msg = new_message(
                 content=idea,

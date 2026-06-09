@@ -401,8 +401,17 @@ export function RoleList({
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '8px 10px', background: '#2A1F14',
                 borderRadius: configRole === r.name ? '8px 8px 0 0' : 8,
-                borderWidth: 1, borderStyle: 'solid',
-                borderColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',
+                // W4-6 2026-06-09 修 React 警告: 别用 borderWidth + borderStyle 这种
+                //   shorthand, 它跟 borderBottom* longhand 冲突, React 会算
+                //   "updating a style property during rerender"。 拆成 4 longhand
+                //   + 4 borderBottom longhand, transition 只盯 borderColor
+                borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: 'transparent',
+                borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: 'transparent',
+                borderRightWidth: 1, borderRightStyle: 'solid', borderRightColor: 'transparent',
+                // active: 4 边都高亮; hover: 4 边浅色; inactive: 透明
+                borderTopColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',
+                borderLeftColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',
+                borderRightColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',
                 borderBottomWidth: configRole === r.name ? 0 : 1,
                 borderBottomStyle: configRole === r.name ? 'none' : 'solid',
                 borderBottomColor: 'transparent',

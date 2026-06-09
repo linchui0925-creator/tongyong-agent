@@ -21,6 +21,7 @@ LangChain ReAct Agent — 替代 agent.py 中手写 ReAct 循环
 import asyncio
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -183,7 +184,16 @@ async def stream_chat_langchain(
         )
         chat_history = chat_history[:KEEP_HEAD] + chat_history[-KEEP_TAIL:]
 
-    # ── 3. 创建 ReAct Agent (带 checkpointer) ──────────
+    # ── 3. 创建 ReAct Agent ──────────
+    # W3-B：临时改走 ephemeral path — 修"agent不输出内容"问题
+    # 根因：checkpointer 把每轮 4 段 system prompt + user/assistant 存到 sqlite，
+    # 后续 astream 读 state.values["messages"] 时累积 4×N 段 system，单次请求总 token
+    # 超过 minimaxi 短窗口 (2013 messages 等价物)，触发 400、SSE 只 yield done。
+    # 之前尝试的"chat_history 去重"无效，因为 input.messages 经 astream 走
+    # checkpointer 时被追加到 state，复读时仍包含全部历史 system。
+    # 临时修法：把 session_id 当 thread_id 改走 ephemeral（不传 thread_id），
+    # 这样 astream 不读 checkpointer 状态，input 只含本轮 chat_history。
+    # 副作用：丢 60 条历史的连续记忆。后续修好再改回 is_persistent=True。
     max_iterations = 20
     if hasattr(agent_engine, 'budget'):
         max_iterations = agent_engine.budget.max_rounds
@@ -191,7 +201,8 @@ async def stream_chat_langchain(
     # W1-3: 接 AsyncSqliteSaver, session_id 当 thread_id
     # session_id=None 时, 不用 checkpointer (ephemeral 不污染持久化)
     thread_id = session_id or f"ephemeral-{_time.time()}"
-    is_persistent = bool(session_id)
+    # W3-B 临时改: 强制走 ephemeral，避免 checkpointer 累积 system prompt
+    is_persistent = False
 
     if is_persistent:
         checkpointer_cm = _use_checkpointer()
@@ -256,6 +267,7 @@ async def stream_chat_langchain(
         }
         if is_persistent:
             astream_config["configurable"] = {"thread_id": thread_id}
+        # W3-B 临时改：ephemeral 路径不传 configurable，避免读 checkpointer 状态
 
         # 使用 astream_events 获取流式事件
         # W2-2: 切 thinking (Q1/Q2 必修 — LLM 输出 <think>...</think> 段)
@@ -452,8 +464,35 @@ async def stream_chat_langchain(
     # ── 5. 完成 ──────────────────────────────────────
     # 记录到 context
     full_text = "".join(collected_content)
-    if full_text:
-        ctx.add_message("assistant", full_text)
+    # W4-3 修复 2026-06-09: 写库前先清掉 <think>...</think> 思考段
+    #   根因: 流式 chunks 拼起来的 full_text 含 think, 之前直接进 ctx + memory_storage,
+    #   导致 DB / 切会话拉历史看到 "用户要求用一句话介绍..." 这种 thought 段。
+    #   修法: 用同一个正则在写库前切, 跟前端 displayContent.replace 保持一致语义。
+    full_text_clean = re.sub(r"<think>[\s\S]*?</think>", "", full_text, flags=re.DOTALL).strip()
+    # display_text 是"用户实际看到的回答" — 用于 ctx 内存 + 持久化
+    display_text = full_text_clean
+    if display_text:
+        ctx.add_message("assistant", display_text)
+
+    # ── 5.1 持久化写库 (W4-1 必修 2026-06-09) ────────
+    # 之前 langchain 路径不调 memory_storage.add_message，导致切会话拉不到历史。
+    # 根因: chat() 路径 (agent.py:445-446) 写了，stream_chat() 自研路径写了，
+    #       只有 stream_chat_langchain() 这条路径漏掉 — 跟 chat() 一样补上。
+    # session_id 必须非空 — 早期空 session 走 ephemeral，这里也跳过。
+    # W4-3: 写库用 display_text (无 think 段), user 消息保留原文 (用户没说 think)。
+    if session_id:
+        try:
+            mem = getattr(agent_engine, "memory_storage", None)
+            if mem is not None:
+                await mem.add_message(session_id, "user", message)
+                if display_text:
+                    await mem.add_message(session_id, "assistant", display_text)
+                logger.info(
+                    f"[langchain] persisted 2 messages to session={session_id}, "
+                    f"full_text_len={len(display_text)} (cleaned from {len(full_text)})"
+                )
+        except Exception as _persist_err:
+            logger.error(f"[langchain] 持久化消息失败: {_persist_err}", exc_info=True)
 
     # W2-3: 推 context 事件 (上下文容量 — stream.py 收 "context" 事件)
     #   schema: {"context": {"message_count": N, "threshold": T, ...}}
@@ -479,8 +518,32 @@ async def stream_chat_langchain(
             "timestamp": _time.time(),
         }
 
+    # W4-4 修复 2026-06-09: DashScope 兼容 API 不返回 usage 字段 (provider feature),
+    #   链路里所有 usage_metadata 都是空 dict, 推上去前端就显示 0/0/0。
+    # 兜底: 估算 usage (业内常见做法, 1 中文 ≈ 1.5 token, 1 英文 ≈ 0.25 token,
+    #   简化: 中文字符数 + 英文单词数 * 1.3)
+    if cumulative_usage.get("total_tokens", 0) == 0 and (full_text or message):
+        # input: user message 字符; output: assistant 干净文本字符 (W4-3 修复后用 display_text)
+        in_chars = len(message) if message else 0
+        # W4-3: 用 display_text 估算, 不含 think 段
+        out_chars = len(display_text) if display_text else 0
+        # 简单估算 (中文占多数, 1 字符 ≈ 1.5 token, 加英文标点 1.0)
+        in_tok = max(1, int(in_chars * 1.5))
+        out_tok = max(1, int(out_chars * 1.5))
+        cumulative_usage = {
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "total_tokens": in_tok + out_tok,
+        }
+        logger.info(
+            f"[W4-4] DashScope 未返回 usage, 按字符数估算: "
+            f"in={in_tok} (from {in_chars} chars), "
+            f"out={out_tok} (from {out_chars} chars)"
+        )
+
     # W2-2: 推 usage (token 用量 — stream.py 收 "usage" 事件)
     #   schema: {"usage": {input/output/total_tokens}, "round": N, "cumulative": {...}}
+    # W4-4 改: 即便是估算值也照推, 前端就能显示数字而非 0/0
     if cumulative_usage and cumulative_usage.get("total_tokens", 0) > 0:
         yield {
             "type": "usage",
@@ -491,7 +554,16 @@ async def stream_chat_langchain(
             "timestamp": _time.time(),
         }
 
-    yield _done(session_id or "", tools_used, commands_executed)
+    # W4-1 改: done 事件带 usage，前端 done 分支会刷新 TokenUsageBar
+    yield {
+        "type": "done",
+        "session_id": session_id or "",
+        "tools_used": tools_used,
+        "commands_executed": commands_executed,
+        "processing_time": round(_time.time() - start_time, 2),
+        "usage": cumulative_usage if cumulative_usage else {},
+        "timestamp": _time.time(),
+    }
 
 
 def _get_emoji(tool_name: str) -> str:

@@ -336,9 +336,12 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         const rawContent = m.content || '';
         // 清理 <|im_start|>...<|im_end|> 标签（MiniMax 模型输出）
         const cleanedForThink = rawContent.replace(/<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>/g, '');
-        const thinkMatch = cleanedForThink.match(/<think>([\s\S]*?)晖/);
+        // 修复 (W4-1 2026-06-09): 闭标签原写 "晖" (Unicode 同形字), 正则永远不匹配
+        //   → 切会话时 think 段整段混进 displayContent, UI 直接显示 <think>...</think>
+        // 正确闭标签是 </think>, 这里用 <\/think> 转义反斜杠
+        const thinkMatch = cleanedForThink.match(/<think>([\s\S]*?)<\/think>/);
         const thinking = thinkMatch ? thinkMatch[1] : '';
-        const displayContent = cleanedForThink.replace(/<think>[\s\S]*?晖/g, '').trim();
+        const displayContent = cleanedForThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
         return {
           id: m.id || `msg-${i}`,
           role: m.role,
@@ -586,9 +589,10 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         setProgressText('');
         markActive();
         // 提取 thinking 内容并过滤
-        const thinkMatch = full.match(/<think>([\s\S]*?)晖/);
+        // 修复 (W4-1 2026-06-09): 闭标签用 Unicode "晖" 同形字, 正则永远不匹配
+        const thinkMatch = full.match(/<think>([\s\S]*?)<\/think>/);
         const thinking = thinkMatch ? thinkMatch[1] : '';
-        const displayContent = full.replace(/<think>[\s\S]*?晖/g, '').trim();
+        const displayContent = full.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
         setMessages(prev => prev.map(m =>
           m.id === aid ? { ...m, content: displayContent, thinking: thinking || m.thinking, status: 'streaming' as const } : m
         ));
@@ -1022,9 +1026,10 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                       onContent: (_chunk, full) => {
                         setProgressText('');
                         markActive();
-                        const thinkMatch = full.match(/<think>([\s\S]*?)晖/);
+                        // 修复 (W4-1 2026-06-09): 闭标签用 Unicode "晖" 同形字
+                        const thinkMatch = full.match(/<think>([\s\S]*?)<\/think>/);
                         const thinking = thinkMatch ? thinkMatch[1] : '';
-                        const displayContent = full.replace(/<think>[\s\S]*?晖/g, '').trim();
+                        const displayContent = full.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
                         setMessages(prev => prev.map(m => m.id === aid ? { ...m, content: displayContent, thinking: thinking || m.thinking, status: 'streaming' as const } : m));
                       },
                       onDone: () => {

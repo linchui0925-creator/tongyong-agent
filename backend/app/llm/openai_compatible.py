@@ -293,6 +293,21 @@ class OpenAICompatibleLLM(BaseLLM):
         message = choices[0].get("message", {})
         content = message.get("content") or ""
 
+        # 修复 (W4-1 2026-06-09): 把 OpenAI usage 灌进 LLMResponse,
+        #   langchain_adapter._agenerate 才能挂到 AIMessage.usage_metadata,
+        #   on_chat_model_end 才拿得到 token 数, TokenUsageBar 才不显示 0/0。
+        # OpenAI 格式: {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
+        # 兼容: prompt → input_tokens, completion → output_tokens
+        raw_usage = result.get("usage") or {}
+        if raw_usage:
+            usage = {
+                "input_tokens": raw_usage.get("prompt_tokens", 0),
+                "output_tokens": raw_usage.get("completion_tokens", 0),
+                "total_tokens": raw_usage.get("total_tokens", 0),
+            }
+        else:
+            usage = {}
+
         # 工具调用
         tool_calls_raw = message.get("tool_calls", [])
         if tool_calls_raw:
@@ -309,9 +324,9 @@ class OpenAICompatibleLLM(BaseLLM):
                     arguments=arguments,
                     tool_call_id=tc.get("id", ""),
                 ))
-            return LLMResponse(content=content, tool_calls=tool_calls)
+            return LLMResponse(content=content, tool_calls=tool_calls, usage=usage)
 
-        return LLMResponse(content=content)
+        return LLMResponse(content=content, usage=usage)
 
     def _parse_response_with_thinking(self, result: Dict) -> LLMResponse:
         """解析包含 thinking 内容的响应（如 DeepSeek-R1）"""
@@ -327,11 +342,13 @@ class OpenAICompatibleLLM(BaseLLM):
         import re
 
         # 首先尝试匹配完整的 <think>...晖 对
-        think_match = re.search(r'<think>([\s\S]*?)晖', content)
+        # 修复 (W4-1 2026-06-09): 闭标签原写 Unicode "晖" 同形字, 永远不匹配
+        #   正确闭标签是 </think>, 改用 <\/think> (反斜杠在 raw 字符串中不需要, 但加也 OK)
+        think_match = re.search(r'<think>([\s\S]*?)</think>', content)
         if think_match:
             thinking_text = think_match.group(1).strip()
             # 移除 thinking 部分
-            content = re.sub(r'<think>[\s\S]*?晖', '', content, count=1).strip()
+            content = re.sub(r'<think>[\s\S]*?</think>', '', content, count=1).strip()
 
             # 将 thinking 内容切分成小块用于流式展示
             lines_text = thinking_text.split('\n')
@@ -423,9 +440,9 @@ class MiniMaxLLM(OpenAICompatibleLLM):
         content = message.get("content") or ""
 
         # MiniMax 模型可能输出 Qwen 风格的 <|im_start|>...<|im_end|> 标记
-        # 或 <think>...晖 思考标签，直接清理掉
-        content = re.sub(r'<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>', '', content)
-        content = re.sub(r'<think>[\s\S]*?晖', '', content)
+        # 或 <think>...</think> 思考标签，直接清理掉 (修复 W4-1: "晖" 同形字 → 正确闭标签)
+        content = re.sub(r'<\|\s*im_start\s*\|[^|]*\|[^>]*>[\s\S]*?<\|\s*im_end\s*\|>', '', content)
+        content = re.sub(r'<think>[\s\S]*?</think>', '', content)
         content = content.strip()
 
         # 工具调用

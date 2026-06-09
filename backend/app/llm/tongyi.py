@@ -120,6 +120,20 @@ class TongyiLLM(BaseLLM):
                     message = choices[0].get("message", {})
                     content = message.get("content", "") or ""
 
+                    # 修复 (W4-2 2026-06-09): 把 DashScope usage 灌进 LLMResponse,
+                    #   langchain_adapter._agenerate 才能挂到 AIMessage.usage_metadata,
+                    #   on_chat_model_end 才拿得到 token 数, TokenUsageBar 才不显示 0/0。
+                    # OpenAI 兼容格式: {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
+                    raw_usage = result.get("usage") or {}
+                    if raw_usage:
+                        usage = {
+                            "input_tokens": raw_usage.get("prompt_tokens", 0),
+                            "output_tokens": raw_usage.get("completion_tokens", 0),
+                            "total_tokens": raw_usage.get("total_tokens", 0),
+                        }
+                    else:
+                        usage = {}
+
                     # 检查工具调用
                     tool_calls_raw = message.get("tool_calls", [])
                     if tool_calls_raw:
@@ -138,10 +152,10 @@ class TongyiLLM(BaseLLM):
                                 tool_call_id=tc.get("id", "")
                             ))
                         logger.info(f"通义千问返回 {len(tool_calls)} 个工具调用: {[tc.tool_name for tc in tool_calls]}")
-                        return LLMResponse(content=content, tool_calls=tool_calls)
+                        return LLMResponse(content=content, tool_calls=tool_calls, usage=usage)
 
-                    logger.info(f"通义千问兼容模式响应成功，回复长度: {len(content)}")
-                    return LLMResponse(content=content)
+                    logger.info(f"通义千问兼容模式响应成功，回复长度: {len(content)}, usage={usage}")
+                    return LLMResponse(content=content, usage=usage)
 
                 except httpx.TimeoutException:
                     logger.warning(f"兼容模式请求超时 (尝试 {attempt + 1}/{self.MAX_RETRIES})")
@@ -192,13 +206,24 @@ class TongyiLLM(BaseLLM):
                     output = result.get("output", {})
                     choices = output.get("choices", [])
 
+                    # 修复 (W4-2): 原生模式也灌 usage (字段位置相同: result["usage"])
+                    raw_usage = result.get("usage") or {}
+                    if raw_usage:
+                        usage = {
+                            "input_tokens": raw_usage.get("prompt_tokens", 0) or raw_usage.get("input_tokens", 0),
+                            "output_tokens": raw_usage.get("completion_tokens", 0) or raw_usage.get("output_tokens", 0),
+                            "total_tokens": raw_usage.get("total_tokens", 0),
+                        }
+                    else:
+                        usage = {}
+
                     if choices:
                         content = choices[0].get("message", {}).get("content", "") or ""
-                        logger.info(f"通义千问原生API响应成功，回复长度: {len(content)}")
-                        return LLMResponse(content=content)
+                        logger.info(f"通义千问原生API响应成功，回复长度: {len(content)}, usage={usage}")
+                        return LLMResponse(content=content, usage=usage)
 
                     if "text" in output:
-                        return LLMResponse(content=output["text"])
+                        return LLMResponse(content=output["text"], usage=usage)
 
                     raise LLMError("响应格式错误", "INVALID_RESPONSE", result)
 

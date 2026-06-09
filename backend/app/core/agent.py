@@ -725,15 +725,11 @@ class AgentEngine:
             return "ws://" in text and ("/json" in text or "/devtools/page/" in text)
 
         def _clean_thinking(text: str):
-            """清理文本中的 <think>...晖 内容，返回 (清理后文本, thinking内容)"""
-            match = _re.search(r'<think>([\s\S]*?)晖', text)
+            """清理文本中的 <think>...</think> 内容，返回 (清理后文本, thinking内容)"""
+            # 修复 (W4-1 2026-06-09): 删除 Unicode "晖" 同形字残留分支, 统一用 </think>
+            match = _re.search(r'<think>([\s\S]*?)</think>', text)
             if match:
                 thinking = match.group(1)
-                cleaned = _re.sub(r'<think>[\s\S]*?晖', '', text, count=1).strip()
-                return cleaned, thinking
-            match2 = _re.search(r'<think>([\s\S]*?)</think>', text)
-            if match2:
-                thinking = match2.group(1)
                 cleaned = _re.sub(r'<think>[\s\S]*?</think>', '', text, count=1).strip()
                 return cleaned, thinking
             return text, ""
@@ -1532,8 +1528,8 @@ class AgentEngine:
                         break
         if not final_reply:
             final_reply = "（无回复内容）"
-        # 清理 <think>...晖 思考标签，不存入数据库
-        final_reply = re.sub(r'<think>[\s\S]*?晖', '', final_reply, flags=re.DOTALL).strip()
+        # 清理 <think>...</think> 思考标签，不存入数据库 (修复 W4-1: "晖" 同形字 → 正确闭标签)
+        final_reply = re.sub(r'<think>[\s\S]*?</think>', '', final_reply, flags=re.DOTALL).strip()
         final_reply = re.sub(r'<think>[\s\S]*?</think>', '', final_reply, flags=re.DOTALL).strip()
         # 清理 Qwen 风格的 <|im_start|>...<|im_end|> 标签
         final_reply = re.sub(r'<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>', '', final_reply).strip()

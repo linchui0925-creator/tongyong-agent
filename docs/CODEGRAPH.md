@@ -14,6 +14,7 @@
 > 📝 W4-11/W4-12 修复 (2026-06-21): MCP `_send_raw` silent return / text=False str write + SKILL `get_skills_prompt` 永久缓存不感知 mtime, 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
 > 📝 W4-13 修复 (2026-06-21): 审计发现 3 处连带 bug (heuristic 多段只取第一 + budget 一次性 + skipped 路径污染), 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
 > 📝 W4-15 工具 (2026-06-22): 新增 `glob` 工具 (按模式跨目录匹配, 跳 _PRUNE_DIRS) + `load_skill` 别名 (指向 skill_view, 兼容用户熟悉的 Anthropic 风格命名)
+> 📝 W4-14 修复 (2026-06-22): MCP 客户端 4 处 bug — 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 详见末尾 W4-14 节
 
 
 | 维度 | 数值 |
@@ -184,7 +185,7 @@ frontend/src/
 
 - ✅ **[W4-8 已修] DebateJudgeAction 字符串匹配**（[debate.py:236-241](backend/app/core/multi_agent/actions/debate.py)）—— 当角色名不含"正方/反方"时全漏判，[commit 510bff1](代码审查报告与修复方案.md) 已点名未修
 - ✅ **[W4-8 已修] system prompt 注入顺序与注释相反**（[agent.py:198-249](backend/app/core/agent.py)）—— `_inject_*` 全用 `messages.insert(0, ...)`，最后调用的反而占顶部，base_prompt 被压到最底
-- ✅ **[W4-11 已修] MCP `_send_raw` silent return 改 raise + Popen text=True + get_running_loop**（[mcp_client.py:65-78, 191-211, 109-118](backend/app/tools/mcp_client.py)）—— 旧实现 `Popen(text=False)` + str write 必 TypeError, `_send_raw` 进程未启动时 silent return 导致 future 永远 hang
+- ✅ **[W4-11 + W4-14 已修] MCP 客户端**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— W4-11 修 4 处 (silent return / text mode / get_running_loop / future 清理); W4-14 修 4 处 (跨 loop future 跟踪 / 进程 crash fail pending / shutdown 顺序 / async 入口), 共 17 个测试（[mcp_client.py:65-78, 191-211, 109-118](backend/app/tools/mcp_client.py)）—— 旧实现 `Popen(text=False)` + str write 必 TypeError, `_send_raw` 进程未启动时 silent return 导致 future 永远 hang
 - ✅ **[W4-13 已修] `_extract_heuristic_sections` 多启发式段全部保留**（[skills_index.py:172-202](backend/app/core/skills_index.py)）—— 旧实现遇到第一个非启发式 ## 标题就 break, 后续 ## Heuristic B 等全被丢
 - ✅ **[W4-13 已修] `get_system_skills_content` 预算动态递减**（[skills_index.py:205-274](backend/app/core/skills_index.py)）—— 旧实现 `budget_per = 8KB // N` 一次性, 多个 skill 累计可能超 8KB
 - ✅ **[W4-13 已修] `marketplace.install_skill` skipped 结构化**（[marketplace.py:587-619](backend/app/core/marketplace.py)）—— 旧实现 `skipped.append(rel + " (binary)")` 把 path 和 tag 拼成一个字符串, 污染 List[str] 列表
@@ -197,6 +198,7 @@ frontend/src/
 ### 4.3 测试 / 覆盖率
 
 - ✅ **[W4-8 已补] 辩论测试覆盖**（[tests/test_debate_judge.py](backend/tests/test_debate_judge.py)，7 用例: 英文名 + 兜底 + judge 排除 + metadata 覆盖 + SpeakAloud）
+- ✅ **[W4-14] MCP 客户端 lifespan 测试**（[tests/test_mcp_lifespan.py](backend/tests/test_mcp_lifespan.py) 9 用例: _response_futures tuple layout / _fail_pending / 跨 loop call_soon_threadsafe / close 顺序 / _read_loop 退出 fail pending / async 入口幂等 / shutdown 清理)
 - ✅ **[W4-11 已补] MCP 客户端测试**（[tests/test_mcp_client.py](backend/tests/test_mcp_client.py)，8 用例: silent return + future 清理 + get_running_loop 无 deprecation + close 不重复 + text=True）
 - ✅ **[W4-13 已补] 审计发现修复测试**（[tests/test_w413_audit_fixes.py](backend/tests/test_w413_audit_fixes.py)，8 用例: heuristic 多段 + Decision/Pitfall 模式 + budget 不超 8KB + skipped 结构化）
 - ✅ **[W4-12 已补] Skill 索引测试**（[tests/test_skills_index.py](backend/tests/test_skills_index.py)，9 用例: mtime refresh + 长描述省略号 + 死代码移除 + refresh 重置 + 缓存复用）
@@ -209,7 +211,8 @@ frontend/src/
 
 - 🟡 **`terminal` 工具白名单 `_ALLOWED_COMMANDS` 是硬编码列表**（[security_config.py](backend/app/tools/security_config.py)），新增命令需改源码
 - 🟡 **`ask` 工具 `_ask_pending` 是 AgentEngine 实例属性**（[agent.py:117-119](backend/app/core/agent.py)），多 worker 部署（uvicorn workers>1）会丢问题
-- ✅ **[W4-15] 新增 `glob` 工具**（[glob_tool.py](backend/app/tools/implementations/glob_tool.py)）—— 跨目录模式匹配, 跳 _PRUNE_DIRS (.git/.venv/node_modules/__pycache__), 限制 max_results
+- ✅ **[W4-14] MCP 客户端 lifespan 修复**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— 4 处 bug: 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 配套 9 个新测试
+- ✅ **[W4-15] 新增 `glob` 工具'（[glob_tool.py](backend/app/tools/implementations/glob_tool.py)）—— 跨目录模式匹配, 跳 _PRUNE_DIRS (.git/.venv/node_modules/__pycache__), 限制 max_results
 - ✅ **[W4-15] `load_skill` 别名**（[skill_tools.py:243-281](backend/app/tools/implementations/skill_tools.py)）—— 指向 skill_view, 兼容 Anthropic 风格命名, description 注明是 alias
 - 🟢 **watchdog 自愈**（[scripts/dev-watchdog.sh](scripts/dev-watchdog.sh)）W4-5 已修
 - 🟢 **Vite 6 升级 + HMR 稳定**（[frontend/package.json](frontend/package.json)）W3 末修

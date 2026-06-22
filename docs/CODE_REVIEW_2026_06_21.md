@@ -21,9 +21,9 @@
 | 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 74 (+ W4-15 工具 17) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 83 (+ W4-15 工具 17 / + W4-14 MCP 9) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 + W4-14 (MCP lifespan) 共 10 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。W4-14 (MCP lifespan) 4 子问题全部修完, 还剩 P1-3 (must_use_tool) / P1-4 (_ask_pending) / P2 / P3 共 8 项待办。
 
 ---
 
@@ -676,3 +676,63 @@ cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
 - `glob`: 注册 / schema 完整 / 跨目录 / 跳 _PRUNE_DIRS / 隐藏 / max_results 截断 / 空 pattern / 不存在 path / 无匹配 9 用例
 - `load_skill`: 注册 / schema 暴露 / description 含 alias / 与 skill_view 同输出 / 处理 missing 5 用例
 - 总数 sanity：glob 在 terminal / load_skill 在 skill 3 用例
+
+## W4-14 修复 (2026-06-22) — MCP 客户端 lifespan / 跨 loop future 泄漏
+
+### 4 个子问题
+
+W4-11 把 MCP 客户端从"理论存在但必崩"修到"能跑"，但审计发现还有 4 处结构性 bug：
+
+1. **跨 loop future 泄漏**（[mcp_client.py:50-60](backend/app/tools/mcp_client.py)）：`_response_futures: Dict[int, asyncio.Future]` 只存 future，不记它所属的 event loop。`MCPClient.initialize` 在 daemon thread 跑（绑 `_mcp_loop`），但 `mcp_handler` 在 FastAPI 主 loop 跑，future 在主 loop 创建。`_handle_message` 在 `_mcp_loop` 上调 `future.set_result()` —— 跨 loop 跨线程不安全，Python 3.10+ 才有部分支持。
+2. **进程 crash 时 future hang 60s**（`_read_loop`）：stdout EOF 后读线程退出，但 `_response_futures` 里挂着的 future 永远不被 resolve。`_send_request` 的 60s `wait_for` 兜底前调用方一直 hang —— **调试地狱**。
+3. **shutdown 顺序错乱**（`shutdown_mcp_tools`）：`client.close()` 立刻 kill 进程 → `_read_loop` 退出 → 但 `_mcp_loop.call_soon_threadsafe(stop)` 是在所有 close 之后才发，导致跨 loop future 还没被 fail 就被 stop 冻住。
+4. **不接 FastAPI lifespan**：旧实现用 daemon thread + `asyncio.new_event_loop()` 隔离 MCP 生命周期，与 FastAPI 的 `lifespan` 上下文管理器完全无关。多 worker 部署每个 worker 都会启一遍 MCP server 进程（重复 spawn，浪费资源）。
+
+### 修法（[mcp_client.py](backend/app/tools/mcp_client.py)）
+
+1. `_response_futures: Dict[int, Tuple[asyncio.AbstractEventLoop, asyncio.Future]]` —— 记 future 所属 loop
+2. `_handle_message` 用 `future_loop.call_soon_threadsafe(future.set_result, ...)` —— 跨 loop 安全
+3. 新增 `_fail_pending(reason)` —— 一次性 fail 所有挂起 future；`close()` 和 `_read_loop` 退出时都调
+4. `close()` 顺序：fail pending → 置 `_running=False` → terminate → wait(5s) → kill
+5. `shutdown_mcp_tools` 顺序：close clients (内部 fail+kill) → `_mcp_loop.call_soon_threadsafe(stop)` → `_mcp_thread.join(5s)`
+6. 新增 `discover_mcp_tools_async()` / `shutdown_mcp_tools_async()` —— 供 FastAPI lifespan 用，不再 daemon thread
+
+### 修法优势
+
+- 进程 crash 时调用方 `_send_request` 立即拿到 `ConnectionError`，**不再 hang 60s**
+- 跨 loop future 解析有正式语义保证（call_soon_threadsafe 到 own loop）
+- 关闭流程有明确顺序：fail pending 在前，stop loop 在后，**无 race**
+- 部署侧可以选模式：旧调用点继续用 sync 入口（daemon thread 隔离），新调用点用 async 入口（共享 FastAPI loop）
+
+### 回归覆盖（[tests/test_mcp_lifespan.py](backend/tests/test_mcp_lifespan.py) 9 用例）
+
+- `test_response_futures_uses_tuple_layout` — value 是 `(loop, future)` tuple
+- `test_fail_pending_sets_exception_on_all_futures` — 全部挂起 future 被 fail，已 done 不动
+- `test_fail_pending_with_empty_dict_is_noop` — 空 dict 不抛
+- `test_handle_message_uses_call_soon_threadsafe_cross_loop` — 真实跨 loop: future 在主 loop, `_handle_message` 在另一 loop 跑, 主 loop `await wait_for` 拿到 result
+- `test_handle_message_error_propagates_to_far_loop` — 远端 loop 报 error, 主 loop 拿到 exception
+- `test_close_fails_pending_before_killing_process` — close() 顺序验证
+- `test_read_loop_exit_fails_pending` — stdout EOF 后挂起 future 立即 fail
+- `test_discover_mcp_tools_async_idempotent` — 多次调用不重复 init
+- `test_shutdown_mcp_tools_async_clears_clients` — 关闭时清空
+
+### 多 worker follow-up（留 P2）
+
+async 入口解决了"用 FastAPI loop 不开 daemon thread"，但**多 worker 部署**（`uvicorn --workers N`）每个 worker 还是会启自己的 MCP server 进程。修法选项：
+- (a) 文件锁 + 选举：只有一个 worker 跑 `discover_mcp_tools_async`，其他 worker 复用
+- (b) 共享缓存（Redis/SQLite）存"已发现的工具列表"，所有 worker 读同一份
+- (c) MCP server 进程外提到独立 service（systemd / docker），所有 worker 连同一个
+
+需要等用户选型，本轮不做。
+
+### 验证
+
+```bash
+cd backend && .venv/bin/python -m pytest \
+    tests/test_mcp_client.py tests/test_mcp_lifespan.py \
+    tests/test_glob_and_load_skill.py tests/test_skills_index.py \
+    tests/test_prompt_order.py tests/test_debate_judge.py \
+    tests/test_debate_round_order.py tests/test_delegate_task.py \
+    tests/test_w413_audit_fixes.py -v
+# 83 passed in 1.12s
+```

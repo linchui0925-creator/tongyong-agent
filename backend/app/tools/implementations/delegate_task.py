@@ -8,6 +8,7 @@ delegate_task - 子 agent 委派工具
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -35,8 +36,13 @@ BLOCKED_CHILD_TOOLS = {
 }
 MAX_DELEGATE_DEPTH = 1              # 父(0) → 子(1)，子不能再委派
 
-# 模块级委派深度追踪（避免修改函数签名）
-_delegate_depth: int = 0
+# W4-10 P1-1 修复 2026-06-21: 用 ContextVar 替代模块级 int, 修复以下三个问题:
+#   1. KeyboardInterrupt / 未走 finally 的异常会让全局计数不归零, 永久卡死
+#   2. 同一进程多并发请求会相互污染 (即使 max=1)
+#   3. uvicorn --workers>1 时每个 worker 独立, 但请求串扰风险仍在
+# ContextVar 在 asyncio.Task.start() 时由 copy_context() 自动 copy,
+# 任务结束 / reset() 后自动 GC, finally 配对使用可彻底解决以上问题。
+_delegate_depth: contextvars.ContextVar[int] = contextvars.ContextVar("delegate_depth", default=0)
 
 
 @dataclass(frozen=True)
@@ -424,22 +430,23 @@ async def delegate_task_tool(
     toolsets: Optional[List[str]] = None,
     tasks: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    global _delegate_depth
+    # W4-10 P1-1 修复: 用 ContextVar.set/reset 替代 global +=/-=
+    # set() 返回 token, reset() 在 finally 中精确恢复到 set 之前的值,
+    # 避免在嵌套/异常路径下计数漂移。
     run_state = DelegateRunState(run_id=str(uuid.uuid4()))
-
-    # ── 深度限制：子 agent 不能再次委派 ──
-    if _delegate_depth >= MAX_DELEGATE_DEPTH:
-        return json.dumps({
-            "run_id": run_state.run_id,
-            "results": [],
-            "error": (
-                f"委派深度已达上限（{MAX_DELEGATE_DEPTH}层）。"
-                "子 agent 不能再次发起委派任务。"
-            ),
-        }, ensure_ascii=False)
-
-    _delegate_depth += 1
+    depth_token = _delegate_depth.set(_delegate_depth.get() + 1)
     try:
+        # ── 深度限制：子 agent 不能再次委派 ──
+        if _delegate_depth.get() > MAX_DELEGATE_DEPTH:
+            return json.dumps({
+                "run_id": run_state.run_id,
+                "results": [],
+                "error": (
+                    f"委派深度已达上限（{MAX_DELEGATE_DEPTH}层）。"
+                    "子 agent 不能再次发起委派任务。"
+                ),
+            }, ensure_ascii=False)
+
         normalized_tasks = _normalize_tasks(goal, context, toolsets, tasks)
         if not normalized_tasks:
             return json.dumps({
@@ -466,7 +473,7 @@ async def delegate_task_tool(
             "duration_seconds": round(time.time() - run_state.started_at, 2),
         }, ensure_ascii=False)
     finally:
-        _delegate_depth -= 1
+        _delegate_depth.reset(depth_token)
 
 
 registry.register(

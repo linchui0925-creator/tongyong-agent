@@ -28,6 +28,16 @@ from app.core.multi_agent.scheduler import Scheduler
 logger = logging.getLogger(__name__)
 
 
+# W4-9 P1-2 修复 (2026-06-21): 按辩位排序, judge 固定末尾, 未填 position 的兜底为 99
+# 抽成 module-level helper 便于单测 (不依赖 Team/EventBusEnvironment fixture)
+_DEBATE_POSITION_ORDER = {"first": 0, "second": 1, "third": 2, "fourth": 3, "judge": 4}
+
+
+def sort_roles_by_debate_position(roles: List[TeamRole]) -> List[TeamRole]:
+    """辩论模式按辩位排序: first < second < third < fourth < judge < (未填)"""
+    return sorted(roles, key=lambda r: _DEBATE_POSITION_ORDER.get(r.debate_position, 99))
+
+
 class Team(BaseModel):
     """
     Team 编排引擎
@@ -109,12 +119,15 @@ class Team(BaseModel):
         """
         根据模式返回本轮应执行的角色列表。
 
-        Debate 模式：所有角色都参与（交替发言）
+        Debate 模式：所有角色都参与（交替发言），并按 debate_position
+          (first/second/third/fourth/judge) 排序 —— W4-9 P1-2 修复 2026-06-21。
+          旧实现直接返回 _roles 插入顺序，UI 添加顺序可能与辩位顺序不一致
+          (e.g. 先 hire fourth 再 hire first), 导致 judge 拿到的发言时间错乱。
         Pipeline/图路由模式：只返回收到新消息的角色。Worker 仅接收定向消息，
           Leader 通过连接图和 watch_actions 接收。
         """
         if self.mode == "debate":
-            return list(self._roles.values())
+            return sort_roles_by_debate_position(list(self._roles.values()))
 
         # 图路由模式：仅返回有新消息的角色（observe 读取 EventBus）
         result: List[TeamRole] = []

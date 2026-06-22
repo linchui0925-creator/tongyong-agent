@@ -10,16 +10,17 @@
 ## 摘要
 
 > W4-8 修复 (2026-06-21): 两个 P0 已修，配套回归测试 15 个全绿 (test_prompt_order.py 8 + test_debate_judge.py 7)。详见末尾「W4-8 修复说明」节。
+> W4-9/W4-10 修复 (2026-06-21): P1-1 delegate_depth ContextVar / P1-2 debate position 排序 已修, 配套回归测试 17 个全绿 (test_debate_round_order.py 8 + test_delegate_task.py 末尾 4)。详见末尾「W4-9/W4-10 修复说明」节。
 
 | 项 | 修复前 | 当前 |
 |---|---|---|
 | 🔴 P0 阻塞类 | 2 | 0 |
-| 🟠 P1 高优 | 4 | 4 |
+| 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 15 (test_prompt_order 8 + test_debate_judge 7) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 32 (P0 15 + P1-2 8 + P1-1 9) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 (2026-06-21) 又修了 2 个 P0（详见末尾「W4-8 修复说明」节），还剩 P1/P2/P3 9 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 (2026-06-21) 修了 2 个 P0, W4-9/W4-10 又推进 2 个 P1, 还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 共 9 项待办。
 
 ---
 
@@ -269,8 +270,8 @@ def _message_requires_tool_call(user_text: str) -> bool:
   └─ ~~P0-1 / P0-2 修复 + 加回归测试~~  ✅ W4-8 已完成
 
 下周
-  ├─ P1-1 delegate_depth ContextVar
-  ├─ P1-2 debate position 排序
+  ├─ ~~P1-1 delegate_depth ContextVar~~  ✅ W4-10
+  ├─ ~~P1-2 debate position 排序~~  ✅ W4-9
   └─ P1-3 must_use_tool fallback
 
 月内
@@ -332,3 +333,94 @@ cd backend && /Users/linc/Documents/tongyong-agent/.venv311/bin/python -m pytest
 ```
 
 全套测试 121 passed / 16 failed (16 个 pre-existing 失败来自缺 langchain/.env，与本次改动无关——失败测试不引用 agent.py / role.py / debate.py)。
+
+---
+
+## W4-9 / W4-10 修复说明 (2026-06-21)
+
+### P1-2 辩论 mode round 按 debate_position 排序 — W4-9 已修
+
+**问题**：[team.py:222-243](backend/app/core/multi_agent/team.py) `_get_roles_for_round` 在 debate 模式下直接 `return list(self._roles.values())`，串行执行顺序由 `hire()` 时的字典插入顺序决定。UI 添加角色的顺序可能与辩位顺序不一致（先 hire `fourth` 再 hire `first`），judge 拿到的 `context.news` 时间错乱。
+
+**改动**：
+- [team.py:28-36](backend/app/core/multi_agent/team.py) 抽出 module-level helper `sort_roles_by_debate_position(roles: List[TeamRole])`
+- [team.py:119-120](backend/app/core/multi_agent/team.py) `_get_roles_for_round` 在 debate 分支调用 helper 替代原 list 返回
+- pipeline / 图路由模式不受影响（分支独立）
+
+**修法**：
+
+```python
+_DEBATE_POSITION_ORDER = {"first": 0, "second": 1, "third": 2, "fourth": 3, "judge": 4}
+
+def sort_roles_by_debate_position(roles: List[TeamRole]) -> List[TeamRole]:
+    return sorted(roles, key=lambda r: _DEBATE_POSITION_ORDER.get(r.debate_position, 99))
+```
+
+未填 `debate_position` 的角色走兜底 99，排到 judge 之后；多个未填角色保持 stable sort 的原顺序；helper 是 pure function（不改入参 list）。
+
+**回归覆盖**：[tests/test_debate_round_order.py](backend/tests/test_debate_round_order.py) 8 用例：
+1. 4 角色 hire 顺序错乱（fourth→first→judge→second）→ 排序为 [first, second, fourth, judge]
+2. 空 list → 返回空
+3. 单角色 → 原样返回
+4. 未填 position → 排到 judge 之后
+5. typo 字符串 ("frist") → 走兜底排到 judge 之后
+6. 多个未填 position → stable sort 保持原顺序
+7. 不改入参 list（pure function）
+8. 幂等（多次调用结果一致）
+
+### P1-1 delegate_task `_delegate_depth` 改 ContextVar — W4-10 已修
+
+**问题**：[delegate_task.py:39, 427-469](backend/app/tools/implementations/delegate_task.py) 用模块级 `int` 全局计数，三个真实故障：
+- 进程级可变全局，**不是请求级** —— `run_state.interrupt_requested` 触发 `CancelledError`、或子 agent 抛任何异常未走 finally（实际有，但若用户在 442 行 LLM 调用前 `KeyboardInterrupt` 会跨过 finally 跳出协程），深度计数不归零
+- 同一进程多个并发请求会相互阻塞（即使设计上 max=1，污染会**永远卡住**）
+- `uvicorn --workers>1` 每个 worker 独立但仍可能被请求**串扰**
+
+**改动**：[delegate_task.py:1-49](backend/app/tools/implementations/delegate_task.py) 改用 `contextvars.ContextVar[int]`：
+- `_delegate_depth: int = 0` → `_delegate_depth: ContextVar[int] = ContextVar("delegate_depth", default=0)`
+- `global _delegate_depth; _delegate_depth += 1` → `depth_token = _delegate_depth.set(_delegate_depth.get() + 1)`
+- `if _delegate_depth >= MAX_DELEGATE_DEPTH` → `if _delegate_depth.get() > MAX_DELEGATE_DEPTH`（位置从 set 前移到 set 后，set 后必然 +1）
+- `finally: _delegate_depth -= 1` → `finally: _delegate_depth.reset(depth_token)`（精确还原到 set 之前的值，避免嵌套/异常路径计数漂移）
+
+**修法**：
+
+```python
+import contextvars
+
+_delegate_depth: contextvars.ContextVar[int] = contextvars.ContextVar("delegate_depth", default=0)
+
+async def delegate_task_tool(...):
+    run_state = DelegateRunState(run_id=str(uuid.uuid4()))
+    depth_token = _delegate_depth.set(_delegate_depth.get() + 1)
+    try:
+        if _delegate_depth.get() > MAX_DELEGATE_DEPTH:
+            return json.dumps({"error": "委派深度已达上限..."}, ...)
+        # ... 主流程不变
+    finally:
+        _delegate_depth.reset(depth_token)
+```
+
+**修法优势**：
+- asyncio.Task 启动时 `copy_context()` 自动 copy, 子 Task 看不到父的 set 值, 跨任务零污染
+- KeyboardInterrupt / 异常路径不依赖 finally 顺序, ContextVar 随 Task 结束 GC
+- 多 worker 部署天然隔离（每个进程独立 ContextVar 实例）
+- 完全向后兼容：`test_delegate_task_blocks_recursive_delegate_tool_call` 等 5 个老测试全绿
+
+**回归覆盖**：[tests/test_delegate_task.py](backend/tests/test_delegate_task.py) 末尾新增 4 用例：
+1. **顺序调用不残留** — 两次完整调用后 `_delegate_depth.get()` 回到 0（旧实现若 KeyboardInterrupt 跳过 finally 会卡死）
+2. **并发任务互不污染** — `asyncio.gather` 启动两个 delegate_task, 都不被"假递归"挡住（旧实现下任务 A +1 后任务 B 看到 1 会被误拒）
+3. **异常路径 finally reset** — 让 LLM 抛 RuntimeError, 函数内部捕获后正常返回, `_delegate_depth` 仍归零
+4. **递归阻止语义保持** — 父 +1 后子 +1, 子层 `_delegate_depth == 2 > MAX=1` 被拒
+
+### 验证
+
+```bash
+cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
+    tests/test_prompt_order.py tests/test_debate_judge.py \
+    tests/test_debate_round_order.py tests/test_delegate_task.py -v
+# 32 passed in 0.08s
+```
+
+### 仍未做的 P1
+
+- **P1-3** `must_use_tool` 触发词对工具名 (`playwright`/`browser`) 不应触发强制工具流程；触发后无 fallback，需要先和用户对齐 UX 降级策略
+- **P1-4** `_ask_pending` 改 SQLite/Redis（多 worker 共享），需要先和用户对齐存储选型

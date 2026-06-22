@@ -9,7 +9,8 @@
 
 ## 0. 摘要
 
-> 📝 W4-8 修复 (2026-06-21): P0-1 system prompt 顺序 / P0-2 DebateJudge 字符串匹配 已修, 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P0 节
+> 📝 W4-8 修复 (2026-06-21): P0-1 system prompt 顺序 / P0-2 DebateJudge 字符串匹配 已修
+> 📝 W4-9/W4-10 修复 (2026-06-21): P1-2 辩论 mode round 按 debate_position 排序 / P1-1 delegate_depth 改 ContextVar, 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
 
 
 | 维度 | 数值 |
@@ -180,14 +181,16 @@ frontend/src/
 
 - ✅ **[W4-8 已修] DebateJudgeAction 字符串匹配**（[debate.py:236-241](backend/app/core/multi_agent/actions/debate.py)）—— 当角色名不含"正方/反方"时全漏判，[commit 510bff1](代码审查报告与修复方案.md) 已点名未修
 - ✅ **[W4-8 已修] system prompt 注入顺序与注释相反**（[agent.py:198-249](backend/app/core/agent.py)）—— `_inject_*` 全用 `messages.insert(0, ...)`，最后调用的反而占顶部，base_prompt 被压到最底
-- 🟠 **3 角色同轮并发未按 position 顺序**（[commit 510bff1](代码审查报告与修复方案.md) 已知遗留）—— `roles_this_round` 直接 list，position=second/fourth 可能先发
-- 🟠 **delegate_task 用模块级 `_delegate_depth` 全局计数**（[delegate_task.py:39](backend/app/tools/implementations/delegate_task.py)）—— 异常路径可能泄漏，async 并发下不隔离
+- ✅ **[W4-9 已修] 辩论 mode round 按 debate_position 排序**（[team.py:28-36, 119-120](backend/app/core/multi_agent/team.py)）—— 抽出 module-level helper `sort_roles_by_debate_position()`, first/second/third/fourth/judge 顺序保证, 未填 position 兜底 99
+- ✅ **[W4-10 已修] delegate_task 改用 ContextVar 隔离委派深度**（[delegate_task.py:39, 433, 484](backend/app/tools/implementations/delegate_task.py)）—— `set/reset(token)` 配对, 异常路径仍 finally reset, 跨 Task 不串扰
 - 🟡 **`must_use_tool` 触发词列表对中文小写化无意义**（[agent.py:706-709](backend/app/core/agent.py)），`.lower()` 对中文是恒等
 - 🟡 **辩论模式上游仍是 round 轮次驱动**（[team.py:200-260](backend/app/core/multi_agent/team.py)），run_v2_stream 与 run_stream 并存，无明确弃用时间表
 
 ### 4.3 测试 / 覆盖率
 
 - ✅ **[W4-8 已补] 辩论测试覆盖**（[tests/test_debate_judge.py](backend/tests/test_debate_judge.py)，7 用例: 英文名 + 兜底 + judge 排除 + metadata 覆盖 + SpeakAloud）
+- ✅ **[W4-9 已补] 辩论 round 排序测试**（[tests/test_debate_round_order.py](backend/tests/test_debate_round_order.py)，8 用例: 正常排序 + 空 list + 单角色 + 未填 position 兜底 + typo 兜底 + stable sort + 不改入参 + 幂等）
+- ✅ **[W4-10 已补] delegate_depth ContextVar 测试**（[tests/test_delegate_task.py](backend/tests/test_delegate_task.py) 末尾 4 用例: 顺序调用不残留 + 并发任务互不污染 + 异常路径 finally reset + 递归阻止语义保持）
 - 🟡 **W3-4 切量回滚测试单文件**（[test_w3_rollback.py](backend/tests/test_w3_rollback.py)），未覆盖 hot reload
 - 🟡 **前端 E2E 仅 Playwright PDF 验证首页**（[package.json scripts](frontend/package.json)），无 chat 流式断言
 

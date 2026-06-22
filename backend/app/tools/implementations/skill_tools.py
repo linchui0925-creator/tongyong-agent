@@ -242,3 +242,42 @@ registry.register(
     emoji="📚",
     parallel_mode="safe",
 )
+
+
+# ── W4-15 load_skill 别名 ─────────────────────────────────
+# 兼容用户熟悉的 Anthropic-style 命名, 行为与 skill_view 一致
+
+def load_skill(name: str) -> str:
+    """Load the full content of a skill by name (alias for skill_view).
+
+    W4-15 2026-06-22: 注册第二个名字指向同一 handler, LLM 可以用 load_skill
+    或 skill_view, 行为完全一致。走 wrapper 而不是 alias 抽象, 是因为:
+      - registry 没引入 alias 系统, 改动面最小
+      - description 里明说"alias for skill_view", 避免 LLM 误以为是新工具
+    """
+    return skill_view(name)
+
+
+registry.register(
+    name="load_skill",
+    toolset="skill",
+    description=(
+        "Load the full content of a skill by name. (Alias for skill_view.)\n"
+        "输入 skill 名称, 返回 SKILL.md 完整内容 (Steps/Pitfalls/References 等)。\n"
+        "匹配规则与 skill_view 相同: 精确 → 同名 → 模糊匹配。"
+    ),
+    schema={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "skill 名称（来自 skill_list 或 available_skills 索引）",
+            },
+        },
+        "required": ["name"],
+    },
+    handler=load_skill,
+    is_async=False,
+    emoji="📋",
+    parallel_mode="safe",
+)

@@ -13,6 +13,7 @@
 > 📝 W4-9/W4-10 修复 (2026-06-21): P1-2 辩论 mode round 按 debate_position 排序 / P1-1 delegate_depth 改 ContextVar, 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
 > 📝 W4-11/W4-12 修复 (2026-06-21): MCP `_send_raw` silent return / text=False str write + SKILL `get_skills_prompt` 永久缓存不感知 mtime, 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
 > 📝 W4-13 修复 (2026-06-21): 审计发现 3 处连带 bug (heuristic 多段只取第一 + budget 一次性 + skipped 路径污染), 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
+> 📝 W4-15 工具 (2026-06-22): 新增 `glob` 工具 (按模式跨目录匹配, 跳 _PRUNE_DIRS) + `load_skill` 别名 (指向 skill_view, 兼容用户熟悉的 Anthropic 风格命名)
 
 
 | 维度 | 数值 |
@@ -208,6 +209,8 @@ frontend/src/
 
 - 🟡 **`terminal` 工具白名单 `_ALLOWED_COMMANDS` 是硬编码列表**（[security_config.py](backend/app/tools/security_config.py)），新增命令需改源码
 - 🟡 **`ask` 工具 `_ask_pending` 是 AgentEngine 实例属性**（[agent.py:117-119](backend/app/core/agent.py)），多 worker 部署（uvicorn workers>1）会丢问题
+- ✅ **[W4-15] 新增 `glob` 工具**（[glob_tool.py](backend/app/tools/implementations/glob_tool.py)）—— 跨目录模式匹配, 跳 _PRUNE_DIRS (.git/.venv/node_modules/__pycache__), 限制 max_results
+- ✅ **[W4-15] `load_skill` 别名**（[skill_tools.py:243-281](backend/app/tools/implementations/skill_tools.py)）—— 指向 skill_view, 兼容 Anthropic 风格命名, description 注明是 alias
 - 🟢 **watchdog 自愈**（[scripts/dev-watchdog.sh](scripts/dev-watchdog.sh)）W4-5 已修
 - 🟢 **Vite 6 升级 + HMR 稳定**（[frontend/package.json](frontend/package.json)）W3 末修
 

@@ -13,6 +13,7 @@
 > W4-9/W4-10 修复 (2026-06-21): P1-1 delegate_depth ContextVar / P1-2 debate position 排序 已修, 配套回归测试 17 个全绿 (test_debate_round_order.py 8 + test_delegate_task.py 末尾 4)。详见末尾「W4-9/W4-10 修复说明」节。
 > W4-11/W4-12 修复 (2026-06-21): MCP 客户端 4 处 bug (含 2 处 fatal) / Skill 索引 5 处 bug (含 1 处 fatal) 已修, 配套回归测试 17 个全绿 (test_mcp_client.py 8 + test_skills_index.py 9)。详见末尾「W4-11/W4-12 修复说明」节。
 > W4-13 修复 (2026-06-21): 审计发现 3 处连带 bug (heuristic 多段 + budget 一次性 + skipped 路径污染) 已修, 配套回归测试 8 个全绿 (test_w413_audit_fixes.py)。详见末尾「W4-13 修复说明」节。
+> W4-15 工具 (2026-06-22): 新增 `glob` (跨目录模式匹配) + `load_skill` 别名 (兼容 Anthropic 风格命名), 17 个测试全绿。
 
 | 项 | 修复前 | 当前 |
 |---|---|---|
@@ -20,9 +21,9 @@
 | 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 57 (+ W4-13 审计发现 8) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 74 (+ W4-15 工具 17) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 修了 2 个 P0, W4-9/W4-10 推进 2 个 P1, W4-11/W4-12 修 2 处致命 bug, W4-13 又收尾 3 处审计连带 bug。还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 + W4-14 (MCP lifespan) 共 10 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 + W4-14 (MCP lifespan) 共 10 项待办。
 
 ---
 
@@ -584,3 +585,94 @@ cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
   4. `shutdown_mcp_tools` 当前 race 修（`call_soon_threadsafe(stop)` 与 `future.result()` 顺序问题）
 - **架构层 P2/P3**：main.py 6 职责、registry 副作用、`is_persistent=False` 临时回退等
 - **P1-3 / P1-4**：must_use_tool fallback / _ask_pending 持久化（需先与用户对齐 UX 和存储选型）
+
+---
+
+## W4-15 工具新增 (2026-06-22) — `glob` + `load_skill` 别名
+
+### 背景
+
+用户问清单里的 `bash / read_file / write_file / edit_file / glob / todo_write / task / load_skill` 8 个工具项目里都有吗。审计后：
+
+- ✅ **3 个直接对应**：`read_file` / `write_file` / `edit_file` (= `patch`，同名不同)
+- ⚠️ **1 个有重叠**：`bash` → `terminal`（白名单安全壳，**有意设计**）
+- ⚠️ **1 个有重叠**：`glob` → `ls` + `grep`（无模式跨目录匹配）
+- ❌ **2 个不该有**：`todo_write` / `task`（Codex 平台概念，不进 agent 工具）
+- ❌ **1 个改名了**：`load_skill` → `skill_view`
+
+这一轮做两件事：
+1. 新增 `glob` 工具，补上 `**/*.py` 这种跨目录模式匹配
+2. 注册 `load_skill` 作为 `skill_view` 的别名，让用户熟悉的命名直接命中
+
+### W4-15.1 `glob` 工具 — 新文件
+
+**位置**：[`app/tools/implementations/glob_tool.py`](backend/app/tools/implementations/glob_tool.py) 161 行
+
+**设计**：
+- 底层走 `pathlib.Path.glob`，原生支持 `**` / `*` / `?` / `[abc]`
+- 异步执行（`asyncio.to_thread`），避免大目录阻塞 event loop
+- 主动跳过 `_PRUNE_DIRS = {.git, .venv, venv, node_modules, __pycache__, .pytest_cache, .mypy_cache, .ruff_cache, dist, build, .next, .vite, target}`，避免误返回构建产物
+- 默认隐藏文件（`.` 开头）不显示，`include_hidden=true` 可覆盖
+- `max_results` 默认 500，超过截断并提示加参数
+
+**Schema**（与用户列的 Anthropic 风格对齐）：
+```python
+{
+    "pattern": str,           # 必填
+    "path": str,              # 默认 "."
+    "include_hidden": bool,   # 默认 false
+    "max_results": int,       # 默认 500
+}
+```
+
+**Toolset**：`terminal`（与 `ls` 同组，未来可以加 `file` toolset 也行）
+
+**示例调用**（LLM 视角）：
+```python
+glob(pattern="**/*.py", path="backend/app/core")          # 所有 py 文件
+glob(pattern="src/components/*.tsx")                      # 单层匹配
+glob(pattern="tests/test_*.py", include_hidden=True)     # 隐藏测试
+```
+
+### W4-15.2 `load_skill` 别名 — 追加在 `skill_tools.py`
+
+**位置**：[`app/tools/implementations/skill_tools.py:243-281`](backend/app/tools/implementations/skill_tools.py) +39 行
+
+**设计选择**：走"注册第二个名字指向同一 handler"而不是引入 registry alias 抽象，理由：
+- Registry 没 alias 系统，改动面最小（不动 ToolEntry / register / get_entry）
+- 两个 tool 在 LLM 视角都是独立的 function，description 里明说"alias for skill_view"，LLM 不会误判
+- 现有 `skill_view` 调用 0 修改继续工作，向后兼容
+
+**实现**：
+```python
+def load_skill(name: str) -> str:
+    return skill_view(name)
+
+registry.register(
+    name="load_skill", toolset="skill",
+    description="Load the full content of a skill by name. (Alias for skill_view.)...",
+    schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    handler=load_skill, is_async=False, emoji="📋", parallel_mode="safe",
+)
+```
+
+### 验证
+
+**注册表总览**（W4-15 后）：
+- 19 个工具已注册
+- 18 个暴露给 LLM（`adb` 被 check_fn 过滤——无 adb 设备）
+- `glob` 归到 `terminal` toolset（与 `ls` 同组）
+- `load_skill` 归到 `skill` toolset（与 `skill_view` / `skill_list` 同组）
+
+```bash
+cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
+    tests/test_prompt_order.py tests/test_debate_judge.py tests/test_debate_round_order.py \
+    tests/test_delegate_task.py tests/test_mcp_client.py tests/test_skills_index.py \
+    tests/test_w413_audit_fixes.py tests/test_glob_and_load_skill.py -v
+# 74 passed in 0.79s
+```
+
+**新测试覆盖**（17 个）：
+- `glob`: 注册 / schema 完整 / 跨目录 / 跳 _PRUNE_DIRS / 隐藏 / max_results 截断 / 空 pattern / 不存在 path / 无匹配 9 用例
+- `load_skill`: 注册 / schema 暴露 / description 含 alias / 与 skill_view 同输出 / 处理 missing 5 用例
+- 总数 sanity：glob 在 terminal / load_skill 在 skill 3 用例

@@ -65,10 +65,20 @@ class MCPClient:
             return self.request_id
 
     def _send_raw(self, msg: dict):
-        """发送原始 JSON 消息到 MCP 服务器"""
+        """发送原始 JSON 消息到 MCP 服务器
+
+        W4-11 MCP 修复 2026-06-21:
+          - 旧实现 process 未启动时静默 return, 调用方 future 永远不返回
+            (要等 60s 超时, 且错误信息为零, 调试极困难)
+          - 修复: 主动抛 RuntimeError, 让 _send_request 的 wait_for 立即失败
+        """
         if not self.process or self.process.stdin is None:
-            return
+            raise RuntimeError(
+                f"MCP {self.name}: 进程未启动或 stdin 不可用, 无法发送消息 "
+                f"(method={msg.get('method', '?')})"
+            )
         line = json.dumps(msg, ensure_ascii=False)
+        # Popen(text=True) 后 stdin 是 TextIOWrapper, 可直接 write str
         self.process.stdin.write(line + "\n")
         self.process.stdin.flush()
 
@@ -113,17 +123,27 @@ class MCPClient:
                 future.set_result(msg.get("result"))
 
     async def _send_request(self, method: str, params: Optional[Dict] = None) -> Any:
-        """发送 JSON-RPC 请求并等待响应"""
+        """发送 JSON-RPC 请求并等待响应
+
+        W4-11 MCP 修复:
+          - 用 get_running_loop() 替代 deprecated get_event_loop() (Python 3.12+)
+          - _send_raw 抛错时清理 future, 避免 _response_futures 字典泄漏
+        """
         req_id = self._next_id()
         msg = {"jsonrpc": "2.0", "id": req_id, "method": method}
         if params:
             msg["params"] = params
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()  # W4-11: 替代 get_event_loop (deprecated)
         future = loop.create_future()
         self._response_futures[req_id] = future
 
-        self._send_raw(msg)
+        try:
+            self._send_raw(msg)  # 旧实现此处 raise 会导致 future 残留
+        except Exception:
+            # 发送失败: 清理 future 防泄漏, 再抛
+            self._response_futures.pop(req_id, None)
+            raise
 
         try:
             return await asyncio.wait_for(future, timeout=60.0)
@@ -152,7 +172,8 @@ class MCPClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
-                text=False,  # binary mode for stdio
+                text=True,   # W4-11 MCP 修复: text mode 简化 JSON-RPC line protocol,
+                             #   旧 binary mode + str write 会 TypeError
             )
 
             # 设置事件循环
@@ -256,7 +277,7 @@ class MCPClient:
 
     def close(self):
         """关闭 MCP 连接"""
-        self._running = False
+        self._running = False  # 先置位让 _read_loop 退出
         if self.process:
             try:
                 self.process.terminate()
@@ -266,7 +287,7 @@ class MCPClient:
                     self.process.kill()
                 except Exception:
                     pass
-        self._running = False
+        # W4-11 MCP 修复: 末尾的 self._running = False 重复且误导 (close 后实例不应再被用)
 
 
 # ── 全局 MCP 客户端管理 ─────────────────────────────────

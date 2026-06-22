@@ -11,6 +11,7 @@
 
 > W4-8 修复 (2026-06-21): 两个 P0 已修，配套回归测试 15 个全绿 (test_prompt_order.py 8 + test_debate_judge.py 7)。详见末尾「W4-8 修复说明」节。
 > W4-9/W4-10 修复 (2026-06-21): P1-1 delegate_depth ContextVar / P1-2 debate position 排序 已修, 配套回归测试 17 个全绿 (test_debate_round_order.py 8 + test_delegate_task.py 末尾 4)。详见末尾「W4-9/W4-10 修复说明」节。
+> W4-11/W4-12 修复 (2026-06-21): MCP 客户端 4 处 bug (含 2 处 fatal) / Skill 索引 5 处 bug (含 1 处 fatal) 已修, 配套回归测试 17 个全绿 (test_mcp_client.py 8 + test_skills_index.py 9)。详见末尾「W4-11/W4-12 修复说明」节。
 
 | 项 | 修复前 | 当前 |
 |---|---|---|
@@ -18,9 +19,9 @@
 | 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 32 (P0 15 + P1-2 8 + P1-1 9) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 49 (P0 15 + P1-2 8 + P1-1 9 + MCP/SKILL 17) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 (2026-06-21) 修了 2 个 P0, W4-9/W4-10 又推进 2 个 P1, 还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 共 9 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 (2026-06-21) 修了 2 个 P0, W4-9/W4-10 推进 2 个 P1, W4-11/W4-12 又修 2 处致命 bug (MCP send + skill 上传)。还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 共 9 项待办。
 
 ---
 
@@ -424,3 +425,87 @@ cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
 
 - **P1-3** `must_use_tool` 触发词对工具名 (`playwright`/`browser`) 不应触发强制工具流程；触发后无 fallback，需要先和用户对齐 UX 降级策略
 - **P1-4** `_ask_pending` 改 SQLite/Redis（多 worker 共享），需要先和用户对齐存储选型
+
+---
+
+## W4-11 / W4-12 修复说明 (2026-06-21) — MCP + Skill 调用
+
+### 背景
+
+用户反馈"重点修复 mcp 模块以及 skill 调用"。审查代码后发现两条**会直接断流程**的真实 bug，外加若干 code smell。
+
+### W4-11 MCP 客户端 — 4 处修复
+
+**问题**：[mcp_client.py:60-78, 108-129](backend/app/tools/mcp_client.py) 有 4 个互相叠加的 bug，导致 MCP 客户端**几乎跑不通**：
+
+1. **致命** — `Popen(text=False)` (binary mode) 但 `_send_raw` 写 `str`：`self.process.stdin.write(line + "\n")` 在 binary 模式下必抛 `TypeError: a bytes-like object is required, not 'str'`。任何 MCP send 必崩。
+2. **致命** — `_send_raw` 在 `process` 为 None 时**静默 return**：`if not self.process or self.process.stdin is None: return`。调用方 `_send_request` 已 `create_future()` 放进 `_response_futures`，但 `return` 后没人 set_result，**future 永远 hang**，要等 60s `wait_for` 超时才能发现失败，调试极痛苦。
+3. `_send_request` 用 `asyncio.get_event_loop()` (Python 3.10+ deprecated, 3.12+ 强弃用) — 应当用 `get_running_loop()`，因为我们已经在 async 上下文里。
+4. `close()` 末尾 `self._running = False` 重复（首行已置 False），且从未 `await` 任何 read loop 退出；daemon thread 仍可能在 close 后短暂读 stdin/stdout。
+
+**改动**（[mcp_client.py](backend/app/tools/mcp_client.py)）：
+- `Popen(text=False)` → `text=True` (line 195)：让 `stdin.write(str)` 工作
+- `_send_raw` silent return → `raise RuntimeError(...)` (line 66-72)：让 60s 超时变成"立即 fail + 明确错误信息"
+- `asyncio.get_event_loop()` → `get_running_loop()` (line 124)
+- `_send_request` 加 try/except 清理 future (line 132-138)：发送失败时从 `_response_futures` 移除，**避免 dict 泄漏**
+- `close()` 末尾的重复 `self._running = False` 删除 (line 156)
+
+**修法优势**：MCP 客户端从"理论存在但必崩"变成"可工作"，未来加新 MCP server 不会被这些隐性 bug 困住。
+
+**回归覆盖**：[tests/test_mcp_client.py](backend/tests/test_mcp_client.py) 8 用例：
+1. `_send_raw` 进程未启动时 raise RuntimeError (旧 silent return)
+2. `_send_raw` 进程在但 stdin 死时也 raise (边界)
+3. `_send_request` 不触发 `DeprecationWarning` (替代 get_event_loop)
+4. 发送失败时 `_response_futures` 字典保持空 (无 future 泄漏)
+5. `close()` 设 `_running = False` 一次
+6. `close()` 在 `process=None` 时不抛
+7. `initialize()` 源码含 `text=True` 不含 `text=False` (grep 锁定)
+8. 未来任何回归都能在 0.3s 内捕获
+
+### W4-12 Skill 索引 — 5 处修复
+
+**问题**：[skills_index.py](backend/app/core/skills_index.py) 有 5 个 bug，最致命的是"上传新 skill 后 system prompt 看不到"。
+
+1. **致命** — `get_skills_prompt` 用 `_detected` 单次缓存：`if _detected is None: _detected = format_skills_prompt()`。**只第一次 None 时生成**，之后再调用永远返回旧字符串。用户上传新 skill → `format_skills_prompt` 跑了 → `_detected` 仍是旧值 → agent 看到旧列表。`refresh()` 存在但没自动调用。
+2. **死代码** — `_cached_scan` + `@lru_cache(maxsize=1)`：从未 `cache_clear()`，与 mtime 检测**互相矛盾**。`get_skills_index` 调 `_cached_scan()` 拿缓存，又调 `_scan_skills()` 直接扫，注释还说"lru_cache 不支持 mtime 感知的失效" — 那就别用。
+3. `_last_mtime: float = 0.0` 在使用它的 `get_skills_index` 函数定义**之后**声明（module-level forward reference 在 Python 里能跑，但是 code smell；改成函数前声明更清楚）。
+4. `format_skills_prompt` 对 system skill 描述 `info.get('description', '（无描述）')[:80]` 硬截断无省略号，描述被切到无意义位置后 LLM 看到 "X 是 XY" 而不是 "XYZ 描述..."。
+5. `skill_view` 函数体内 `meta = _build_available_skills_index()`：变量被赋错（赋成 skill 列表而不是 frontmatter dict）且从未被使用，死代码。
+
+**改动**（[skills_index.py](backend/app/core/skills_index.py) + [skill_tools.py](backend/app/tools/implementations/skill_tools.py)）：
+- `get_skills_prompt` 接 mtime 检测（line 293-307）：每次调用比 `current_mtime != _last_skills_prompt_mtime`，变化时刷新 `_detected` 并 log
+- 移除 `_cached_scan` / `@lru_cache` / `from functools import lru_cache`（纯死代码）
+- `_last_mtime` 移到 `get_skills_index` 之前声明（line 110-112），加 `_last_index` 跟踪
+- `get_skills_index` 简化：`mtime 变 → 重新扫 + 写 _last_index`；`mtime 不变 → return _last_index`
+- `format_skills_prompt` 长描述加 `...` 省略号（line 168-172）
+- `skill_view` 死代码 `meta = _build_available_skills_index()` 删除
+- `refresh()` 加 `global _last_skills_prompt_mtime` + `_detected = None`，强制下次重新走 mtime 路径
+
+**修法优势**：上传新 skill 后下次 chat 就能看到（无需手动 refresh），agent 知道有新工具可用；description 截断不误导；dead code 减少维护负担。
+
+**回归覆盖**：[tests/test_skills_index.py](backend/tests/test_skills_index.py) 9 用例：
+1. 上传新 skill 后 `get_skills_prompt` 立刻看到（主修复）
+2. mtime 未变时复用同一对象（cache 仍生效）
+3. `_` 前缀目录被忽略（与 `_scan_skills` 行为一致）
+4. 长描述 (200 chars) 截断到 80 chars + `...` 结尾
+5. 短描述 (≤80 chars) 原样保留
+6. `get_skills_index` mtime 未变时复用 `_last_index`（同一对象）
+7. `_cached_scan` / `@lru_cache` / `_cached_scan()` 调用全部不存在（grep 锁定防回归）
+8. `refresh()` 重置 `_detected` 并立刻重新生成
+9. `refresh()` 后新 skill 立即可见
+
+### 验证
+
+```bash
+cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
+    tests/test_prompt_order.py tests/test_debate_judge.py tests/test_debate_round_order.py \
+    tests/test_delegate_task.py tests/test_mcp_client.py tests/test_skills_index.py -v
+# 49 passed in 0.37s
+```
+
+### 仍未发现的潜在问题（下一轮）
+
+- `_extract_heuristic_sections` 在多启发式段时只取第一段就 `break`，若 SKILL.md 有 `## Heuristic A` + `## Heuristic B` 只会取 A
+- `get_system_skills_content` 的 budget_per 是基于 `len(system_skills)` 一次性切分，不随 `total_size` 递减，可能首段就吃满 8KB
+- `marketplace.install_skill` 二进制文件 (.png/.pdf) 直接 skip 但**不通知用户**返回里只列在 `files_skipped`，前端可能误以为下载完成
+- `mcp_client.discover_mcp_tools` 在主线程开新 event loop + daemon thread，**不会**被 FastAPI lifespan 正常管理；多 worker 部署时每个 worker 都重复启动 MCP server 进程

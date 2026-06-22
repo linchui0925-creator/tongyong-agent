@@ -12,7 +12,6 @@ import logging
 import os
 import yaml
 from pathlib import Path
-from functools import lru_cache
 
 from app.config import settings
 
@@ -94,25 +93,23 @@ def _get_dir_mtime() -> float:
     return latest
 
 
-@lru_cache(maxsize=1)
-def _cached_scan() -> dict:
-    """带缓存的扫描，mtime 变化时自动失效"""
-    return _scan_skills()
-
 
 def get_skills_index() -> dict:
-    """获取 skill 索引（自动按 mtime 检测变化）"""
+    """获取 skill 索引（自动按 mtime 检测变化）
+
+    W4-12 SKILL 修复 2026-06-21: 移除死代码 _cached_scan / @lru_cache, 用单一全局
+    _last_mtime + _last_index 跟踪, 变化时直接重新扫描。
+    """
+    global _last_mtime, _last_index
     current_mtime = _get_dir_mtime()
-    cached = _cached_scan()
-    # lru_cache 不支持 mtime 感知的失效，改用全局 mtime 跟踪
-    global _last_mtime
     if current_mtime != _last_mtime:
         _last_mtime = current_mtime
-        return _scan_skills()
-    return cached
+        _last_index = _scan_skills()
+    return _last_index
 
 
 _last_mtime: float = 0.0
+_last_index: dict = {}
 
 
 def format_skills_prompt() -> str:
@@ -161,7 +158,11 @@ def format_skills_prompt() -> str:
     if system_skills:
         lines.append(f"**系统级 skill（{len(system_skills)} 个，已自动加载完整内容到上方）**\n")
         for name, info in sorted(system_skills, key=lambda x: x[0]):
-            lines.append(f"- 🔒 `{name}`: {info.get('description', '（无描述）')[:80]}")
+            # W4-12 SKILL 修复: 80 字符硬截断加 ... 防止描述被切到无意义位置
+            desc = info.get("description", "（无描述）")
+            if len(desc) > 80:
+                desc = desc[:77] + "..."
+            lines.append(f"- 🔒 `{name}`: {desc}")
         lines.append("")
     if external_skills:
         lines.append("**外部 skill（按需调用 `skill_view(name)` 加载完整内容）**\n")
@@ -282,20 +283,33 @@ def get_system_skills_content() -> str:
 
 # 模块加载时预热
 _detected: str | None = None
+# W4-12 SKILL 修复: get_skills_prompt 需要追踪 mtime 才能感知新 skill 上传
+_last_skills_prompt_mtime: float = 0.0
 
 
 def get_skills_prompt() -> str:
-    """获取 skill 索引提示词（延迟初始化 + mtime 缓存）"""
-    global _detected
-    if _detected is None:
+    """获取 skill 索引提示词（延迟初始化 + mtime 缓存）
+
+    W4-12 SKILL 修复: 旧实现 _detected 只在第一次 None 时生成, 之后再调用永远
+    返回旧字符串, 上传新 skill 后 system prompt 看不到。修复后每次调用都检查
+    mtime, 变化时刷新 _detected。
+    """
+    global _detected, _last_skills_prompt_mtime
+    current_mtime = _get_dir_mtime()
+    if _detected is None or current_mtime != _last_skills_prompt_mtime:
         _detected = format_skills_prompt()
-        logger.info("Skill 索引生成完成")
+        _last_skills_prompt_mtime = current_mtime
+        if current_mtime == 0:
+            logger.info("Skill 索引生成完成")
+        else:
+            logger.info("Skill 索引已刷新 (mtime 变化)")
     return _detected
 
 
 def refresh():
     """强制重新生成（例如上传新 skill 后）"""
-    global _detected, _last_mtime
+    global _detected, _last_mtime, _last_skills_prompt_mtime
     _last_mtime = 0.0
-    _detected = format_skills_prompt()
-    return _detected
+    _last_skills_prompt_mtime = 0.0
+    _detected = None  # W4-12: 让 get_skills_prompt 重新走 mtime 路径
+    return get_skills_prompt()

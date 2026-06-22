@@ -150,11 +150,12 @@ def skill_view(name: str) -> str:
     try:
         content = skill_md.read_text(encoding="utf-8")
         # 去掉 frontmatter，只返回 body 部分用于上下文注入
+        # W4-12 SKILL 修复: 删除 dead code `meta = _build_available_skills_index()`
+        #   该变量在 if 分支里被赋错 (赋成 skill 列表而不是 frontmatter dict) 且从未被用
         if content.startswith("---"):
             parts = content.split("---", 2)
             if len(parts) >= 3:
                 body = parts[2].strip()
-                meta = _build_available_skills_index()
                 return f"[skill: {name}]\n{body}"
         return f"[skill: {name}]\n{content}"
     except Exception as e:

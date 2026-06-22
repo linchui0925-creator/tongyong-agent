@@ -268,6 +268,8 @@ codegraph index .              # 强制全量重建
 | `119d8be` | stream output, vite hmr crash, context window overflow | langchain_agent.py / ModernChatPanel / vite 升级 |
 | `dd4ea3a` ~ `6571cd2` | W3 切流量系列 | stream.py |
 | `9c1beca` ~ `9a61b38` | W2 行为对齐基线 | stream.py |
+| `9586156` | fix(W4-14): MCP 客户端 lifespan 4 处 bug (跨 loop future / crash hang / shutdown 顺序 / async 入口) | mcp_client.py |
+| `c209ba0` | feat(W4-15): 新增 glob 工具 + load_skill 别名 | glob_tool.py / skill_tools.py |
 | `8d07486` ~ `e8ba538` | W1 LangChain adapter 集成 + 回归基线 | langchain_adapter / test_phase1 |
 
 ### 6.2 索引命令速查

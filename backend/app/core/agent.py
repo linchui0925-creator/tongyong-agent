@@ -32,6 +32,9 @@ from app.core.base import Message, Session, Memory
 from app.core.context import ContextManager
 from app.core.context_compressor import ContextCompressor
 from app.core.iteration_budget import IterationBudget
+from app.core.agent_hooks import (
+    register_hook, trigger_hooks_async, setup_default_hooks,
+)
 from app.memory.storage import MemoryStorage
 from app.memory.vector import VectorStore
 from app.llm.base import LLMResponse
@@ -143,6 +146,8 @@ class AgentEngine:
         # stream_chat_langchain 都能复用同一个 budget 实例。
         # IterationBudget.__post_init__ 会自动从 env 读 ITERATION_MAX_ROUNDS 等。
         self.budget = IterationBudget()
+        # W4-16: 注册 agent 默认 hook (s04_hooks 模式: 循环外注册, 循环内 trigger)
+        setup_default_hooks()
 
     def set_ask_response(self, question_id: str, answer: str) -> bool:
         """存储用户对某个 ask 问题的回答"""
@@ -968,16 +973,17 @@ class AgentEngine:
 
                 llm_messages = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
 
-                # ── step_callback：每次 API 调用前触发 ──
-                if step_callback:
-                    try:
-                        step_callback({
-                            "round": budget.current_round + 1,
-                            "remaining": budget.remaining,
-                            "messages_count": len(llm_messages),
-                        })
-                    except Exception as e:
-                        logger.warning(f"step_callback 执行失败: {e}")
+                # W4-16: UserPromptSubmit hook (s04_hooks 模式)
+                # 把 step_callback 等"调用前通知"集中到注册的 hook 里, 循环不再硬编码
+                await trigger_hooks_async("UserPromptSubmit", {
+                    "round": budget.current_round + 1,
+                    "remaining": budget.remaining,
+                    "context": self.context,
+                    "session_id": session_id,
+                    "message": message,
+                    "step_callback": step_callback,
+                    "memory_manager": memory_manager,
+                })
 
                 if budget.current_round == 0:
                     yield _progress("正在思考...")
@@ -1087,15 +1093,21 @@ class AgentEngine:
                                 elapsed = _time.time() - _t0
                                 is_error = _is_error_result(result)
                                 yield _tool_complete("terminal", result, elapsed, error=is_error)
-                                commands_executed.append(cmd)
-                                if self._constraint_engine:
-                                    self._constraint_engine.record_tool_execution(
-                                        tool_name="terminal",
-                                        arguments={"command": cmd},
-                                        result=result,
-                                        success=not is_error,
-                                        timestamp=_time.time()
-                                    )
+                                # W4-16: PostToolUse hook (fallback __ASK_BLOCK__ 路径)
+                                await trigger_hooks_async("PostToolUse", {
+                                    "tool_name": "terminal",
+                                    "arguments": {"command": cmd},
+                                    "result": result,
+                                    "is_error": is_error,
+                                    "elapsed": elapsed,
+                                    "tool_call_id": "fallback",
+                                    "context": self.context,
+                                    "session_id": session_id,
+                                    "constraint_engine": self._constraint_engine,
+                                    "tools_used": tools_used,
+                                    "commands_executed": commands_executed,
+                                    "tool_results_for_hermes": tool_results_for_hermes,
+                                })
                                 self.context.add_message("tool", _json.dumps({
                                     "tool_call_id": "fallback",
                                     "content": f"[命令执行结果]\n{result}"
@@ -1201,7 +1213,21 @@ class AgentEngine:
                                 elapsed = _time.time() - _t0
                                 is_error = _is_error_result(result)
                                 yield _tool_complete("terminal", result, elapsed, error=is_error)
-                                commands_executed.append(cmd)
+                                # W4-16: PostToolUse hook (fallback bash 提取路径)
+                                await trigger_hooks_async("PostToolUse", {
+                                    "tool_name": "terminal",
+                                    "arguments": {"command": cmd},
+                                    "result": result,
+                                    "is_error": is_error,
+                                    "elapsed": elapsed,
+                                    "tool_call_id": "fallback",
+                                    "context": self.context,
+                                    "session_id": session_id,
+                                    "constraint_engine": self._constraint_engine,
+                                    "tools_used": tools_used,
+                                    "commands_executed": commands_executed,
+                                    "tool_results_for_hermes": tool_results_for_hermes,
+                                })
                                 # 将命令结果加入上下文，让 LLM 生成最终回复
                                 self.context.add_message("tool", _json.dumps({
                                     "tool_call_id": "fallback",
@@ -1258,7 +1284,15 @@ class AgentEngine:
                 for tc in never_calls:
                     tool_name = tc["function"]["name"]
                     args = _json.loads(tc["function"]["arguments"])
-                    tools_used.append(tool_name)
+                    # W4-16: PreToolUse hook (默认 hook: hook_track_tool_used 追加到 tools_used)
+                    await trigger_hooks_async("PreToolUse", {
+                        "tool_name": tool_name,
+                        "arguments": args,
+                        "tool_call_id": tc.get("id", ""),
+                        "context": self.context,
+                        "tools_used": tools_used,
+                        "session_id": session_id,
+                    })
 
                     yield _tool_start(tool_name, args)
                     _tool_t0 = _time.time()
@@ -1295,9 +1329,6 @@ class AgentEngine:
                             tool_name, tc["id"], False, error_msg=error_msg, error_type=error_type
                         )
 
-                    if tool_name == "terminal":
-                        commands_executed.append(args.get("command", ""))
-
                     # 存储易读的纯文本
                     tool_text = _format_tool_result_text(
                         name=tool_name,
@@ -1311,15 +1342,21 @@ class AgentEngine:
                     self.context.add_message("tool", tool_text)
 
                     # 约束：记录工具执行结果，防止 agent 幻觉
-                    if self._constraint_engine:
-                        self._constraint_engine.record_tool_execution(
-                            tool_name=tool_name,
-                            arguments=args,
-                            result=tool_result,
-                            success=not is_error,
-                            timestamp=_time.time()
-                        )
-                        tool_results_for_hermes.append((tool_name, tool_result))
+                    # W4-16: PostToolUse hook (默认 hook: 写 commands_executed + record_tool_execution + tool_results_for_hermes)
+                    await trigger_hooks_async("PostToolUse", {
+                        "tool_name": tool_name,
+                        "arguments": args,
+                        "result": tool_result,
+                        "is_error": is_error,
+                        "elapsed": _elapsed,
+                        "tool_call_id": tc.get("id", ""),
+                        "context": self.context,
+                        "session_id": session_id,
+                        "constraint_engine": self._constraint_engine,
+                        "tools_used": tools_used,
+                        "commands_executed": commands_executed,
+                        "tool_results_for_hermes": tool_results_for_hermes,
+                    })
 
                 # 执行 safe 模式（并行）
                 if safe_calls:
@@ -1332,7 +1369,15 @@ class AgentEngine:
                     for tc in safe_calls:
                         tool_name = tc["function"]["name"]
                         args = _json.loads(tc["function"]["arguments"])
-                        tools_used.append(tool_name)
+                        # W4-16: PreToolUse hook (safe 模式 24 空格缩进)
+                        await trigger_hooks_async("PreToolUse", {
+                            "tool_name": tool_name,
+                            "arguments": args,
+                            "tool_call_id": tc.get("id", ""),
+                            "context": self.context,
+                            "tools_used": tools_used,
+                            "session_id": session_id,
+                        })
                         result_elapsed = safe_results.get(tc["id"], ("Unknown result", 0.0))
                         tool_result, _elapsed = result_elapsed if isinstance(result_elapsed, tuple) else (str(result_elapsed), 0.0)
 
@@ -1352,9 +1397,6 @@ class AgentEngine:
                                     yield ev
                                 break  # 跳出 safe 执行循环
 
-                        if tool_name == "terminal":
-                            commands_executed.append(args.get("command", ""))
-
                         # 存储易读的纯文本
                         tool_text = _format_tool_result_text(
                             name=tool_name,
@@ -1367,15 +1409,21 @@ class AgentEngine:
                         )
                         self.context.add_message("tool", tool_text)
 
-                        if self._constraint_engine:
-                            self._constraint_engine.record_tool_execution(
-                                tool_name=tool_name,
-                                arguments=args,
-                                result=tool_result,
-                                success=not is_error,
-                                timestamp=_time.time()
-                            )
-                            tool_results_for_hermes.append((tool_name, tool_result))
+                        # W4-16: PostToolUse hook (safe 模式 24 空格)
+                        await trigger_hooks_async("PostToolUse", {
+                            "tool_name": tool_name,
+                            "arguments": args,
+                            "result": tool_result,
+                            "is_error": is_error,
+                            "elapsed": _elapsed,
+                            "tool_call_id": tc.get("id", ""),
+                            "context": self.context,
+                            "session_id": session_id,
+                            "constraint_engine": self._constraint_engine,
+                            "tools_used": tools_used,
+                            "commands_executed": commands_executed,
+                            "tool_results_for_hermes": tool_results_for_hermes,
+                        })
 
                 if ask_triggered:
                     budget.advance()  # 推进预算
@@ -1385,7 +1433,15 @@ class AgentEngine:
                 for tc in path_scoped_calls:
                     tool_name = tc["function"]["name"]
                     args = _json.loads(tc["function"]["arguments"])
-                    tools_used.append(tool_name)
+                    # W4-16: PreToolUse hook (默认 hook: hook_track_tool_used 追加到 tools_used)
+                    await trigger_hooks_async("PreToolUse", {
+                        "tool_name": tool_name,
+                        "arguments": args,
+                        "tool_call_id": tc.get("id", ""),
+                        "context": self.context,
+                        "tools_used": tools_used,
+                        "session_id": session_id,
+                    })
 
                     yield _tool_start(tool_name, args)
                     _tool_t0 = _time.time()
@@ -1422,9 +1478,6 @@ class AgentEngine:
                             tool_name, tc["id"], False, error_msg=error_msg, error_type=error_type
                         )
 
-                    if tool_name == "terminal":
-                        commands_executed.append(args.get("command", ""))
-
                     # 存储易读的纯文本
                     tool_text = _format_tool_result_text(
                         name=tool_name,
@@ -1437,15 +1490,21 @@ class AgentEngine:
                     )
                     self.context.add_message("tool", tool_text)
 
-                    if self._constraint_engine:
-                        self._constraint_engine.record_tool_execution(
-                            tool_name=tool_name,
-                            arguments=args,
-                            result=tool_result,
-                            success=False,
-                            timestamp=_time.time()
-                        )
-                        tool_results_for_hermes.append((tool_name, tool_result))
+                    # W4-16: PostToolUse hook (path_scoped 错误路径, success=False)
+                    await trigger_hooks_async("PostToolUse", {
+                        "tool_name": tool_name,
+                        "arguments": args,
+                        "result": tool_result,
+                        "is_error": True,
+                        "elapsed": _elapsed,
+                        "tool_call_id": tc.get("id", ""),
+                        "context": self.context,
+                        "session_id": session_id,
+                        "constraint_engine": self._constraint_engine,
+                        "tools_used": tools_used,
+                        "commands_executed": commands_executed,
+                        "tool_results_for_hermes": tool_results_for_hermes,
+                    })
 
                 if ask_triggered:
                     budget.advance()  # 推进预算
@@ -1543,12 +1602,19 @@ class AgentEngine:
         final_reply = re.sub(r'<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>', '', final_reply).strip()
 
         self.context.add_message("assistant", final_reply)
-        await self.memory_storage.add_message(session_id, "user", message)
-        await self.memory_storage.add_message(session_id, "assistant", final_reply)
+        # W4-16: Stop hook (s04_hooks 模式)
+        # 把"保存到 memory_storage + 重置 constraint_engine"挪到注册表, 循环不再硬编码
+        await trigger_hooks_async("Stop", {
+            "context": self.context,
+            "final_response_chunks": final_response_chunks,
+            "tools_used": tools_used,
+            "commands_executed": commands_executed,
+            "session_id": session_id,
+            "message": message,
+            "memory_storage": self.memory_storage,
+            "constraint_engine": self._constraint_engine,
+        })
         self.context.clear()
-        # 重置 Hermes 约束引擎状态，避免跨任务误判循环
-        if self._constraint_engine:
-            self._constraint_engine.reset_session()
 
         yield _done()
 

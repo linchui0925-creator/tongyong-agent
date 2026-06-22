@@ -21,9 +21,9 @@
 | 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 83 (+ W4-15 工具 17 / + W4-14 MCP 9) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 108 (+ W4-15 工具 17 / + W4-14 MCP 9 / + W4-16 hooks 25) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。W4-14 (MCP lifespan) 4 子问题全部修完, 还剩 P1-3 (must_use_tool) / P1-4 (_ask_pending) / P2 / P3 共 8 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。W4-14 (MCP lifespan) + W4-16 (agent hooks 模式) 已完成, 还剩 P1-3 (must_use_tool) / P1-4 (_ask_pending) / P2 / P3 共 8 项待办。
 
 ---
 
@@ -736,3 +736,61 @@ cd backend && .venv/bin/python -m pytest \
     tests/test_w413_audit_fixes.py -v
 # 83 passed in 1.12s
 ```
+
+## W4-16 引入 (2026-06-22) — agent 循环 hooks (s04_hooks 模式)
+
+### 背景
+
+用户指出项目 agent.py 1786 行, `stream_chat` 里 600+ 行的 `while True` 循环塞满了:
+- `step_callback` 调用 (内联 8 行)
+- 3 个并行模式下各 3 处的 `tools_used.append` / `commands_executed.append` / `record_tool_execution` 块
+- 内存保存 + 约束引擎重置 (内联 7 行)
+- 还有 fallback 路径里的同款副作用
+
+每加一个新行为 (Slack 通知 / 自动 git commit / 工具白名单 / 审计) 都要改这个循环。
+
+参考 [learn-claude-code s04_hooks](https://github.com/shareAI-lab/learn-claude-code/blob/main/s04_hooks/README.md) 的设计原则:
+
+> *"挂在循环上, 不写进循环里" — hook 在工具执行前后注入扩展逻辑*
+
+### 改动
+
+**新文件** [app/core/agent_hooks.py](backend/app/core/agent_hooks.py) (232 行):
+- `HOOKS` 字典: 4 个核心事件 (UserPromptSubmit / PreToolUse / PostToolUse / Stop)
+- `register_hook(event, callback)`: 注册回调
+- `trigger_hooks(event, ctx)` / `trigger_hooks_async(event, ctx)`: 触发, 第一个非 None 返回值会阻断 (用于 PreToolUse)
+- `setup_default_hooks()`: 把原循环里的"默认行为"注册成 hook
+  - `hook_step_callback` (UserPromptSubmit): 调用前端 step_callback
+  - `hook_track_tool_used` (PreToolUse): 追加到 tools_used
+  - `hook_post_tool_side_effects` (PostToolUse): 写 commands_executed + record_tool_execution + tool_results_for_hermes
+  - `hook_memory_save` (Stop): 保存到 memory_storage + reset constraint_engine
+
+**修改** [app/core/agent.py](backend/app/core/agent.py) (净增 66 行):
+- `__init__` 末尾 `setup_default_hooks()`
+- `stream_chat` 的 `while True` 循环里:
+  - LLM 调用前: `await trigger_hooks_async("UserPromptSubmit", ctx)` 替换内联 step_callback
+  - 3 个并行模式 (never / safe / path_scoped) 开头: `await trigger_hooks_async("PreToolUse", ctx)` 替换 `tools_used.append`
+  - 3 个并行模式 (含 fallback) 末尾: `await trigger_hooks_async("PostToolUse", ctx)` 替换 commands_executed.append + record_tool_execution 块
+  - 循环退出前: `await trigger_hooks_async("Stop", ctx)` 替换 memory_storage.add_message + constraint_engine.reset_session
+
+### 优势
+
+- **新功能一行加**: 注册 hook 即可, 不再改 while 循环
+- **测试可观测**: hook 是普通函数, mock 简单; trigger_hooks 调用计数可断言
+- **副作用集中**: 4 类副作用 (callback / 追踪 / 约束 / 持久化) 都在 agent_hooks.py 一处维护
+- **保留行为**: 把 inline 行为 1:1 移到 hook, 顺序 / 异常处理都不变
+
+### 回归覆盖 (25 用例)
+
+[tests/test_agent_hooks.py](backend/tests/test_agent_hooks.py):
+- 9 个基础 API (register/trigger/clear/list, sync/async, 异常捕获, 非 None 阻断)
+- 4 个 setup_default_hooks 验证 + 默认 hook 行为
+- 12 个边界 (None ctx / 无 engine / 无 storage / 清理 <think> 标签等)
+
+E2E 冒烟 (mock LLM): 4 hook 全注册, step_cb 调用 1 次, add_message 调用 2 次 (user+assistant), 8 个 stream 事件正常 yield。
+
+### 后续 follow-up
+
+- `langchain_agent.py` 同样有内联副作用, 可用同一套 hook 改造 (P2)
+- `chat()` (非流式) 路径里还有 `tools_used.append` + `commands_executed.append` + `memory_storage.add_message`, 可一并提取 (P3)
+- 27 事件版本 (对齐 CC 源码): 当前只用了 4 事件, 真要支持完整 Claude Code 兼容需要扩展 (SessionStart / SubagentStart 等)

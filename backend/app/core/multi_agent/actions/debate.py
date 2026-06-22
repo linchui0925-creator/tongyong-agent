@@ -224,6 +224,9 @@ class DebateJudgeAction(TeamAction):
                 break
 
         # 收集正方和反方发言
+        # W4-8 P0-2 修复 2026-06-21: 优先用 msg.metadata["debate_side"] 分类,
+        #   兜底走名字匹配 (兼容老消息 / 测试场景)。
+        #   之前 `if "正方" in msg.sent_from` 在英文角色名 ("Biden"/"Pro") 上会全漏判。
         positive_speeches = []
         negative_speeches = []
         seen_ids = set()
@@ -234,10 +237,21 @@ class DebateJudgeAction(TeamAction):
             if msg.sent_from in ("Team", "user", "") or msg.role == "user":
                 continue
             if msg.cause_by in ("DebateSpeech", "SpeakAloud") and msg.sent_from:
+                # 1) 优先用 metadata 显式标记
+                side = (msg.metadata or {}).get("debate_side", "")
+                # 2) 兜底: 名字包含"正方/反方" (老消息 / 未填 debate_side 的角色)
+                if not side:
+                    if "正方" in msg.sent_from:
+                        side = "positive"
+                    elif "反方" in msg.sent_from:
+                        side = "negative"
+                # 3) 裁判 (judge) 不进正反方桶
+                if side == "judge":
+                    continue
                 content = f"{msg.sent_from}: {msg.content[:400]}"
-                if "正方" in msg.sent_from:
+                if side == "positive":
                     positive_speeches.append(content)
-                elif "反方" in msg.sent_from:
+                elif side == "negative":
                     negative_speeches.append(content)
 
         pos_text = "\n\n".join(positive_speeches[-8:]) if positive_speeches else "正方暂无发言"

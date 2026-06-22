@@ -111,18 +111,23 @@ async def stream_chat_langchain(
     #   domain 会按 session 选; 不存在时用 "default" 做兜底。
     if session_id:
         yield _progress(f"加载 session {session_id[:8]}...")
+    # ⚠️ 调用顺序很重要 (W4-8 P0-1 修复 2026-06-21)：
+    #   三个 inject 全部用 messages.insert(0, ...)，最后调用的反而排最前。
+    #   期望 base_prompt 落在位置 0 (LLM 第一眼看到)，所以 base 必须 **最后** 调。
+    #   旧版 (base → memory → domain) 实际让 base 落到最底，与注释相反。
+    #   修正后顺序: domain → memory → base, 最终 = [base, USER, MEMORY, domain]
     try:
-        agent_engine._inject_base_system_prompt()
+        await agent_engine._ensure_domain_prompts(session_id or "default")
     except Exception as e:
-        logger.warning(f"[langchain] 注入 base system prompt 失败: {e}")
+        logger.warning(f"[langchain] 注入 domain 失败: {e}")
     try:
         await agent_engine._inject_memory(session_id or "default")
     except Exception as e:
         logger.warning(f"[langchain] 注入 memory 失败: {e}")
     try:
-        await agent_engine._ensure_domain_prompts(session_id or "default")
+        agent_engine._inject_base_system_prompt()
     except Exception as e:
-        logger.warning(f"[langchain] 注入 domain 失败: {e}")
+        logger.warning(f"[langchain] 注入 base system prompt 失败: {e}")
     yield _progress("上下文装配完成")
 
     # 添加用户消息

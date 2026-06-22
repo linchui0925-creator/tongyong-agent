@@ -256,6 +256,13 @@ class TeamRole(BaseModel):
         if has_error:
             msg.metadata["error"] = True
 
+        # W4-8 P0-2 修复 2026-06-21: 辩论角色把阵营/辩位写到 metadata,
+        #   下游 DebateJudgeAction 读 msg.metadata["debate_side"] 准确分类,
+        #   不再依赖 "正方" in sent_from 这种字符串匹配 (英文角色名漏判)。
+        if self.debate_side or self.debate_position:
+            msg.metadata["debate_side"] = self.debate_side or ""
+            msg.metadata["debate_position"] = self.debate_position or ""
+
         # 存入记忆
         self.add_memory(msg)
 
@@ -453,6 +460,10 @@ class TeamRole(BaseModel):
                 send_to=opponent_name,
                 cause_by=todo.name,
             )
+            # W4-8 P0-2 修复 2026-06-21: 同步把阵营/辩位写到 metadata
+            if self_ref.debate_side or self_ref.debate_position:
+                msg.metadata["debate_side"] = self_ref.debate_side or ""
+                msg.metadata["debate_position"] = self_ref.debate_position or ""
             self_ref.add_memory(msg)
             return msg
 

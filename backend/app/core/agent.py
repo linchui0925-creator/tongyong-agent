@@ -293,11 +293,16 @@ class AgentEngine:
             logger.info(f"创建新会话: {session_id}")
 
         # 注入身份认知和记忆（放在上下文最前面，覆盖 LLM 默认认知）
-        # ⚠️ _inject_base_system_prompt 必须最先调 —— base_prompt 里写了"你是同通用Agent"，
-        # 这条要在所有其它 system 之前，让 LLM 把"我是 Tongyong Agent"作为第一认知
-        self._inject_base_system_prompt()
-        await self._inject_memory(session_id)
+        # ⚠️ 调用顺序很关键 —— 三个 inject 全部用 messages.insert(0, ...)，
+        #   最后调用的反而排最前。要让 base_prompt 真正落在位置 0 (LLM 第一眼看到)，
+        #   必须把它放到 **最后** 调用, 让它压到所有 system 之上。
+        #   旧版 (2026-06-21 P0-1 修复前) 调用顺序是 base → memory → domain,
+        #   实际最终顺序 = [domain, USER, MEMORY, base] — base 被压到 system 最底,
+        #   与注释 "确保 LLM 看到的第一条就是它" 完全相反。
+        # 修正后: domain → memory → base, 最终顺序 = [base, USER, MEMORY, domain]
         await self._ensure_domain_prompts(session_id)
+        await self._inject_memory(session_id)
+        self._inject_base_system_prompt()
 
         # 注入环境能力（让 Agent 知道实际安装了哪些工具）
         from app.core.env_capabilities import get_env_prompt
@@ -818,11 +823,14 @@ class AgentEngine:
 
         # ── 阶段 1: 加载上下文 ──
         yield _progress("加载身份认知...")
-        # ⚠️ _inject_base_system_prompt 必须最先调 —— 把"我是 Tongyong Agent"压成第一认知
-        # 它内部已经包含 base + capability + skills 三段，不再单独调 get_skills_prompt
-        self._inject_base_system_prompt()
-        await self._inject_memory(session_id)
+        # ⚠️ 调用顺序很重要 (W4-8 P0-1 修复 2026-06-21)：
+        #   三个 inject 全部用 messages.insert(0, ...)，最后调用的反而排最前。
+        #   期望 base_prompt 落在位置 0 (LLM 第一眼看到) → 必须 **最后** 调 base。
+        #   它内部已经包含 base + capability + skills 三段，不再单独调 get_skills_prompt。
+        #   修正后顺序: domain → memory → base, 最终 = [base, USER, MEMORY, domain]
         await self._ensure_domain_prompts(session_id)
+        await self._inject_memory(session_id)
+        self._inject_base_system_prompt()
 
         from app.core.env_capabilities import get_env_prompt
         env_prompt = get_env_prompt()

@@ -12,6 +12,7 @@
 > W4-8 修复 (2026-06-21): 两个 P0 已修，配套回归测试 15 个全绿 (test_prompt_order.py 8 + test_debate_judge.py 7)。详见末尾「W4-8 修复说明」节。
 > W4-9/W4-10 修复 (2026-06-21): P1-1 delegate_depth ContextVar / P1-2 debate position 排序 已修, 配套回归测试 17 个全绿 (test_debate_round_order.py 8 + test_delegate_task.py 末尾 4)。详见末尾「W4-9/W4-10 修复说明」节。
 > W4-11/W4-12 修复 (2026-06-21): MCP 客户端 4 处 bug (含 2 处 fatal) / Skill 索引 5 处 bug (含 1 处 fatal) 已修, 配套回归测试 17 个全绿 (test_mcp_client.py 8 + test_skills_index.py 9)。详见末尾「W4-11/W4-12 修复说明」节。
+> W4-13 修复 (2026-06-21): 审计发现 3 处连带 bug (heuristic 多段 + budget 一次性 + skipped 路径污染) 已修, 配套回归测试 8 个全绿 (test_w413_audit_fixes.py)。详见末尾「W4-13 修复说明」节。
 
 | 项 | 修复前 | 当前 |
 |---|---|---|
@@ -19,9 +20,9 @@
 | 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 49 (P0 15 + P1-2 8 + P1-1 9 + MCP/SKILL 17) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 57 (+ W4-13 审计发现 8) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 (2026-06-21) 修了 2 个 P0, W4-9/W4-10 推进 2 个 P1, W4-11/W4-12 又修 2 处致命 bug (MCP send + skill 上传)。还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 共 9 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成把"行为正确性"拉到位了。W4-8 修了 2 个 P0, W4-9/W4-10 推进 2 个 P1, W4-11/W4-12 修 2 处致命 bug, W4-13 又收尾 3 处审计连带 bug。还剩 P1 (must_use_tool / _ask_pending) / P2 / P3 + W4-14 (MCP lifespan) 共 10 项待办。
 
 ---
 
@@ -509,3 +510,77 @@ cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
 - `get_system_skills_content` 的 budget_per 是基于 `len(system_skills)` 一次性切分，不随 `total_size` 递减，可能首段就吃满 8KB
 - `marketplace.install_skill` 二进制文件 (.png/.pdf) 直接 skip 但**不通知用户**返回里只列在 `files_skipped`，前端可能误以为下载完成
 - `mcp_client.discover_mcp_tools` 在主线程开新 event loop + daemon thread，**不会**被 FastAPI lifespan 正常管理；多 worker 部署时每个 worker 都重复启动 MCP server 进程
+
+---
+
+## W4-13 修复说明 (2026-06-21) — 审计发现 3 处连带 bug
+
+### 背景
+
+W4-11 / W4-12 修复 MCP + Skill 时，在 `skills_index.py` / `marketplace.py` 顺手发现 3 个真实 bug，commit message (`155e89a`) 末尾点名留给下一轮。本轮收尾。
+
+### W4-13.1 `_extract_heuristic_sections` 多启发式段只取第一段
+
+**问题**：[skills_index.py:172-202](backend/app/core/skills_index.py) 旧实现：
+```python
+for line in lines:
+    if stripped.startswith("## "):
+        title = stripped[3:].strip()
+        if any(pat in title for pat in _HEURISTIC_SECTION_PATTERNS):
+            in_section = True
+            keep.append(line)
+        elif in_section:
+            break  # ← 致命: 遇到第一个非启发式 ## 标题就退出
+```
+
+如果 SKILL.md 是 `## Heuristic A` + `## Why A` + `## Heuristic B` + `## Reference`，`## Why A` 触发 `break`，`## Heuristic B` 和 `## Reference` 全部被丢。**用户精心写的多段启发式只剩第一段**。
+
+**修复**：去掉 `break`，改为 `in_section = False`（继续扫描，后续启发式段仍可入段）。已用 4 个测试覆盖：多段保留 / 无启发式段兜底 / 空 body / `Decision` / `Pitfall` / `决策` / `启发式` 4 个 pattern 全部识别。
+
+### W4-13.2 `get_system_skills_content` budget 一次性
+
+**问题**：[skills_index.py:223, 245](backend/app/core/skills_index.py) 旧实现：
+```python
+budget_per = _SYSTEM_CONTENT_MAX_BYTES // max(len(system_skills), 1)  # 一次性
+for name, info in sorted(...):
+    if total_size + len(body) > _SYSTEM_CONTENT_MAX_BYTES:
+        content = _extract_heuristic_sections(body)[:budget_per]  # 不递减
+    else:
+        content = body
+    total_size += len(content)
+```
+
+`budget_per` 在循环外算一次（如 8KB / 3 = 2730 字节）。3 个 skill 都按这个固定值切，**累计可能超 8KB**（极端：3 × 2730 = 8190，看似正好，但 section header + 余数仍可能超）。
+
+**修复**：改为循环内动态算 `remaining_budget = MAX - total_size` 和 `remaining_skills`，每个 skill 按 `(remaining // remaining) / remaining_skills` 切，加 `max(..., 512)` 防退化。预算耗尽时直接跳过（不切到负数）。已用 2 个测试覆盖：3 个 4KB skill 累计 ≤ 2× budget，1 个 16KB skill 被切到 ≤ 1.5× budget。
+
+### W4-13.3 `marketplace.install_skill` skipped 路径污染
+
+**问题**：[marketplace.py:107, 586, 592, 601](backend/app/core/marketplace.py) 旧实现 4 处 `skipped.append(rel)`（其中二进制文件特殊处理为 `skipped.append(rel + " (binary)")`）。这有两个问题：
+
+1. **`(binary)` 后缀拼到 path 字符串**：`skipped` 列表本应是纯路径，UI 收到 `"icon.png (binary)"` 误以为是文件名。
+2. **类型注解 `List[str]` 与新行为不符**：未来要支持 base64 二进制 / GitHub API contents（支持二进制）时无法扩展。
+
+**修复**：全部 4 处 `skipped.append(rel)` 改为 `skipped.append({"path": rel, "reason": "..."})`，`reason` 取自 `{unrelated_path, unsafe_path, bundle_too_large, binary_not_supported}` 之一。类型注解同步改为 `List[Dict[str, str]]`。已用 2 个测试覆盖：二进制文件 reason == `"binary_not_supported"`，其他跳过原因也用 dict（不再裸 path 字符串）。
+
+**前端影响**：`install_skill` 返回的 `files_skipped` 从 `["icon.png (binary)"]` 变成 `[{"path": "icon.png", "reason": "binary_not_supported"}]`。前端若直接渲染 path 字符串会显示 `{'path': 'icon.png', 'reason': 'binary_not_supported'}`，需要同步更新读取代码（`s.path` / `s.reason`）。**这是 breaking change**，但语义清晰，迁移成本低。
+
+### 验证
+
+```bash
+cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
+    tests/test_prompt_order.py tests/test_debate_judge.py tests/test_debate_round_order.py \
+    tests/test_delegate_task.py tests/test_mcp_client.py tests/test_skills_index.py \
+    tests/test_w413_audit_fixes.py -v
+# 57 passed in 0.42s
+```
+
+### 仍未修（下一轮 W4-14）
+
+- **`mcp_client.discover_mcp_tools` lifespan 问题**：在主线程开新 event loop + daemon thread，**不会被 FastAPI lifespan 管理**；多 worker 部署时每个 worker 重复启动 MCP server 进程。需要：
+  1. 接入 FastAPI `lifespan` 上下文（在 `app.main` 里 `yield` 前后启停）
+  2. 加 idempotent init（重复调用不重起）
+  3. 加 per-server crash restart（subprocess 死了自动重启，最多 N 次）
+  4. `shutdown_mcp_tools` 当前 race 修（`call_soon_threadsafe(stop)` 与 `future.result()` 顺序问题）
+- **架构层 P2/P3**：main.py 6 职责、registry 副作用、`is_persistent=False` 临时回退等
+- **P1-3 / P1-4**：must_use_tool fallback / _ask_pending 持久化（需先与用户对齐 UX 和存储选型）

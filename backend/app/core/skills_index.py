@@ -193,26 +193,27 @@ _HEURISTIC_SECTION_PATTERNS = ("Heuristic", "启发式", "Decision", "决策", "
 
 
 def _extract_heuristic_sections(body: str) -> str:
-    """从 SKILL.md body 中截取启发式段，避免 system prompt 爆"""
+    """从 SKILL.md body 中截取所有启发式段，避免 system prompt 爆
+
+    W4-13.1 修复 2026-06-21: 旧实现遇到第一个非启发式 ## 标题就 break,
+    后续启发式段 (e.g. ## Heuristic B) 全部被丢。改为扫描整篇,
+    只保留 title 匹配 _HEURISTIC_SECTION_PATTERNS 的 ## 段及其内容。
+    """
     if not body:
         return ""
     lines = body.splitlines()
     keep: list = []
     in_section = False
-    section_level = 0
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("## "):
             title = stripped[3:].strip()
             if any(pat in title for pat in _HEURISTIC_SECTION_PATTERNS):
                 in_section = True
-                section_level = 2
-                keep.append(line)
-            elif in_section:
-                # 退出启发式段
-                break
+                keep.append(line)  # 标题本身保留
             else:
-                continue
+                # 非启发式标题: 退出当前段, 但不 break (继续找后续启发式段)
+                in_section = False
         elif in_section:
             keep.append(line)
     return "\n".join(keep).strip() if keep else body[:_SYSTEM_CONTENT_MAX_BYTES]
@@ -238,17 +239,20 @@ def get_system_skills_content() -> str:
         return ""
 
     # 直接读 SKILL.md，绕开 SkillFileManager 的 base_dir 假设
+    sorted_skills = sorted(system_skills, key=lambda x: x[0])
     blocks: list = []
     total_size = 0
-    budget_per = _SYSTEM_CONTENT_MAX_BYTES // max(len(system_skills), 1)
+    remaining_skills = len(sorted_skills)
 
-    for name, info in sorted(system_skills, key=lambda x: x[0]):
+    for name, info in sorted_skills:
         skill_md = _SKILLS_BASE_DIR / info["category"] / name / "SKILL.md"
         if not skill_md.is_file():
+            remaining_skills -= 1
             continue
         try:
             raw = skill_md.read_text(encoding="utf-8")
         except OSError:
+            remaining_skills -= 1
             continue
         # 复用本模块的 frontmatter 解析；body 用 content.split("---", 2)[2]
         meta = _read_frontmatter(skill_md)
@@ -257,8 +261,18 @@ def get_system_skills_content() -> str:
         else:
             body = raw.strip()
 
-        # 总预算：先看是否需要启发式截断
+        # W4-13.2 修复 2026-06-21: 旧实现 budget_per 一次性算 (8KB / N),
+        # 不随 total_size 递减, 多个 skill 累计可能超 8KB.
+        # 修复: 每个 skill 按 (remaining_budget // remaining_skills) 动态算,
+        # 已用完预算的 skill 跳过.
+        remaining_budget = _SYSTEM_CONTENT_MAX_BYTES - total_size
+        if remaining_budget <= 0:
+            remaining_skills -= 1
+            continue
+
         if total_size + len(body) > _SYSTEM_CONTENT_MAX_BYTES:
+            # 超出预算: 启发式段优先, 再按剩余预算切
+            budget_per = max(remaining_budget // max(remaining_skills, 1), 512)
             content = _extract_heuristic_sections(body)[:budget_per]
         else:
             content = body
@@ -269,6 +283,7 @@ def get_system_skills_content() -> str:
             f"{content}"
         )
         total_size += len(content)
+        remaining_skills -= 1
 
     if not blocks:
         return ""

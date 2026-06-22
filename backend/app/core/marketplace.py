@@ -565,7 +565,8 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
     files_meta = skill.get("files", [])
     total_size = 0
     downloaded: List[Dict[str, Any]] = []
-    skipped: List[str] = []
+    # W4-13.3 修复: 类型改 Dict (含 reason 字段), 旧 List[str] 无法表达跳过原因
+    skipped: List[Dict[str, str]] = []
     failed: List[str] = []
 
     skill_dir_remote = str(Path(skill["path"]).parent)  # 远端 skill 所在目录
@@ -582,13 +583,13 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
             continue  # 是目录不是文件
         else:
             # 不在 skill 目录下的文件, 跳过（安全）
-            skipped.append(rel)
+            skipped.append({"path": rel, "reason": "unrelated_path"})
             continue
 
         safe = _safe_rel_path(local_rel)
         if not safe:
             logger.warning(f"拒绝不安全路径: {rel}")
-            skipped.append(rel)
+            skipped.append({"path": rel, "reason": "unsafe_path"})
             continue
 
         size = int(f.get("size", 0) or 0)
@@ -597,7 +598,7 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
             logger.warning(
                 f"skill 配套文件超 {total_size} bytes, 超过 {_MAX_SKILL_BUNDLE_BYTES} 阈值, 停止下载"
             )
-            skipped.append(rel)
+            skipped.append({"path": rel, "reason": "bundle_too_large"})
             continue
 
         # 拉取单个文件
@@ -608,12 +609,13 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
 
         # 写本地
         local_path = target_skill_dir / safe
-        # 文件是二进制（如 .png）时 fcontent 是 str，可能乱码——目前只处理文本
-        # 防御: 如果 safe 是已知的二进制扩展, 用 bytes 写入
+        # W4-13.3 修复 2026-06-21: 旧实现 skipped.append(rel + " (binary)")
+        # 把 rel 和 tag 拼成一个字符串, 污染 skipped 列表 (设计上是 path 列表).
+        # 当前 _fetch_skill_content 只处理文本, 二进制文件不能正确写入 (raw URL 是
+        # 二进制流不是 base64). 正确做法: 结构化记录跳过原因, 未来支持 base64 /
+        # github API contents (支持二进制) 时可恢复.
         if any(safe.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf"]):
-            # 这种情况需要 base64 解码, 但 raw URL 返回的是二进制流而不是 base64
-            # 当前 _fetch_skill_content 只处理文本, 二进制文件暂时跳过
-            skipped.append(rel + " (binary)")
+            skipped.append({"path": rel, "reason": "binary_not_supported"})
             continue
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_text(fcontent, encoding="utf-8")

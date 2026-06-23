@@ -318,11 +318,16 @@ class MCPClient:
         input_schema = tool_def.get("inputSchema", {})
 
         # 包装 handler
-        async def mcp_handler(args: Dict, task_id: str = "default") -> str:
+        # W4-18 修复: 改用 **arguments 跟其他 tool 约定一致 (tool manager 调 handler(**arguments))
+        # 旧签名 mcp_handler(args: Dict) 跟 ToolRegistry.execute 的 entry.handler(**arguments) 不兼容
+        # — LLM 传 {"text": "hi"} 时, 旧实现会被调成 mcp_handler(text="hi") 直接 TypeError
+        async def mcp_handler(task_id: str = "default", **arguments) -> str:
+            # 移除 task_id (内部使用), 剩下的就是 MCP server 实际收到的 arguments
+            arguments.pop("task_id", None)
             try:
                 result = await self._send_request("tools/call", {
                     "name": name,
-                    "arguments": args,
+                    "arguments": arguments,
                 })
                 if isinstance(result, dict):
                     content = result.get("content", [])

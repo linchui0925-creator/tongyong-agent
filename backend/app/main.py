@@ -143,3 +143,9 @@ app = create_app()
 def get_agent_engine():
     """兼容旧依赖注入路径"""
     return app.extra.get("agent_engine")
+
+
+# 向后兼容: 11 个 call sites 用 `from app.main import agent_engine` (stream.py / ask.py /
+# delegate_task.py / memory.py / evaluation.py 等). P2-1 重构后, 内部全部走 get_agent_engine(),
+# 这里保留 module-level alias 避免批量改 call sites.
+agent_engine = app.extra.get("agent_engine")

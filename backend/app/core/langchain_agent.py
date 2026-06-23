@@ -166,10 +166,13 @@ async def stream_chat_langchain(
         system_prompt = "你是一个有用的 AI 助手，可以使用工具来完成任务。"
 
     # 构建 chat history（从 context 转换）
+    # W4-23 P2-3 修复: 跳过 system messages — `prompt=system_prompt` 已经传了,
+    # 之前在 chat_history 里再 append 会让每轮累积 2 段 system, 60 轮后 checkpointer
+    # 累积 4×60=240 段 system, 触发 minimaxi 短窗口 400
     chat_history = []
     for msg in ctx.get_messages()[:-1]:  # 排除最后一条 user 消息
         if msg.role == "system":
-            chat_history.append(SystemMessage(content=msg.content or ""))
+            continue  # system 走 prompt= 参数, 不入 chat_history
         elif msg.role == "user":
             chat_history.append(HumanMessage(content=msg.content or ""))
         elif msg.role == "assistant":
@@ -191,24 +194,24 @@ async def stream_chat_langchain(
         chat_history = chat_history[:KEEP_HEAD] + chat_history[-KEEP_TAIL:]
 
     # ── 3. 创建 ReAct Agent ──────────
-    # W3-B：临时改走 ephemeral path — 修"agent不输出内容"问题
-    # 根因：checkpointer 把每轮 4 段 system prompt + user/assistant 存到 sqlite，
-    # 后续 astream 读 state.values["messages"] 时累积 4×N 段 system，单次请求总 token
-    # 超过 minimaxi 短窗口 (2013 messages 等价物)，触发 400、SSE 只 yield done。
-    # 之前尝试的"chat_history 去重"无效，因为 input.messages 经 astream 走
-    # checkpointer 时被追加到 state，复读时仍包含全部历史 system。
-    # 临时修法：把 session_id 当 thread_id 改走 ephemeral（不传 thread_id），
-    # 这样 astream 不读 checkpointer 状态，input 只含本轮 chat_history。
-    # 副作用：丢 60 条历史的连续记忆。后续修好再改回 is_persistent=True。
+    # W4-23 P2-3：恢复 checkpointer (W3-B 临时回退已修)
+    # 根因: chat_history 里追加了 system message + `prompt=` 也传了 system,
+    #   每轮累积 2 段 system, 60 轮后 checkpointer 累积 120 段 system,
+    #   触发 minimaxi 短窗口 400。
+    # 修法: chat_history 跳过 system messages, 改回 is_persistent=True。
+    # 收益: 60 条历史连续记忆恢复, 跨请求可重入。
+    # 注意: is_persistent 仅在 session_id 不为 None 时启用, ephemeral 仍不污染持久化。
     max_iterations = 20
     if hasattr(agent_engine, 'budget'):
         max_iterations = agent_engine.budget.max_rounds
 
     # W1-3: 接 AsyncSqliteSaver, session_id 当 thread_id
-    # session_id=None 时, 不用 checkpointer (ephemeral 不污染持久化)
+    # W4-23 P2-3: 改回 is_persistent=True (W3-B 临时回退已修)
+    #   - chat_history 已去重 system messages, checkpointer 不再累积
+    #   - 60 条历史连续记忆恢复
+    # session_id=None 时仍走 ephemeral (不污染持久化)
     thread_id = session_id or f"ephemeral-{_time.time()}"
-    # W3-B 临时改: 强制走 ephemeral，避免 checkpointer 累积 system prompt
-    is_persistent = False
+    is_persistent = session_id is not None
 
     if is_persistent:
         checkpointer_cm = _use_checkpointer()

@@ -664,47 +664,73 @@ async def search_files_tool(pattern: str, path: str = ".", type: str = "content"
 # 注册
 # ═══════════════════════════════════════════════════════════
 
-registry.register(
-    name="read_file",
-    toolset="file",
-    description="读取文件内容。支持指定起始行和行数范围，自动检测编码，安全过滤设备文件。大文件建议用 offset+limit 分段读取。内置去重：相同文件重复读取时会提示使用已有结果。",
-    schema=READ_FILE_SCHEMA,
-    handler=read_file_tool,
-    check_fn=_check_env,
-    emoji="📖",
-    max_result_size_chars=_MAX_READ_CHARS,
-    parallel_mode="safe",
-)
 
-registry.register(
-    name="write_file",
-    toolset="file",
-    description="创建新文件或覆盖已有文件。自动创建父目录。拒绝写入敏感系统路径。如文件在读取后被外部修改会给出警告。",
-    schema=WRITE_FILE_SCHEMA,
-    handler=write_file_tool,
-    check_fn=_check_env,
-    emoji="✍️",
-    parallel_mode="path_scoped",
-)
 
-registry.register(
-    name="patch",
-    toolset="file",
-    description="精确替换文件中的文本（replace 模式），或在文件开头/末尾插入内容。比 write_file 更安全，只修改指定部分。支持 replace_all 替换所有匹配项。",
-    schema=PATCH_SCHEMA,
-    handler=patch_tool,
-    check_fn=_check_env,
-    emoji="🔧",
-    parallel_mode="path_scoped",
-)
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
 
-registry.register(
-    name="search_files",
-    toolset="file",
-    description="搜索文件内容或文件名。支持正则表达式和 glob 通配符过滤。自动跳过 .git/node_modules 等目录。",
-    schema=SEARCH_FILES_SCHEMA,
-    handler=search_files_tool,
-    check_fn=_check_env,
-    emoji="🔎",
-    parallel_mode="safe",
-)
+
+def _register_tools():
+    registry.register(
+        name="read_file",
+        toolset="file",
+        description="读取文件内容。支持指定起始行和行数范围，自动检测编码，安全过滤设备文件。大文件建议用 offset+limit 分段读取。内置去重：相同文件重复读取时会提示使用已有结果。",
+        schema=READ_FILE_SCHEMA,
+        handler=read_file_tool,
+        check_fn=_check_env,
+        emoji="📖",
+        max_result_size_chars=_MAX_READ_CHARS,
+        parallel_mode="safe",
+    )
+
+
+
+
+
+    registry.register(
+        name="write_file",
+        toolset="file",
+        description="创建新文件或覆盖已有文件。自动创建父目录。拒绝写入敏感系统路径。如文件在读取后被外部修改会给出警告。",
+        schema=WRITE_FILE_SCHEMA,
+        handler=write_file_tool,
+        check_fn=_check_env,
+        emoji="✍️",
+        parallel_mode="path_scoped",
+    )
+
+
+
+
+
+    registry.register(
+        name="patch",
+        toolset="file",
+        description="精确替换文件中的文本（replace 模式），或在文件开头/末尾插入内容。比 write_file 更安全，只修改指定部分。支持 replace_all 替换所有匹配项。",
+        schema=PATCH_SCHEMA,
+        handler=patch_tool,
+        check_fn=_check_env,
+        emoji="🔧",
+        parallel_mode="path_scoped",
+    )
+
+
+
+
+
+    registry.register(
+        name="search_files",
+        toolset="file",
+        description="搜索文件内容或文件名。支持正则表达式和 glob 通配符过滤。自动跳过 .git/node_modules 等目录。",
+        schema=SEARCH_FILES_SCHEMA,
+        handler=search_files_tool,
+        check_fn=_check_env,
+        emoji="🔎",
+        parallel_mode="safe",
+    )
+
+
+
+
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

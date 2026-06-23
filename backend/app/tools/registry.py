@@ -43,13 +43,21 @@ def _is_registry_register_call(node: ast.AST) -> bool:
 
 
 def _module_registers_tools(module_path: Path) -> bool:
-    """Return True when the module contains a top-level ``registry.register(...)`` call."""
+    """Return True when the module contains a top-level ``registry.register(...)`` call
+    OR a top-level ``_register_tools()`` function (W4-21 P2-2 显式注册).
+    """
     try:
         source = module_path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(module_path))
     except (OSError, SyntaxError):
         return False
-    return any(_is_registry_register_call(stmt) for stmt in tree.body)
+    for stmt in tree.body:
+        if _is_registry_register_call(stmt):
+            return True
+        # P2-2: 显式 _register_tools() 函数也算
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == "_register_tools":
+            return True
+    return False
 
 
 class ToolEntry:
@@ -433,7 +441,12 @@ def discover_builtin_tools() -> List[str]:
             continue
         mod_name = f"app.tools.implementations.{py_file.stem}"
         try:
-            importlib.import_module(mod_name)
+            mod = importlib.import_module(mod_name)
+            # P2-2 W4-21: 显式调 _register_tools() 代替 import-time side effect.
+            # 测试可以 mock mod._register_tools 来不注册.
+            reg_fn = getattr(mod, "_register_tools", None)
+            if reg_fn is not None:
+                reg_fn()
             imported.append(py_file.stem)
         except Exception as e:
             logger.warning(f"导入工具模块失败 {mod_name}: {e}")

@@ -461,59 +461,77 @@ BROWSER_SCHEMA = {
 }
 
 
-registry.register(
-    name="browser",
-    toolset="browser",
-    description=(
-        "【浏览器自动化】\n\n"
-        "通用网页操作入口。普通网页任务默认优先使用这个工具。\n\n"
-        "浏览器控制工具，支持两种模式：\n"
-        "1. playwright（默认）：headless，服务端运行，后台自动化\n"
-        "2. cdp：有头模式，连接用户本地 Chrome DevTools，用户可见真实窗口\n\n"
-        "mode=playwright（默认）：无需用户干预，适用于后台任务\n"
-        "mode=cdp：用户需提前启动 Chrome，再用 cdp_url 建立连接\n\n"
-        "支持操作：\n"
-        "  navigate(url)       — 打开 URL\n"
-        "  click(selector)     — 点击元素\n"
-        "  type(selector,text) — 向元素输入文字\n"
-        "  keypress(key)       — 按键（Enter/Tab/Escape/ArrowUp 等）\n"
-        "  screenshot(path)    — 截图保存到本地路径\n"
-        "  get_text(selector)  — 获取元素文本\n"
-        "  get_page_content()  — 获取页面全部文本\n"
-        "  scroll(selector?)   — 滚动页面或滚动到元素\n"
-        "  close / close_all   — 关闭浏览器"
-    ),
-    schema=BROWSER_SCHEMA,
-    handler=browser_execute,
-    check_fn=_check_browser,
-    emoji="🌐",
-    parallel_mode="never",
-)
 
-registry.register(
-    name="playwright",
-    toolset="browser",
-    description=(
-        "【Playwright 浏览器自动化别名】\n\n"
-        "这是 browser 工具的兼容别名。"
-        "当用户明确提到 Playwright 或要求“调用 playwright 工具”时，优先使用这个工具名直接调用。\n"
-        "底层仍复用 browser 的统一实现。\n\n"
-        "默认行为：mode=playwright，服务端 headless 自动化。\n"
-        "如果任务明确要求使用用户本地可见 Chrome 或已有登录态，可传 mode=cdp 与 cdp_url。\n\n"
-        "支持操作：\n"
-        "  navigate(url)       — 打开 URL\n"
-        "  click(selector)     — 点击元素\n"
-        "  type(selector,text) — 向元素输入文字\n"
-        "  keypress(key)       — 按键（Enter/Tab/Escape/ArrowUp 等）\n"
-        "  screenshot(path)    — 截图保存到本地路径\n"
-        "  get_text(selector)  — 获取元素文本\n"
-        "  get_page_content()  — 获取页面全部文本\n"
-        "  scroll(selector?)   — 滚动页面或滚动到元素\n"
-        "  close / close_all   — 关闭浏览器"
-    ),
-    schema=BROWSER_SCHEMA,
-    handler=browser_execute,
-    check_fn=_check_playwright_alias,
-    emoji="🎭",
-    parallel_mode="never",
-)
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+
+
+def _register_tools():
+    registry.register(
+        name="browser",
+        toolset="browser",
+        description=(
+            "【浏览器自动化】\n\n"
+            "通用网页操作入口。普通网页任务默认优先使用这个工具。\n\n"
+            "浏览器控制工具，支持两种模式：\n"
+            "1. playwright（默认）：headless，服务端运行，后台自动化\n"
+            "2. cdp：有头模式，连接用户本地 Chrome DevTools，用户可见真实窗口\n\n"
+            "mode=playwright（默认）：无需用户干预，适用于后台任务\n"
+            "mode=cdp：用户需提前启动 Chrome，再用 cdp_url 建立连接\n\n"
+            "支持操作：\n"
+            "  navigate(url)       — 打开 URL\n"
+            "  click(selector)     — 点击元素\n"
+            "  type(selector,text) — 向元素输入文字\n"
+            "  keypress(key)       — 按键（Enter/Tab/Escape/ArrowUp 等）\n"
+            "  screenshot(path)    — 截图保存到本地路径\n"
+            "  get_text(selector)  — 获取元素文本\n"
+            "  get_page_content()  — 获取页面全部文本\n"
+            "  scroll(selector?)   — 滚动页面或滚动到元素\n"
+            "  close / close_all   — 关闭浏览器"
+        ),
+        schema=BROWSER_SCHEMA,
+        handler=browser_execute,
+        check_fn=_check_browser,
+        emoji="🌐",
+        parallel_mode="never",
+    )
+
+
+
+
+
+    registry.register(
+        name="playwright",
+        toolset="browser",
+        description=(
+            "【Playwright 浏览器自动化别名】\n\n"
+            "这是 browser 工具的兼容别名。"
+            "当用户明确提到 Playwright 或要求“调用 playwright 工具”时，优先使用这个工具名直接调用。\n"
+            "底层仍复用 browser 的统一实现。\n\n"
+            "默认行为：mode=playwright，服务端 headless 自动化。\n"
+            "如果任务明确要求使用用户本地可见 Chrome 或已有登录态，可传 mode=cdp 与 cdp_url。\n\n"
+            "支持操作：\n"
+            "  navigate(url)       — 打开 URL\n"
+            "  click(selector)     — 点击元素\n"
+            "  type(selector,text) — 向元素输入文字\n"
+            "  keypress(key)       — 按键（Enter/Tab/Escape/ArrowUp 等）\n"
+            "  screenshot(path)    — 截图保存到本地路径\n"
+            "  get_text(selector)  — 获取元素文本\n"
+            "  get_page_content()  — 获取页面全部文本\n"
+            "  scroll(selector?)   — 滚动页面或滚动到元素\n"
+            "  close / close_all   — 关闭浏览器"
+        ),
+        schema=BROWSER_SCHEMA,
+        handler=browser_execute,
+        check_fn=_check_playwright_alias,
+        emoji="🎭",
+        parallel_mode="never",
+    )
+
+
+
+
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

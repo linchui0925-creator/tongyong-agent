@@ -319,26 +319,33 @@ def _check_adb_tool() -> bool:
     return _check_adb()
 
 
-registry.register(
-    name="adb",
-    toolset="android",
-    description=(
-        "【Android 设备控制】\n\n"
-        "通过 ADB 控制 Android 设备，支持：\n"
-        "- 设备管理（devices / get_device_info）\n"
-        "- App 安装卸载（install / uninstall）\n"
-        "- 启动 App/Activity（start_app / start_activity）\n"
-        "- 操作界面（tap / swipe / input_text / keypress）\n"
-        "- 截图（screenshot）\n"
-        "- 执行 Shell 命令（shell）\n"
-        "- 查看当前前台 App（current_app）\n\n"
-        "前置条件：Android 设备通过 USB 或网络连接，adb 在 PATH 中。\n"
-        "网络连接：adb connect <ip>:5555"
-    ),
-    schema=ADB_SCHEMA,
-    handler=adb_execute,
-    check_fn=_check_adb_tool,
-    is_async=True,
-    emoji="📱",
-    parallel_mode="never",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="adb",
+        toolset="android",
+        description=(
+            "【Android 设备控制】\n\n"
+            "通过 ADB 控制 Android 设备，支持：\n"
+            "- 设备管理（devices / get_device_info）\n"
+            "- App 安装卸载（install / uninstall）\n"
+            "- 启动 App/Activity（start_app / start_activity）\n"
+            "- 操作界面（tap / swipe / input_text / keypress）\n"
+            "- 截图（screenshot）\n"
+            "- 执行 Shell 命令（shell）\n"
+            "- 查看当前前台 App（current_app）\n\n"
+            "前置条件：Android 设备通过 USB 或网络连接，adb 在 PATH 中。\n"
+            "网络连接：adb connect <ip>:5555"
+        ),
+        schema=ADB_SCHEMA,
+        handler=adb_execute,
+        check_fn=_check_adb_tool,
+        is_async=True,
+        emoji="📱",
+        parallel_mode="never",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

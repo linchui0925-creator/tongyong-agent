@@ -119,43 +119,50 @@ async def glob_tool(
 
 # ── 注册 ────────────────────────────────────────────────
 
-registry.register(
-    name="glob",
-    toolset="terminal",
-    description=(
-        "按 glob 模式匹配文件, 跨目录递归。\n"
-        "支持 ** (任意层) / * (单层) / ? (单字符) / [abc] (字符集)。\n"
-        "示例: '**/*.py' 找所有 Python 文件, 'src/**/*.ts' 找 src 下所有 TS, "
-        "'tests/test_*.py' 找测试文件。\n"
-        "默认跳过 .git/.venv/node_modules/__pycache__ 和隐藏文件, "
-        "结果限制 500 条, 用 max_results 参数可调。"
-    ),
-    schema={
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "description": "glob 模式, e.g. '**/*.py', 'src/components/*.tsx'",
+
+
+def _register_tools():
+    registry.register(
+        name="glob",
+        toolset="terminal",
+        description=(
+            "按 glob 模式匹配文件, 跨目录递归。\n"
+            "支持 ** (任意层) / * (单层) / ? (单字符) / [abc] (字符集)。\n"
+            "示例: '**/*.py' 找所有 Python 文件, 'src/**/*.ts' 找 src 下所有 TS, "
+            "'tests/test_*.py' 找测试文件。\n"
+            "默认跳过 .git/.venv/node_modules/__pycache__ 和隐藏文件, "
+            "结果限制 500 条, 用 max_results 参数可调。"
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "glob 模式, e.g. '**/*.py', 'src/components/*.tsx'",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "搜索根目录, 默认当前目录",
+                },
+                "include_hidden": {
+                    "type": "boolean",
+                    "description": "是否包含 . 开头的文件, 默认 false",
+                    "default": False,
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "最大返回数, 默认 500",
+                    "default": _MAX_RESULTS,
+                },
             },
-            "path": {
-                "type": "string",
-                "description": "搜索根目录, 默认当前目录",
-            },
-            "include_hidden": {
-                "type": "boolean",
-                "description": "是否包含 . 开头的文件, 默认 false",
-                "default": False,
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "最大返回数, 默认 500",
-                "default": _MAX_RESULTS,
-            },
+            "required": ["pattern"],
         },
-        "required": ["pattern"],
-    },
-    handler=glob_tool,
-    is_async=True,
-    emoji="🔍",
-    parallel_mode="safe",
-)
+        handler=glob_tool,
+        is_async=True,
+        emoji="🔍",
+        parallel_mode="safe",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

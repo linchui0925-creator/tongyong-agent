@@ -288,13 +288,20 @@ GREP_SCHEMA = {
 }
 
 
-registry.register(
-    name="grep",
-    toolset="terminal",
-    description="在文件中搜索匹配正则表达式的内容。比 search_files 更强大，支持正则。返回文件名、行号、匹配内容及上下文。",
-    schema=GREP_SCHEMA,
-    handler=grep_tool,
-    is_async=True,
-    emoji="🔎",
-    parallel_mode="safe",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="grep",
+        toolset="terminal",
+        description="在文件中搜索匹配正则表达式的内容。比 search_files 更强大，支持正则。返回文件名、行号、匹配内容及上下文。",
+        schema=GREP_SCHEMA,
+        handler=grep_tool,
+        is_async=True,
+        emoji="🔎",
+        parallel_mode="safe",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

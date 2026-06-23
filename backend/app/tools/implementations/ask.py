@@ -120,25 +120,32 @@ async def ask_tool(
     return f"__ASK_BLOCK__:{qid}"
 
 
-registry.register(
-    name="ask",
-    toolset="interactive",
-    description=(
-        "向用户提问以获取澄清或决策。使用场景：\n"
-        "- 任务目标模糊，需要用户确认方向\n"
-        "- 做了重要操作后主动要反馈\n"
-        "- 建议用户保存 skill 或更新 memory\n"
-        "- 决策有重大权衡，用户应该参与\n\n"
-        "支持两种模式：\n"
-        "1. 多选模式 — 提供最多 4 个选项，用户选择一个\n"
-        "2. 开放问题 — 不提供 choices，用户自由输入\n\n"
-        "注意：简单的是/否确认不要用此工具。\n"
-        "注意：不要在 cronjob 或子 agent 中使用此工具。"
-    ),
-    schema=ASK_SCHEMA,
-    handler=ask_tool,
-    check_fn=_check_ask,
-    is_async=True,
-    emoji="❓",
-    parallel_mode="never",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="ask",
+        toolset="interactive",
+        description=(
+            "向用户提问以获取澄清或决策。使用场景：\n"
+            "- 任务目标模糊，需要用户确认方向\n"
+            "- 做了重要操作后主动要反馈\n"
+            "- 建议用户保存 skill 或更新 memory\n"
+            "- 决策有重大权衡，用户应该参与\n\n"
+            "支持两种模式：\n"
+            "1. 多选模式 — 提供最多 4 个选项，用户选择一个\n"
+            "2. 开放问题 — 不提供 choices，用户自由输入\n\n"
+            "注意：简单的是/否确认不要用此工具。\n"
+            "注意：不要在 cronjob 或子 agent 中使用此工具。"
+        ),
+        schema=ASK_SCHEMA,
+        handler=ask_tool,
+        check_fn=_check_ask,
+        is_async=True,
+        emoji="❓",
+        parallel_mode="never",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

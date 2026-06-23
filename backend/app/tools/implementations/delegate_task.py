@@ -476,23 +476,30 @@ async def delegate_task_tool(
         _delegate_depth.reset(depth_token)
 
 
-registry.register(
-    name="delegate_task",
-    toolset="agent",
-    description=(
-        "【并行执行首选】当任务可拆分为多个独立子任务时，必须优先使用此工具。\n"
-        "典型场景：\n"
-        "  • 同时搜索多个不同来源（搜索 A 和 B、查天气+查新闻）\n"
-        "  • 并行分析多个文件/网页（分析这个文件夹里所有 py 文件）\n"
-        "  • 互不依赖的调查任务（分别查 X 公司的股价和 Y 公司的财报）\n"
-        "  • 需要多角度验证（从文档/代码/网络三个渠道查证）\n"
-        "使用方式：单任务用 goal 参数；多任务（最多3个并行）用 tasks 参数。\n"
-        "子 agent 不继承父会话历史，不写记忆，不能再次委派或提问。"
-    ),
-    schema=DELEGATE_TASK_SCHEMA,
-    handler=delegate_task_tool,
-    check_fn=_check_delegate,
-    is_async=True,
-    emoji="🔀",
-    parallel_mode="never",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="delegate_task",
+        toolset="agent",
+        description=(
+            "【并行执行首选】当任务可拆分为多个独立子任务时，必须优先使用此工具。\n"
+            "典型场景：\n"
+            "  • 同时搜索多个不同来源（搜索 A 和 B、查天气+查新闻）\n"
+            "  • 并行分析多个文件/网页（分析这个文件夹里所有 py 文件）\n"
+            "  • 互不依赖的调查任务（分别查 X 公司的股价和 Y 公司的财报）\n"
+            "  • 需要多角度验证（从文档/代码/网络三个渠道查证）\n"
+            "使用方式：单任务用 goal 参数；多任务（最多3个并行）用 tasks 参数。\n"
+            "子 agent 不继承父会话历史，不写记忆，不能再次委派或提问。"
+        ),
+        schema=DELEGATE_TASK_SCHEMA,
+        handler=delegate_task_tool,
+        check_fn=_check_delegate,
+        is_async=True,
+        emoji="🔀",
+        parallel_mode="never",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

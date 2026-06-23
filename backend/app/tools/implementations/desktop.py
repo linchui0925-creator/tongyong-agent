@@ -325,27 +325,34 @@ def _check_desktop() -> bool:
     return _check_darwin()
 
 
-registry.register(
-    name="desktop",
-    toolset="desktop",
-    description=(
-        "【macOS 桌面控制】\n\n"
-        "通过 AppleScript + 系统命令控制 macOS 桌面，支持：\n"
-        "- 打开任意 App（launch/focus，focus 用于恢复已运行但最小化的窗口）\n"
-        "- 鼠标点击/移动（click/move）\n"
-        "- 键盘输入（type/keypress）\n"
-        "- 截图（screenshot）\n"
-        "- 当前前台 App（get_front_app）\n"
-        "- 运行的 App 列表（list_open_apps）\n\n"
-        "依赖：\n"
-        "- cliclick（鼠标控制）: brew install cliclick\n"
-        "- pyautogui（备选）: pip install pyautogui\n\n"
-        "注意：仅支持 macOS，用于 Agent 在用户本机执行桌面操作。"
-    ),
-    schema=DESKTOP_SCHEMA,
-    handler=desktop_execute,
-    check_fn=_check_desktop,
-    is_async=True,
-    emoji="🖥️",
-    parallel_mode="never",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="desktop",
+        toolset="desktop",
+        description=(
+            "【macOS 桌面控制】\n\n"
+            "通过 AppleScript + 系统命令控制 macOS 桌面，支持：\n"
+            "- 打开任意 App（launch/focus，focus 用于恢复已运行但最小化的窗口）\n"
+            "- 鼠标点击/移动（click/move）\n"
+            "- 键盘输入（type/keypress）\n"
+            "- 截图（screenshot）\n"
+            "- 当前前台 App（get_front_app）\n"
+            "- 运行的 App 列表（list_open_apps）\n\n"
+            "依赖：\n"
+            "- cliclick（鼠标控制）: brew install cliclick\n"
+            "- pyautogui（备选）: pip install pyautogui\n\n"
+            "注意：仅支持 macOS，用于 Agent 在用户本机执行桌面操作。"
+        ),
+        schema=DESKTOP_SCHEMA,
+        handler=desktop_execute,
+        check_fn=_check_desktop,
+        is_async=True,
+        emoji="🖥️",
+        parallel_mode="never",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

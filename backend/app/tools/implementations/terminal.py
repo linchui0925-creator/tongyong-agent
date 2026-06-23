@@ -130,15 +130,22 @@ async def terminal_tool(command: str, timeout: int = _DEFAULT_TIMEOUT, workdir: 
         return f"❌ 命令执行失败: {e}"
 
 
-registry.register(
-    name="terminal",
-    toolset="terminal",
-    description="执行 shell 命令（编译、运行、安装、git、文件操作等）。支持超时、工作目录、后台执行。注意：不要用此工具实现浏览器操作（打开网页、截图等）——请使用专门的 browser 工具。",
-    schema=TERMINAL_SCHEMA,
-    handler=terminal_tool,
-    check_fn=_check_terminal,
-    is_async=True,
-    emoji="💻",
-    max_result_size_chars=_MAX_OUTPUT_CHARS,
-    parallel_mode="never",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="terminal",
+        toolset="terminal",
+        description="执行 shell 命令（编译、运行、安装、git、文件操作等）。支持超时、工作目录、后台执行。注意：不要用此工具实现浏览器操作（打开网页、截图等）——请使用专门的 browser 工具。",
+        schema=TERMINAL_SCHEMA,
+        handler=terminal_tool,
+        check_fn=_check_terminal,
+        is_async=True,
+        emoji="💻",
+        max_result_size_chars=_MAX_OUTPUT_CHARS,
+        parallel_mode="never",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

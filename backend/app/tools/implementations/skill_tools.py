@@ -202,46 +202,6 @@ def _build_available_skills_index() -> str:
 
 # ── 注册 ────────────────────────────────────────────────
 
-registry.register(
-    name="skill_view",
-    toolset="skill",
-    description=(
-        "读取指定 skill 的完整内容。\n"
-        "当 Agent 决定使用某个 skill 来完成任务时，调用此工具加载完整 SKILL.md。\n"
-        "输入 skill 名称（可模糊匹配），返回完整文档内容（Steps、Pitfalls、References 等）。"
-    ),
-    schema={
-        "type": "object",
-        "properties": {
-            "name": {
-                "type": "string",
-                "description": "skill 名称（来自 skill_list 或 available_skills 索引）",
-            },
-        },
-        "required": ["name"],
-    },
-    handler=skill_view,
-    is_async=False,
-    emoji="📋",
-    parallel_mode="safe",
-)
-
-registry.register(
-    name="skill_list",
-    toolset="skill",
-    description=(
-        "列出所有可用 skill 的索引（名称 + 描述）。\n"
-        "Agent 在不确定该用哪个 skill 时，先调用此工具查看可用列表。"
-    ),
-    schema={
-        "type": "object",
-        "properties": {},
-    },
-    handler=skill_list,
-    is_async=False,
-    emoji="📚",
-    parallel_mode="safe",
-)
 
 
 # ── W4-15 load_skill 别名 ─────────────────────────────────
@@ -258,26 +218,88 @@ def load_skill(name: str) -> str:
     return skill_view(name)
 
 
-registry.register(
-    name="load_skill",
-    toolset="skill",
-    description=(
-        "Load the full content of a skill by name. (Alias for skill_view.)\n"
-        "输入 skill 名称, 返回 SKILL.md 完整内容 (Steps/Pitfalls/References 等)。\n"
-        "匹配规则与 skill_view 相同: 精确 → 同名 → 模糊匹配。"
-    ),
-    schema={
-        "type": "object",
-        "properties": {
-            "name": {
-                "type": "string",
-                "description": "skill 名称（来自 skill_list 或 available_skills 索引）",
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+
+
+def _register_tools():
+    registry.register(
+        name="skill_view",
+        toolset="skill",
+        description=(
+            "读取指定 skill 的完整内容。\n"
+            "当 Agent 决定使用某个 skill 来完成任务时，调用此工具加载完整 SKILL.md。\n"
+            "输入 skill 名称（可模糊匹配），返回完整文档内容（Steps、Pitfalls、References 等）。"
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "skill 名称（来自 skill_list 或 available_skills 索引）",
+                },
             },
+            "required": ["name"],
         },
-        "required": ["name"],
-    },
-    handler=load_skill,
-    is_async=False,
-    emoji="📋",
-    parallel_mode="safe",
-)
+        handler=skill_view,
+        is_async=False,
+        emoji="📋",
+        parallel_mode="safe",
+    )
+
+
+
+
+
+    registry.register(
+        name="skill_list",
+        toolset="skill",
+        description=(
+            "列出所有可用 skill 的索引（名称 + 描述）。\n"
+            "Agent 在不确定该用哪个 skill 时，先调用此工具查看可用列表。"
+        ),
+        schema={
+            "type": "object",
+            "properties": {},
+        },
+        handler=skill_list,
+        is_async=False,
+        emoji="📚",
+        parallel_mode="safe",
+    )
+
+
+
+
+    registry.register(
+        name="load_skill",
+        toolset="skill",
+        description=(
+            "Load the full content of a skill by name. (Alias for skill_view.)\n"
+            "输入 skill 名称, 返回 SKILL.md 完整内容 (Steps/Pitfalls/References 等)。\n"
+            "匹配规则与 skill_view 相同: 精确 → 同名 → 模糊匹配。"
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "skill 名称（来自 skill_list 或 available_skills 索引）",
+                },
+            },
+            "required": ["name"],
+        },
+        handler=load_skill,
+        is_async=False,
+        emoji="📋",
+        parallel_mode="safe",
+    )
+
+
+
+
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

@@ -233,13 +233,20 @@ LS_SCHEMA = {
 }
 
 
-registry.register(
-    name="ls",
-    toolset="terminal",
-    description="列出目录内容。支持递归、深度限制、文件类型过滤、排序、详细信息（权限/大小/时间）。比 subprocess ls 更结构化，结果可直接被 LLM 解析。",
-    schema=LS_SCHEMA,
-    handler=ls_tool,
-    is_async=True,
-    emoji="📁",
-    parallel_mode="safe",
-)
+
+
+def _register_tools():
+    registry.register(
+        name="ls",
+        toolset="terminal",
+        description="列出目录内容。支持递归、深度限制、文件类型过滤、排序、详细信息（权限/大小/时间）。比 subprocess ls 更结构化，结果可直接被 LLM 解析。",
+        schema=LS_SCHEMA,
+        handler=ls_tool,
+        is_async=True,
+        emoji="📁",
+        parallel_mode="safe",
+    )
+
+
+# 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
+_register_tools()

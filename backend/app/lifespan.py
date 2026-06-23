@@ -41,6 +41,12 @@ async def _startup_tools(app: FastAPI) -> None:
     """注册内置工具 + MCP 工具"""
     from app.tools import discover_builtin_tools
     discover_builtin_tools()
+    # W4-25 P1-4: 清理过期的 ask_pending (跨进程崩溃残留)
+    try:
+        from app.core.ask_store import get_ask_pending_store
+        get_ask_pending_store().cleanup_expired()
+    except Exception as e:
+        logger.warning(f"[startup] ask_pending 清理失败: {e}")
     try:
         from app.tools.mcp_client import discover_mcp_tools_async
         await discover_mcp_tools_async()

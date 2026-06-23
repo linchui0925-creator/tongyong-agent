@@ -136,8 +136,9 @@ class AgentEngine:
         self.memory_storage = MemoryStorage()
         self.vector_store = VectorStore()
         self._cli_executor = None  # 延迟初始化
-        # ask 交互状态 {question_id: {"question": ..., "choices": ..., "user_response": None}}
-        self._ask_pending: Dict[str, dict] = {}
+        # ask 交互状态 — W4-25 P1-4: 用 SQLite store 替代内存 dict, 多 worker 共享
+        from app.core.ask_store import get_ask_pending_store
+        self._ask_pending = get_ask_pending_store()
         # 约束引擎：防止 agent 幻觉式自我欺骗
         # 延迟导入，模块不存在时降级为无约束模式
         self._constraint_engine = None
@@ -168,9 +169,10 @@ class AgentEngine:
         setup_default_hooks()
 
     def set_ask_response(self, question_id: str, answer: str) -> bool:
-        """存储用户对某个 ask 问题的回答"""
+        """存储用户对某个 ask 问题的回答 (W4-25 P1-4: 走 SQLite store)"""
         if question_id in self._ask_pending:
             self._ask_pending[question_id]["user_response"] = answer
+            self._ask_pending.set(question_id, self._ask_pending[question_id])
             logger.info(f"[ask] 回答已记录: question_id={question_id}")
             return True
         logger.warning(f"[ask] 问题不存在或已过期: question_id={question_id}")

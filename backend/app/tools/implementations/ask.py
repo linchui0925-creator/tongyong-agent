@@ -89,11 +89,14 @@ async def ask_tool(
             if not choices:
                 choices = None
 
+    # W4-25 P1-4: 用 SQLite store 替代 agent_engine._ask_pending (内存 dict)
+    from app.core.ask_store import get_ask_pending_store
+    store = get_ask_pending_store()
+
     # 检查是否已有回答
     if question_id:
-        from app.main import agent_engine
-        if agent_engine and question_id in agent_engine._ask_pending:
-            entry = agent_engine._ask_pending.pop(question_id)
+        entry = store.pop(question_id)
+        if entry is not None:
             user_response = entry.get("user_response")
             logger.info(f"[ask] 返回已有回答: question_id={question_id}, response={str(user_response)[:30]}")
             return json.dumps({
@@ -106,15 +109,13 @@ async def ask_tool(
 
     # 首次调用：注册新问题
     qid = question_id or str(uuid.uuid4())
-    from app.main import agent_engine
-    if agent_engine:
-        agent_engine._ask_pending[qid] = {
-            "question": question,
-            "choices": choices or [],
-            "user_response": None,
-            "timeout": False,
-        }
-        logger.info(f"[ask] 发起提问: question={question[:50]}... id={qid}")
+    store.set(qid, {
+        "question": question,
+        "choices": choices or [],
+        "user_response": None,
+        "timeout": False,
+    })
+    logger.info(f"[ask] 发起提问: question={question[:50]}... id={qid}")
 
     # 返回 __ASK_BLOCK__ 标记，让 agent 检测并 yield ask 事件后暂停
     return f"__ASK_BLOCK__:{qid}"

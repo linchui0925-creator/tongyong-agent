@@ -111,6 +111,24 @@ def _validate_execution_claim(text: str, tools_used: list, commands_executed: li
     return True, None
 
 
+# ── must_use_tool 触发词 (W4-24 P1-3: 模块级常量, 便于测试) ──
+# casefold() 后, 中文 (no-op) + 英文 (case-fold) 都覆盖
+MUST_USE_TOOL_TRIGGERS = (
+    # 中文触发
+    "请使用", "务必调用", "必须调用", "用工具", "调用工具",
+    "打开网页", "访问", "截图", "读取文件",
+    # 英文触发 (lowercase, casefold 后匹配)
+    "playwright", "browser", "read_file", "search_files", "terminal",
+    "use the tool", "call the tool", "must call", "must use",
+)
+# 触发"可见 chrome"窗口 (用户希望本地 Chrome 弹出)
+VISIBLE_CHROME_TRIGGERS = (
+    "可视化", "可见窗口", "可见浏览器", "真实浏览器", "本地chrome",
+    "本地 chrome", "google浏览器", "google chrome", "chrome浏览器",
+    "用我的浏览器", "用我的 chrome", "在 chrome 里", "在浏览器里",
+)
+
+
 class AgentEngine:
     def __init__(self, llm=None):
         self.llm = llm
@@ -747,22 +765,15 @@ class AgentEngine:
             return {"type": "tool_feedback", "content": text, "timestamp": _time.time()}
 
         def _message_requires_tool_call(user_text: str) -> bool:
-            text = (user_text or "").lower()
-            triggers = [
-                "请使用", "务必调用", "必须调用", "用工具", "调用工具",
-                "playwright", "browser", "打开网页", "访问", "截图",
-                "读取文件", "read_file", "search_files", "terminal"
-            ]
-            return any(token in text for token in triggers)
+            # W4-24 P1-3: .casefold() 替代 .lower() — Unicode 正确 (德文 ß→ss 等)
+            # 中文 .lower() 是 no-op, .casefold() 也是 no-op, 行为一致
+            # 但 .casefold() 是 case-insensitive 比较的 Python 标准做法
+            text = (user_text or "").casefold()
+            return any(token in text for token in MUST_USE_TOOL_TRIGGERS)
 
         def _message_requires_visible_chrome(user_text: str) -> bool:
-            text = (user_text or "").lower()
-            triggers = [
-                "可视化", "可见窗口", "可见浏览器", "真实浏览器", "本地chrome",
-                "本地 chrome", "google浏览器", "google chrome", "chrome浏览器",
-                "用我的浏览器", "用我的 chrome", "在 chrome 里", "在浏览器里",
-            ]
-            return any(token in text for token in triggers)
+            text = (user_text or "").casefold()
+            return any(token in text for token in VISIBLE_CHROME_TRIGGERS)
 
         def _has_cdp_url(user_text: str) -> bool:
             text = user_text or ""
@@ -1181,25 +1192,37 @@ class AgentEngine:
 
                 if not llm_response.has_tool_calls:
                     full_text = llm_response.content
-                    if must_use_tool and not forced_tool_retry_done and not tools_used:
+                    if must_use_tool and not tools_used:
                         # 检查预算是否已耗尽，避免在预算耗尽后继续循环
                         if budget.is_exhausted:
                             yield _content(budget.get_exhausted_message())
                             break
-                        forced_tool_retry_done = True
-                        self.context.add_message(
-                            "system",
-                            "用户这次明确要求必须实际调用工具完成任务。"
-                            "禁止直接基于已有上下文或记忆作答。"
-                            "下一轮必须返回 tool_calls；若工具无法执行，要调用对应工具并把真实错误返回给用户。"
-                        )
-                        if full_text:
+                        if not forced_tool_retry_done:
+                            # W4-24 P1-3: 1st forced retry - 注入 system 强制 LLM 用 tool
+                            forced_tool_retry_done = True
                             self.context.add_message(
-                                "assistant",
-                                f"[拦截的未执行回复]{full_text}"
+                                "system",
+                                "用户这次明确要求必须实际调用工具完成任务。"
+                                "禁止直接基于已有上下文或记忆作答。"
+                                "下一轮必须返回 tool_calls；若工具无法执行，要调用对应工具并把真实错误返回给用户。"
                             )
-                        budget.advance()  # 推进预算，即使被拦截
-                        continue
+                            if full_text:
+                                self.context.add_message(
+                                    "assistant",
+                                    f"[拦截的未执行回复]{full_text}"
+                                )
+                            budget.advance()
+                            continue
+                        # W4-24 P1-3: 2nd round LLM 仍不用 tool → 显式 fallback
+                        # 不再无限重试 (避免空转), 告诉用户明确失败原因
+                        fallback_msg = (
+                            "⚠️ 工具调用失败：你要求使用工具但连续 2 轮 LLM 都没有实际调用。"
+                            "可能原因: (1) 工具不可用 (环境缺依赖), (2) LLM 误解意图, (3) 工具调用超时。"
+                            "请尝试: 简化任务 / 换一种表述 / 直接说明可用工具。"
+                        )
+                        yield _content(fallback_msg)
+                        final_response_chunks.append(fallback_msg)
+                        break
                     if full_text:
                         cleaned, thinking = _clean_thinking(full_text)
                         is_valid, correction = _validate_execution_claim(cleaned, tools_used, commands_executed)

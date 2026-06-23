@@ -18,6 +18,13 @@
 > 📝 W4-16 引入 (2026-06-22): 借鉴 shareAI-lab/learn-claude-code s04_hooks 模式, agent.py 循环外行为 (step_callback / 工具 tracking / constraint engine / memory save) 全部注册为 hooks, 循环只调 trigger_hooks()
 > 📝 W4-17 扩展 (2026-06-22): hooks 加 2 事件 (PreLLMCall/PostLLMCall) + 3 默认 hook (interim_assistant/audit_log/tool_stats) + chat() + langchain_agent.py 同步提取; 共 6 事件 7 默认 hook, 117 unit + 5 E2E 测试
 > 📝 W4-18 集成验证 (2026-06-22): MCP handler 签名改为 `**kwargs` 跟其他 tool 一致 (旧 `args: Dict` 跟 ToolRegistry.execute 的 `handler(**arguments)` 不兼容) + 13 个集成测试覆盖 skill 调用 / 长任务多轮 / MCP 假 server 全生命周期; 13/13 全绿
+> 📝 W4-19 清理 (2026-06-22): ModernChatPanel.tsx 1104 → 429 行 (抽 `useStreamChat` hook 435 行); 历史审查报告归档到 `docs/historical-reviews/` (2760+1147 行); 顺手 commit 5 个散落 doc
+> 📝 W4-20 架构 (2026-06-22): terminal 白名单热加载 (`data/terminal_whitelist.txt` 追加 + `reload_security_config()` in-place 修改, 7 个测试); `team.py:run_stream()` 加 DEPRECATED 注释 (3 个月内迁 `run_v2_stream()`)
+> 📝 W4-21 架构 (2026-06-22): 12 个工具模块顶层 `registry.register` 副作用抽到 `_register_tools()` 函数; `discover_builtin_tools` 显式调; AST 检测支持 `_register_tools` 函数; 4 个测试
+> 📝 W4-22 架构 (2026-06-22): `main.py` 305 → 145 行: 拆 `lifespan.py` (modern lifespan context manager) + `startup.py` (LLM/AgentEngine init) + `routes/health.py` (/, /health, /ready)
+> 📝 W4-23 修复 (2026-06-22): langchain_agent `is_persistent=False` 临时回退 (W3-B) 改回 `True`: `chat_history` 跳过 system messages (因 `prompt=` 已传), checkpointer 不再累积 system, 60 条历史连续记忆恢复
+> 📝 W4-24 修复 (2026-06-22): `must_use_tool` 触发词 `.lower()` → `.casefold()` (Unicode 标准); 提取 `MUST_USE_TOOL_TRIGGERS` / `VISIBLE_CHROME_TRIGGERS` 模块常量; 2nd round LLM 仍不用 tool → 显式 fallback 错误
+> 📝 W4-25 修复 (2026-06-22): `_ask_pending` AgentEngine 内存 dict → SQLite store (`app/core/ask_store.py`); 多 worker (uvicorn --workers>1) 部署共享; TTL 1h 自动过期; 11 个测试 (含 multi-process 共享)
 
 
 | 维度 | 数值 |
@@ -215,6 +222,14 @@ frontend/src/
 - 🟡 **`terminal` 工具白名单 `_ALLOWED_COMMANDS` 是硬编码列表**（[security_config.py](backend/app/tools/security_config.py)），新增命令需改源码
 - 🟡 **`ask` 工具 `_ask_pending` 是 AgentEngine 实例属性**（[agent.py:117-119](backend/app/core/agent.py)），多 worker 部署（uvicorn workers>1）会丢问题
 - ✅ **[W4-14] MCP 客户端 lifespan 修复**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— 4 处 bug: 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 配套 9 个新测试
+- ✅ **[W4-25] ask_pending SQLite 持久化**（[ask_store.py](backend/app/core/ask_store.py)）—— 替代 AgentEngine 内存 dict, 多 worker 共享, TTL 1h
+- ✅ **[W4-24] must_use_tool casefold + 2nd fallback**（[agent.py:116-138](backend/app/core/agent.py)）—— `.casefold()` 替代 `.lower()`, 触发词提模块常量, 2nd round LLM 不用 tool → 显式 fallback
+- ✅ **[W4-23] langchain checkpointer 恢复**（[langchain_agent.py:208-216](backend/app/core/langchain_agent.py)）—— `chat_history` 跳过 system messages (因 `prompt=` 已传), `is_persistent = session_id is not None`, 60 条历史连续记忆恢复
+- ✅ **[W4-22] main.py 拆 lifespan/startup/routes**（[main.py](backend/app/main.py) 305→145 + [lifespan.py](backend/app/lifespan.py) + [startup.py](backend/app/startup.py) + [routes/health.py](backend/app/routes/health.py)）—— modern lifespan context manager, app factory 模式
+- ✅ **[W4-21] 工具模块 _register_tools 显式**（[registry.py:420-440](backend/app/tools/registry.py)）—— 12 模块顶层 register 抽到函数, 测试可 mock
+- ✅ **[W4-20] terminal 白名单热加载**（[security_config.py](backend/app/tools/security_config.py)）—— `data/terminal_whitelist.txt` 追加, `reload_security_config()` in-place, 7 测试
+- ✅ **[W4-20] team.run_stream DEPRECATED**（[team.py:142-149](backend/app/core/multi_agent/team.py)）—— 标记 3 个月内迁 run_v2_stream
+- ✅ **[W4-19] ModernChatPanel 拆 hook**（[useStreamChat.ts](frontend/src/hooks/useStreamChat.ts) 435 行 + ModernChatPanel 1104→429）—— 流式状态机抽 hook
 - ✅ **[W4-18] MCP handler 签名统一**（[mcp_client.py:321-336](backend/app/tools/mcp_client.py)）—— 旧 `mcp_handler(args: Dict)` 跟 ToolRegistry.execute 的 `handler(**arguments)` 不兼容 (LLM 传 `{"text": "hi"}` 时被调成 `mcp_handler(text="hi")` 直接 TypeError); 改为 `**arguments` 跟其他 tool 约定一致, 13 个集成测试覆盖
 - ✅ **[W4-17] hooks 扩展 6 事件 7 默认 hook**（[agent_hooks.py](backend/app/core/agent_hooks.py)）—— +PreLLMCall/PostLLMCall 事件, +interim_assistant/audit_log/tool_stats 默认 hook; chat() + langchain_agent.py 同步提取
 - ✅ **[W4-16] agent 循环外行为注册为 hooks**（[agent_hooks.py](backend/app/core/agent_hooks.py)）—— 4 事件 (UserPromptSubmit/PreToolUse/PostToolUse/Stop), 25 个测试
@@ -279,6 +294,13 @@ codegraph index .              # 强制全量重建
 | `130ba63` | feat(W4-16): 引入 agent 循环 hooks 模式 (s04_hooks 风格) | agent_hooks.py / agent.py |
 | `a906c3e` | feat(W4-17): 扩展 hooks 模式 - 6 事件 7 默认 hook + chat/langchain 同步 | agent_hooks.py / agent.py / langchain_agent.py |
 | `65879c1` | fix(W4-18): MCP handler **kwargs 签名 + 集成测试 13 用例 | mcp_client.py / test_integration_skill_mcp.py |
+| `727b34a` | refactor(W4-19): ModernChatPanel 拆 hook + 历史审查报告归档 | frontend + docs/historical-reviews |
+| `3f06dd0` | feat(W4-20): terminal 白名单热加载 + debate_run DEPRECATED | security_config.py / team.py |
+| `b0df7af` | refactor(W4-21): 工具模块 _register_tools() 显式注册 | 12 implementations + registry.py |
+| `7dbac80` | refactor(W4-22): main.py 拆 lifespan / startup / routes/health | main.py / lifespan.py / startup.py / routes/health.py |
+| `fe4fb15` | fix(W4-23): langchain_agent checkpointer 恢复 + system 去重 | langchain_agent.py / main.py |
+| `04b43d2` | fix(W4-24): must_use_tool casefold + 2nd round fallback | agent.py (MUST_USE_TOOL_TRIGGERS) |
+| `41f5d49` | fix(W4-25): _ask_pending AgentEngine 内存 dict → SQLite store | ask_store.py / agent.py / ask.py / lifespan.py |
 | `8d07486` ~ `e8ba538` | W1 LangChain adapter 集成 + 回归基线 | langchain_adapter / test_phase1 |
 
 ### 6.2 索引命令速查

@@ -1,305 +1,145 @@
 """
-TongYong Agent 主应用模块
-FastAPI应用入口，配置路由、中间件和生命周期管理
+TongYong Agent 主应用模块 (P2-1 W4-22 拆分后)
+
+职责: app factory + middleware + route 注册 + global exception handler.
+启动/关闭 → app/lifespan.py
+健康端点 → app/routes/health.py
+LLM/AgentEngine 初始化 → app/startup.py
 """
+
+import logging
+import sys
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
 from app.config import settings
-from app.api import chat, memory, chart, llm
-from app.api import evaluation
+from app.api import chat, memory, chart, llm, evaluation
 from app.api import dreaming as dreaming_api
 from app.api import skills as skills_api
 from app.api import marketplace as marketplace_api
 from app.api import tool_harness as tool_harness_api
 from app.api.stream import router as stream_router
 from app.core.multi_agent.api import router as team_router
-from app.core.agent import AgentEngine
-from app.llm.base import BaseLLM
 from app.hermes.routes import router as hermes_router
-from app.hermes import MemoryFileManager, SkillFileManager
 from app.gateway import openai_router
 from app.gateway.config import GatewaySettings
 from app.gateway.openai_api import init_gateway as init_gateway_api
 from app.gateway.desktop_bridge import router as desktop_bridge_router
 from app.api.gateway_profiles import router as profile_router
 from app.gateway.profile_router import router as profile_gateway_router
-import logging
-import time
-import sys
+from app.routes.health import router as health_router
+from app.startup import init_agent_engine
+from app.lifespan import lifespan
 
-# 配置日志
+# ── 日志配置 ──
 logging.basicConfig(
     level=logging.INFO if settings.debug else logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
-
 logger = logging.getLogger(__name__)
 
-# 创建FastAPI应用
-app = FastAPI(
-    title=settings.app_name,
-    description="通用智能体 API - 支持对话、记忆检索和多模态处理",
-    version="1.0.0",
-    docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None
-)
 
-# 初始化Agent引擎（不传 LLM，延迟注入）
-agent_engine = AgentEngine(llm=None)
-logger.info("AgentEngine初始化完成")
-
-# 将 AgentEngine 同步到 LLMManager，使模型切换自动生效
-from app.services.llm_manager import get_llm_manager
-_llm_mgr = get_llm_manager()
-_llm_mgr.bind_agent_engine(agent_engine)
-# 尝试从保存的配置恢复上次使用的 provider（如 minimax），
-# 恢复成功后会同步到 AgentEngine；失败则用默认 provider 创建并注入
-restored = _llm_mgr.try_restore_saved_provider()
-if not restored:
-    from app.llm.factory import get_llm
-    llm_instance = get_llm()
-    logger.info(f"LLM初始化成功: {type(llm_instance).__name__}")
-    _llm_mgr._seed_initial_llm(llm_instance, settings.default_llm_provider)
-if agent_engine.llm is None:
-    _llm_mgr._sync_to_agent()
-
-# CORS中间件配置
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-# 请求日志中间件
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """记录所有HTTP请求"""
-    start_time = time.time()
-    
-    # 记录请求
-    logger.info(f"请求: {request.method} {request.url.path}")
-    
-    # 处理请求
-    response = await call_next(request)
-    
-    # 记录响应
-    process_time = time.time() - start_time
-    logger.info(
-        f"响应: {request.method} {request.url.path} "
-        f"状态码: {response.status_code} "
-        f"耗时: {process_time:.3f}s"
+def create_app() -> FastAPI:
+    """App factory (P2-1) — 替代模块级 app 变量, 便于测试"""
+    app = FastAPI(
+        title=settings.app_name,
+        description="通用智能体 API - 支持对话、记忆检索和多模态处理",
+        version="1.0.0",
+        docs_url="/docs" if settings.debug else None,
+        redoc_url="/redoc" if settings.debug else None,
+        lifespan=lifespan,
     )
-    
-    # 添加自定义响应头
-    response.headers["X-Process-Time"] = str(process_time)
-    
-    return response
 
-# 注册路由
-app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
-app.include_router(chart.router, prefix="/api/chart", tags=["chart"])
-app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
-app.include_router(hermes_router)
-app.include_router(dreaming_api.router)
-app.include_router(skills_api.router)
-app.include_router(marketplace_api.router)
-app.include_router(tool_harness_api.router)
-app.include_router(stream_router, prefix="/api/chat")
-try:
-    from app.api.im_gateway import router as im_gateway_router
-    app.include_router(im_gateway_router)
-except ImportError:
-    pass
-app.include_router(openai_router, prefix="/v1")
-app.include_router(desktop_bridge_router)
-app.include_router(profile_router)
-app.include_router(profile_gateway_router)
-app.include_router(evaluation.router)
-app.include_router(team_router, tags=["team"])
+    # ── CORS ──
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+    )
 
-# 初始化 OpenAI-gateway 配置
-_gateway_settings = GatewaySettings()
-init_gateway_api(_gateway_settings)
+    # ── 请求日志中间件 ──
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start_time = time.time()
+        logger.info(f"请求: {request.method} {request.url.path}")
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        logger.info(
+            f"响应: {request.method} {request.url.path} "
+            f"状态码: {response.status_code} 耗时: {process_time:.3f}s"
+        )
+        response.headers["X-Process-Time"] = str(process_time)
+        return response
 
-# 初始化 Hermes 管理器并注入到路由
-import app.hermes.routes as hermes_routes
-hermes_routes.memory_manager = MemoryFileManager(base_dir="./data/hermes")
-hermes_routes.skill_manager = SkillFileManager(base_dir="./data/hermes")
+    # ── AgentEngine + LLM 初始化 (抽到 app/startup.py) ──
+    agent_engine = init_agent_engine()
+    app.extra = {"agent_engine": agent_engine}
 
-# 初始化 skills API 桥接
-skills_api.init(hermes_routes.skill_manager)
+    # ── 路由注册 ──
+    app.include_router(health_router)
+    app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+    app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
+    app.include_router(chart.router, prefix="/api/chart", tags=["chart"])
+    app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
+    app.include_router(hermes_router)
+    app.include_router(dreaming_api.router)
+    app.include_router(skills_api.router)
+    app.include_router(marketplace_api.router)
+    app.include_router(tool_harness_api.router)
+    app.include_router(stream_router, prefix="/api/chat")
+    try:
+        from app.api.im_gateway import router as im_gateway_router
+        app.include_router(im_gateway_router)
+    except ImportError:
+        pass
+    app.include_router(openai_router, prefix="/v1")
+    app.include_router(desktop_bridge_router)
+    app.include_router(profile_router)
+    app.include_router(profile_gateway_router)
+    app.include_router(evaluation.router)
+    app.include_router(team_router, tags=["team"])
+
+    # ── Gateway + Hermes 初始化 ──
+    _init_gateway_and_hermes()
+
+    # ── 全局异常处理器 ──
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error(f"未处理的异常: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "服务器内部错误",
+                "path": str(request.url.path),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        )
+
+    return app
+
+
+def _init_gateway_and_hermes() -> None:
+    """OpenAI-gateway 配置 + Hermes 管理器注入 (P2-1 抽到独立函数)"""
+    _gateway_settings = GatewaySettings()
+    init_gateway_api(_gateway_settings)
+
+    import app.hermes.routes as hermes_routes
+    from app.hermes import MemoryFileManager, SkillFileManager
+    hermes_routes.memory_manager = MemoryFileManager(base_dir="./data/hermes")
+    hermes_routes.skill_manager = SkillFileManager(base_dir="./data/hermes")
+    skills_api.init(hermes_routes.skill_manager)
+
+
+# ── 模块级 app (供 uvicorn app.main:app) ──
+app = create_app()
 
 
 def get_agent_engine():
-    """获取Agent引擎的依赖函数"""
-    return agent_engine
-
-
-app.extra = {"agent_engine": agent_engine}
-
-
-@app.get("/")
-async def root():
-    """API根路径"""
-    return {
-        "message": f"Welcome to {settings.app_name}",
-        "version": "1.0.0",
-        "docs": "/docs" if settings.debug else "disabled"
-    }
-
-
-@app.get("/health")
-async def health():
-    """健康检查端点"""
-    llm_status = "initialized" if agent_engine.llm else "unavailable"
-    
-    return {
-        "status": "ok",
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "llm": {
-            "status": llm_status,
-            "provider": type(agent_engine.llm).__name__ if agent_engine.llm else None
-        },
-        "memory": {
-            "sessions": len(await agent_engine.get_sessions()) if agent_engine.memory_storage else 0
-        }
-    }
-
-
-@app.get("/ready")
-async def ready():
-    """就绪检查端点"""
-    checks = {
-        "agent_engine": agent_engine is not None,
-        "llm": agent_engine.llm is not None,
-        "memory_storage": agent_engine.memory_storage is not None,
-        "vector_store": agent_engine.vector_store is not None
-    }
-    
-    all_ready = all(checks.values())
-    
-    return {
-        "ready": all_ready,
-        "checks": checks
-    }
-
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动事件"""
-    logger.info("=" * 50)
-    logger.info(f"{settings.app_name} 启动中...")
-    logger.info("=" * 50)
-
-    # ── Tools ─────────────────────────────────────────────────────────
-    # 工具定义通过 registry.register() 动态注册；schema 走 OpenAI function calling 协议
-    # （即 `llm.chat(..., tools=tool_schemas)`），agent 推理时**自动可见**。
-    # 不再写盘 domains/tools/tools.md — 那是 P4 (2026-06-02) 删的反模式：
-    # 14KB markdown 镜像只是冗余，LLM 早通过 function calling 协议拿到 schema。
-    from app.tools import discover_builtin_tools
-    discover_builtin_tools()
-
-    # 动态发现 MCP 服务器工具
-    try:
-        from app.tools.mcp_client import discover_mcp_tools
-        discover_mcp_tools()
-    except Exception as e:
-        logger.warning(f"MCP 工具发现失败: {e}")
-
-    # 验证数据库连接
-    try:
-        sessions = await agent_engine.get_sessions()
-        logger.info(f"数据库连接成功，当前会话数: {len(sessions)}")
-    except Exception as e:
-        logger.error(f"数据库连接失败: {e}")
-    
-    # 验证LLM连接
-    if agent_engine.llm:
-        try:
-            is_available = await agent_engine.llm.initialize()
-            logger.info(f"LLM连接验证: {'成功' if is_available else '失败'}")
-        except Exception as e:
-            logger.error(f"LLM连接验证失败: {e}")
-
-    # ── IM Gateway 启停 (飞书 / 企业微信 / 微信) ──
-    try:
-        from app.gateway.im import im_gateway_manager, inject_agent_engine, IMPlatform, IMPlatformConfig
-        from app.config import settings as app_settings
-
-        # 注入 AgentEngine — IM adapter 通过 get_agent_engine() 拿
-        inject_agent_engine(agent_engine)
-
-        # 飞书
-        feishu_app_id = getattr(app_settings, "feishu_app_id", "") or ""
-        feishu_app_secret = getattr(app_settings, "feishu_app_secret", "") or ""
-        if feishu_app_id and feishu_app_secret:
-            im_gateway_manager.set_platform_config(
-                IMPlatform.FEISHU,
-                IMPlatformConfig(
-                    platform=IMPlatform.FEISHU,
-                    enabled=getattr(app_settings, "feishu_enabled", False),
-                    allowed_users=getattr(app_settings, "feishu_allowed_users", []),
-                    allow_all_users=getattr(app_settings, "feishu_allow_all_users", False),
-                    default_profile=getattr(app_settings, "feishu_default_profile", "default"),
-                    extra={
-                        "app_id": feishu_app_id,
-                        "app_secret": feishu_app_secret,
-                        "verification_token": getattr(app_settings, "feishu_verification_token", ""),
-                        "encrypt_key": getattr(app_settings, "feishu_encrypt_key", ""),
-                        "domain": getattr(app_settings, "feishu_domain", "feishu"),
-                    },
-                ),
-            )
-        # 企业微信 / 微信服务号 同样模式 — Phase 3/4 启用
-
-        results = await im_gateway_manager.start_all()
-        if results:
-            logger.info(f"IM Gateway 启动结果: {results}")
-    except Exception as e:
-        logger.error(f"IM Gateway 启动失败: {e}", exc_info=True)
-    
-    logger.info("=" * 50)
-    logger.info("应用启动完成")
-    logger.info("=" * 50)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭事件"""
-    logger.info("应用正在关闭...")
-
-    # 停止 IM Gateway
-    try:
-        from app.gateway.im import im_gateway_manager
-        await im_gateway_manager.stop_all()
-    except Exception as e:
-        logger.error(f"IM Gateway 关闭异常: {e}")
-
-    # 清理资源
-    if agent_engine:
-        logger.info("清理Agent引擎资源...")
-    
-    logger.info("应用已关闭")
-
-
-# 异常处理器
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """全局异常处理器"""
-    logger.error(f"未处理的异常: {exc}", exc_info=True)
-    
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "服务器内部错误",
-            "path": str(request.url.path),
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-    )
+    """兼容旧依赖注入路径"""
+    return app.extra.get("agent_engine")

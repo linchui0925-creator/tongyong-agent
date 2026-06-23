@@ -3,7 +3,7 @@
 > 范围：`main` 分支 + 最近 30 天 commit（截至 `0431b29`）
 > 方法：codegraph 索引（205 文件 / 3,791 节点 / 7,572 边）+ 重点文件精读 + 历史 commit 交叉验证
 > 配套图谱：[docs/CODEGRAPH.md](CODEGRAPH.md) §4 风险台账
-> 上一份审查：[architecture-review-2026-06-02.md](architecture-review-2026-06-02.md)（装配层 5 处问题，部分未执行）
+> 上一份审查：[architecture-review-2026-06-02.md](historical-reviews/architecture-review-2026-06-02.md)（装配层 5 处问题，部分未执行）
 
 ---
 
@@ -87,7 +87,7 @@ elif "反方" in msg.sent_from:
 
 **问题**（已修）：
 - 角色 `name` 是用户自由输入的字段，UI RoleList 允许任意字符串
-- 上次 [commit 510bff1](代码审查报告与修复方案.md) 已修 DebateSpeechAction（`role.debate_side or "正方" in name`），但 **DebateJudgeAction 完全没动**，依然是字符串匹配
+- 上次 [commit 510bff1](historical-reviews/code-review-2026-05-29.md) 已修 DebateSpeechAction（`role.debate_side or "正方" in name`），但 **DebateJudgeAction 完全没动**，依然是字符串匹配
 - 已知场景：
   - 角色名 `"Biden"` / `"Trump"` → 全被判 negative
   - 角色名 `"正方一辩"`（中文名）→ OK
@@ -158,7 +158,7 @@ _delegate_depth: ContextVar[int] = ContextVar("delegate_depth", default=0)
 
 **位置**：[team.py:222-243](backend/app/core/multi_agent/team.py) `for role in roles_this_round`
 
-**问题**（[commit 510bff1](代码审查报告与修复方案.md) 已知遗留）：
+**问题**（[commit 510bff1](historical-reviews/code-review-2026-05-29.md) 已知遗留）：
 ```python
 for role in roles_this_round:  # 直接 list 顺序
     msg = await role.run(self._round)  # 串行
@@ -211,7 +211,7 @@ def _message_requires_tool_call(user_text: str) -> bool:
 **问题**：
 - 进程内单例，多 worker 部署（`uvicorn --workers 4`）会丢问题
 - 即便单 worker，agent_engine 重新初始化（main.py hot reload）也丢
-- 已知遗留，[W4-PROOF 验证日志](代码审查报告与修复方案.md) 多次提示 question_id 失效
+- 已知遗留，[W4-PROOF 验证日志](historical-reviews/code-review-2026-05-29.md) 多次提示 question_id 失效
 
 **建议修法**：
 - 短期：把 `_ask_pending` 提到 module-level + 加 thread-safe
@@ -221,7 +221,7 @@ def _message_requires_tool_call(user_text: str) -> bool:
 
 ## 🟡 P2 — 1 月内修
 
-### P2-1 main.py 6 职责 / 303 行（[architecture-review-2026-06-02.md](architecture-review-2026-06-02.md) P1）
+### P2-1 main.py 6 职责 / 303 行（[architecture-review-2026-06-02.md](historical-reviews/architecture-review-2026-06-02.md) P1）
 
 未执行。**风险**：hot reload 时 `agent_engine` / `_llm_mgr` 重新构造竞态；`hermes_routes.x = ...` 模式不易测试。
 
@@ -261,7 +261,7 @@ def _message_requires_tool_call(user_text: str) -> bool:
 - 拆 `<MessageList>` / `<InputBar>` / `<TokenUsageBar>` / `<AskDialog>` 子组件
 - 拆 hooks：`useStreamChat` / `useTokenUsage` / `useContextStats`
 
-### P3-2 `代码审查报告与修复方案.md` 2760 行历史报告未归档
+### P3-2 历史审查报告未归档 (✅ W4-19 已移至 `docs/historical-reviews/`)
 
 单文件过长，建议拆章节或转 `docs/historical-reviews/`。
 

@@ -179,14 +179,14 @@ frontend/src/
 
 ### 4.1 架构层
 
-- 🟠 **main.py 6 职责 / 303 行 / 4 处跨模块 monkey-patch**（[architecture-review-2026-06-02.md](architecture-review-2026-06-02.md) P1 / P2 提议，**未执行**）
+- 🟠 **main.py 6 职责 / 303 行 / 4 处跨模块 monkey-patch**（[architecture-review-2026-06-02.md](historical-reviews/architecture-review-2026-06-02.md) P1 / P2 提议，**未执行**）
 - 🟠 **工具模块顶层 `registry.register(...)` 副作用**（同上 P3，未执行）
 - 🟡 **agent → LLMManager.bind_agent_engine 单向注入**，多 router 又通过 `from app.main import agent_engine` 反向读取，形成**主从耦合**（参见 P2）
 - 🟡 **langchain 路径 is_persistent=False 是临时回退**（[langchain_agent.py:220-227](backend/app/core/langchain_agent.py) 注释 W3-B，**根因未根治**）
 
 ### 4.2 业务逻辑层
 
-- ✅ **[W4-8 已修] DebateJudgeAction 字符串匹配**（[debate.py:236-241](backend/app/core/multi_agent/actions/debate.py)）—— 当角色名不含"正方/反方"时全漏判，[commit 510bff1](代码审查报告与修复方案.md) 已点名未修
+- ✅ **[W4-8 已修] DebateJudgeAction 字符串匹配**（[debate.py:236-241](backend/app/core/multi_agent/actions/debate.py)）—— 当角色名不含"正方/反方"时全漏判，[commit 510bff1](historical-reviews/code-review-2026-05-29.md) 已点名未修
 - ✅ **[W4-8 已修] system prompt 注入顺序与注释相反**（[agent.py:198-249](backend/app/core/agent.py)）—— `_inject_*` 全用 `messages.insert(0, ...)`，最后调用的反而占顶部，base_prompt 被压到最底
 - ✅ **[W4-11 + W4-14 已修] MCP 客户端**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— W4-11 修 4 处 (silent return / text mode / get_running_loop / future 清理); W4-14 修 4 处 (跨 loop future 跟踪 / 进程 crash fail pending / shutdown 顺序 / async 入口), 共 17 个测试（[mcp_client.py:65-78, 191-211, 109-118](backend/app/tools/mcp_client.py)）—— 旧实现 `Popen(text=False)` + str write 必 TypeError, `_send_raw` 进程未启动时 silent return 导致 future 永远 hang
 - ✅ **[W4-13 已修] `_extract_heuristic_sections` 多启发式段全部保留**（[skills_index.py:172-202](backend/app/core/skills_index.py)）—— 旧实现遇到第一个非启发式 ## 标题就 break, 后续 ## Heuristic B 等全被丢

@@ -1,0 +1,435 @@
+/**
+ * useStreamChat — 抽取自 ModernChatPanel 的流式对话状态机 (P3-1)
+ *
+ * 持有所有 stream_chat 相关状态 (messages / isStreaming / progressText /
+ * currentTool / tokenUsage / contextInfo / savedFlash / waitingQuestion 等),
+ * 以及 send / stop / compress / delete / toggleThinking / clarify 等操作。
+ *
+ * 把这部分从 ModernChatPanel 拆出来, 组件文件从 1104 行降到 ~700 行。
+ */
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  streamChat,
+  generateMessageId,
+  compressSessionContext,
+  getContextStats,
+} from '../api/stream';
+import { getSessionMessages } from '../api/memory';
+import { submitClarifyAnswer } from '../api/chat';
+import { createEvaluation } from '../api/evaluation';
+import { Message, ContextInfo } from '../types';
+
+const EXECUTION_CLAIM_PATTERNS = [
+  '已调用', '已执行', '已打开', '已访问', '已搜索', '已截图', '已导航', '我已经调用', '我已调用',
+];
+
+function looksLikeExecutionClaim(content: string): boolean {
+  const text = (content || '').toLowerCase();
+  return EXECUTION_CLAIM_PATTERNS.some((p) => text.includes(p));
+}
+
+export interface UseStreamChatOptions {
+  sessionId: string;
+  onError?: (err: string) => void;
+}
+
+export interface UseStreamChatReturn {
+  messages: Message[];
+  isStreaming: boolean;
+  isLoading: boolean;
+  errorMessage: string | null;
+  progressText: string;
+  elapsed: number;
+  currentTool: { name: string; emoji: string; startTime: number } | null;
+  toolElapsed: number;
+  tokenUsage: { input: number; output: number; total: number } | null;
+  contextInfo: ContextInfo | null;
+  isCompressing: boolean;
+  savedFlash: string | null;
+  expandedThinkingMsgId: string | null;
+  waitingQuestion: { question: string; choices: string[]; id: string } | null;
+  setErrorMessage: (msg: string | null) => void;
+  loadMessages: (sid: string) => Promise<void>;
+  handleSend: (text: string) => Promise<void>;
+  handleStop: () => void;
+  handleCompress: (force?: boolean) => Promise<void>;
+  handleDelete: (id: string) => void;
+  handleToggleThinking: (id: string) => void;
+  handleClarifyAnswer: (answer: string) => Promise<void>;
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  refreshContextStats: () => Promise<void>;
+}
+
+export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): UseStreamChatReturn {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [progressText, setProgressText] = useState<string>('');
+  const [elapsed, setElapsed] = useState<number>(0);
+  const [currentTool, setCurrentTool] = useState<{ name: string; emoji: string; startTime: number } | null>(null);
+  const [toolElapsed, setToolElapsed] = useState<number>(0);
+  const [tokenUsage, setTokenUsage] = useState<{ input: number; output: number; total: number } | null>(null);
+  const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [savedFlash, setSavedFlash] = useState<string | null>(null);
+  const [expandedThinkingMsgId, setExpandedThinkingMsgId] = useState<string | null>(null);
+  const [waitingQuestion, setWaitingQuestion] = useState<{ question: string; choices: string[]; id: string } | null>(null);
+
+  const currentToolRef = useRef<{ name: string; emoji: string; startTime: number } | null>(null);
+  useEffect(() => { currentToolRef.current = currentTool; }, [currentTool]);
+  const abortRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const savedFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEventTimeRef = useRef<number>(Date.now());
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const thinkingStartedRef = useRef<boolean>(false);
+
+  const loadMessages = useCallback(async (sid: string) => {
+    if (!sid) return;
+    try {
+      const data = await getSessionMessages(sid);
+      const msgs: Message[] = (data.messages || []).map((m: any, i: number) => {
+        const rawContent = m.content || '';
+        const cleanedForThink = rawContent.replace(/<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>/g, '');
+        const thinkMatch = cleanedForThink.match(/<think>([\s\S]*?)<\/think>/);
+        const thinking = thinkMatch ? thinkMatch[1] : '';
+        const displayContent = cleanedForThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        return {
+          id: m.id || `msg-${i}`,
+          role: m.role,
+          content: displayContent,
+          thinking: thinking || undefined,
+          timestamp: new Date(m.created_at || Date.now()).getTime(),
+          status: 'completed' as const,
+        };
+      });
+      setMessages(msgs);
+    } catch {
+      setMessages([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sessionId) loadMessages(sessionId);
+  }, [sessionId, loadMessages]);
+
+  const refreshContextStats = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const stats = await getContextStats(sessionId);
+      if (stats && !stats.error && stats.threshold_tokens !== undefined) {
+        setContextInfo({
+          chars: stats.chars ?? 0,
+          estimated_tokens: stats.estimated_tokens ?? 0,
+          threshold_tokens: stats.threshold_tokens,
+          percent: stats.percent ?? 0,
+          approaching: stats.approaching ?? false,
+        });
+      }
+    } catch (err) {
+      console.warn('[useStreamChat] getContextStats 失败:', err);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setContextInfo(null);
+      return;
+    }
+    let cancelled = false;
+    getContextStats(sessionId).then((stats) => {
+      if (cancelled) return;
+      if (stats && !stats.error && stats.threshold_tokens !== undefined) {
+        setContextInfo({
+          chars: stats.chars ?? 0,
+          estimated_tokens: stats.estimated_tokens ?? 0,
+          threshold_tokens: stats.threshold_tokens,
+          percent: stats.percent ?? 0,
+          approaching: stats.approaching ?? false,
+        });
+      }
+    }).catch((err) => {
+      console.warn('[useStreamChat] getContextStats 失败:', err);
+    });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+    };
+  }, []);
+
+  const startHeartbeat = (msgId: string) => {
+    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    lastEventTimeRef.current = Date.now();
+    heartbeatRef.current = setInterval(() => {
+      const gap = Math.floor((Date.now() - lastEventTimeRef.current) / 1000);
+      if (gap >= 5) {
+        const tool = currentToolRef.current;
+        const label = tool
+          ? `⏳ ${tool.name} 执行中… (${gap}s)`
+          : `💭 还在思考… (${gap}s)`;
+        setProgressText((prev) => {
+          if (prev && !prev.startsWith('💭') && !prev.startsWith('⏳')) return prev;
+          return label;
+        });
+        setMessages((prev) => prev.map((m) =>
+          m.id === msgId && m.status === 'streaming' ? { ...m, progressLabel: label } : m
+        ));
+      }
+    }, 5000);
+  };
+  const stopHeartbeat = () => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+  };
+  const markActive = () => { lastEventTimeRef.current = Date.now(); };
+
+  const startStream = useCallback((text: string, msgId: string, clarifyQId?: string, clarifyAns?: string) => {
+    abortRef.current?.abort();
+    abortRef.current = streamChat(text, sessionId || undefined, true, {
+      onStart: () => {
+        setIsStreaming(true);
+        setProgressText('连接中...');
+        setExpandedThinkingMsgId(null);
+        thinkingStartedRef.current = false;
+        startHeartbeat(msgId);
+        markActive();
+      },
+      onProgress: (content) => {
+        setProgressText(content);
+        markActive();
+        setMessages((prev) => prev.map((m) =>
+          m.id === msgId && m.status === 'streaming' ? { ...m, progressLabel: content } : m
+        ));
+      },
+      onToolStart: (toolName, _args, emoji) => {
+        setToolElapsed(0);
+        setCurrentTool({ name: toolName, emoji, startTime: Date.now() });
+        markActive();
+      },
+      onToolComplete: (toolName, preview, duration, emoji) => {
+        setCurrentTool(null);
+        markActive();
+        if (preview) {
+          console.log(`[tool] ${emoji} ${toolName} (${duration.toFixed(1)}s): ${preview}`);
+        }
+      },
+      onToolError: (toolName, error, emoji) => {
+        setCurrentTool(null);
+        markActive();
+        console.warn(`[tool] ${emoji} ${toolName} 出错: ${error}`);
+      },
+      onToolFeedback: (content) => {
+        markActive();
+        if (content) console.log('[tool feedback]', content);
+      },
+      onBudgetWarning: (content) => {
+        markActive();
+        if (content) console.warn('[budget]', content);
+      },
+      onThinkingDelta: (content) => {
+        setMessages((prev) => prev.map((m) =>
+          m.id === msgId ? { ...m, thinking: (m.thinking || '') + content } : m
+        ));
+        if (!thinkingStartedRef.current) {
+          thinkingStartedRef.current = true;
+          setProgressText('💭 思考中…');
+        }
+        markActive();
+      },
+      onThinkingDone: () => { markActive(); },
+      onAsk: (question, choices, question_id) => {
+        setWaitingQuestion({ question, choices, id: question_id });
+        setIsStreaming(false);
+        setProgressText('等待回答...');
+        markActive();
+      },
+      onUsage: (input, output, total) => {
+        setTokenUsage({ input, output, total });
+      },
+      onContext: (info) => {
+        setContextInfo(info);
+      },
+      onContent: (_chunk, full) => {
+        setProgressText('');
+        markActive();
+        const thinkMatch = full.match(/<think>([\s\S]*?)<\/think>/);
+        const thinking = thinkMatch ? thinkMatch[1] : '';
+        const displayContent = full.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        setMessages((prev) => prev.map((m) =>
+          m.id === msgId ? { ...m, content: displayContent, thinking: thinking || m.thinking, status: 'streaming' as const } : m
+        ));
+      },
+      onDone: (data) => {
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        stopHeartbeat();
+        setProgressText('');
+        setCurrentTool(null);
+        setMessages((prev) => prev.map((m) =>
+          m.id === msgId ? {
+            ...m,
+            status: 'completed' as const,
+            toolsUsed: data.tools_used || [],
+            commandsExecuted: data.commands_executed || [],
+            executionClaimMismatch: looksLikeExecutionClaim(m.content) && !((data.tools_used && data.tools_used.length > 0) || (data.commands_executed && data.commands_executed.length > 0)),
+          } : m
+        ));
+        setIsStreaming(false);
+        setIsLoading(false);
+        abortRef.current = null;
+
+        if (data.session_id && data.tools_used && data.tools_used.length > 0) {
+          createEvaluation({
+            session_id: data.session_id,
+            tools_used: data.tools_used || [],
+            commands_executed: data.commands_executed || [],
+            processing_time: data.processing_time || 0,
+            usage: data.usage || {},
+          }).catch((err) => {
+            console.error('[评估] 创建评估失败:', err);
+          });
+        }
+      },
+      onError: (err) => {
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        stopHeartbeat();
+        setProgressText('');
+        setErrorMessage(err);
+        setCurrentTool(null);
+        setMessages((prev) => prev.map((m) =>
+          m.id === msgId ? { ...m, status: 'error' as const, error: err } : m
+        ));
+        setIsStreaming(false);
+        setIsLoading(false);
+        abortRef.current = null;
+        onError?.(err);
+      },
+    }, clarifyQId, clarifyAns);
+  }, [sessionId, onError]);
+
+  const handleSend = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || isLoading || isStreaming) return;
+
+    const uid = generateMessageId();
+    const aid = generateMessageId();
+
+    setMessages((prev) => [...prev,
+      { id: uid, role: 'user', content: trimmed, timestamp: Date.now(), status: 'completed' },
+      { id: aid, role: 'assistant', content: '', timestamp: Date.now(), status: 'streaming' },
+    ]);
+    setIsLoading(true);
+    setErrorMessage(null);
+    setElapsed(0);
+    setToolElapsed(0);
+    setCurrentTool(null);
+    setTokenUsage(null);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setElapsed((p) => p + 100);
+      setToolElapsed((p) => p + 100);
+    }, 100);
+
+    startStream(trimmed, aid);
+  }, [isLoading, isStreaming, startStream]);
+
+  const handleStop = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    stopHeartbeat();
+    abortRef.current?.abort();
+    setIsStreaming(false);
+    setIsLoading(false);
+    setProgressText('');
+    setCurrentTool(null);
+    setMessages((prev) => prev.map((m) =>
+      m.status === 'streaming' ? { ...m, status: 'completed' as const } : m
+    ));
+  }, []);
+
+  const handleCompress = useCallback(async (force: boolean = false) => {
+    if (!sessionId || isCompressing) return;
+    setIsCompressing(true);
+    try {
+      const result = await compressSessionContext(sessionId, force);
+      if (result.success) {
+        await refreshContextStats();
+        if (result.skipped) {
+          setSavedFlash('未达阈值');
+        } else {
+          const saved = result.saved_pct ?? 0;
+          setSavedFlash(`✓ 节省 ${saved.toFixed(0)}% (${result.before_tokens}→${result.after_tokens} tok)`);
+        }
+      } else {
+        setSavedFlash(`✗ 压缩失败: ${result.error || '未知错误'}`);
+      }
+    } catch (err: any) {
+      console.error('[handleCompress] 失败:', err);
+      setSavedFlash(`✗ 错误: ${err?.message || String(err)}`);
+    } finally {
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+      savedFlashTimerRef.current = setTimeout(() => setSavedFlash(null), 3000);
+      setIsCompressing(false);
+    }
+  }, [sessionId, isCompressing, refreshContextStats]);
+
+  const handleDelete = useCallback((id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  const handleToggleThinking = useCallback((id: string) => {
+    setExpandedThinkingMsgId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const handleClarifyAnswer = useCallback(async (answer: string) => {
+    if (!waitingQuestion) return;
+    const qid = waitingQuestion.id;
+    await submitClarifyAnswer(qid, answer, sessionId || undefined);
+    setWaitingQuestion(null);
+    setIsLoading(true);
+    setIsStreaming(true);
+    setProgressText('继续中...');
+
+    const uid = generateMessageId();
+    const aid = generateMessageId();
+    setMessages((prev) => [...prev,
+      { id: uid, role: 'user', content: answer, timestamp: Date.now(), status: 'completed' as const },
+      { id: aid, role: 'assistant', content: '', timestamp: Date.now(), status: 'streaming' as const },
+    ]);
+    startStream(answer, aid, qid, answer);
+  }, [waitingQuestion, sessionId, startStream]);
+
+  return {
+    messages,
+    isStreaming,
+    isLoading,
+    errorMessage,
+    progressText,
+    elapsed,
+    currentTool,
+    toolElapsed,
+    tokenUsage,
+    contextInfo,
+    isCompressing,
+    savedFlash,
+    expandedThinkingMsgId,
+    waitingQuestion,
+    setErrorMessage,
+    loadMessages,
+    handleSend,
+    handleStop,
+    handleCompress,
+    handleDelete,
+    handleToggleThinking,
+    handleClarifyAnswer,
+    setMessages,
+    refreshContextStats,
+  };
+}

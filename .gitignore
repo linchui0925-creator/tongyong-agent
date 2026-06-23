@@ -47,5 +47,13 @@ frontend/view-*.html
 frontend/layout-*.png
 *.png
 
-# Docs
+# Docs (allow only specific)
 *.md
+!docs/CODEGRAPH.md
+!docs/CODE_REVIEW_2026_06_21.md
+!docs/API.md
+!docs/AGENT_CAPABILITIES.md
+!docs/AGENT_ENHANCEMENT.md
+!docs/TRANSFORMATION_PLAN.md
+!docs/agent-memory-system-design.md
+!docs/historical-reviews/

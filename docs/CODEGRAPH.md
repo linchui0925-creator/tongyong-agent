@@ -17,6 +17,7 @@
 > 📝 W4-14 修复 (2026-06-22): MCP 客户端 4 处 bug — 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 详见末尾 W4-14 节
 > 📝 W4-16 引入 (2026-06-22): 借鉴 shareAI-lab/learn-claude-code s04_hooks 模式, agent.py 循环外行为 (step_callback / 工具 tracking / constraint engine / memory save) 全部注册为 hooks, 循环只调 trigger_hooks()
 > 📝 W4-17 扩展 (2026-06-22): hooks 加 2 事件 (PreLLMCall/PostLLMCall) + 3 默认 hook (interim_assistant/audit_log/tool_stats) + chat() + langchain_agent.py 同步提取; 共 6 事件 7 默认 hook, 117 unit + 5 E2E 测试
+> 📝 W4-18 集成验证 (2026-06-22): MCP handler 签名改为 `**kwargs` 跟其他 tool 一致 (旧 `args: Dict` 跟 ToolRegistry.execute 的 `handler(**arguments)` 不兼容) + 13 个集成测试覆盖 skill 调用 / 长任务多轮 / MCP 假 server 全生命周期; 13/13 全绿
 
 
 | 维度 | 数值 |
@@ -214,6 +215,7 @@ frontend/src/
 - 🟡 **`terminal` 工具白名单 `_ALLOWED_COMMANDS` 是硬编码列表**（[security_config.py](backend/app/tools/security_config.py)），新增命令需改源码
 - 🟡 **`ask` 工具 `_ask_pending` 是 AgentEngine 实例属性**（[agent.py:117-119](backend/app/core/agent.py)），多 worker 部署（uvicorn workers>1）会丢问题
 - ✅ **[W4-14] MCP 客户端 lifespan 修复**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— 4 处 bug: 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 配套 9 个新测试
+- ✅ **[W4-18] MCP handler 签名统一**（[mcp_client.py:321-336](backend/app/tools/mcp_client.py)）—— 旧 `mcp_handler(args: Dict)` 跟 ToolRegistry.execute 的 `handler(**arguments)` 不兼容 (LLM 传 `{"text": "hi"}` 时被调成 `mcp_handler(text="hi")` 直接 TypeError); 改为 `**arguments` 跟其他 tool 约定一致, 13 个集成测试覆盖
 - ✅ **[W4-17] hooks 扩展 6 事件 7 默认 hook**（[agent_hooks.py](backend/app/core/agent_hooks.py)）—— +PreLLMCall/PostLLMCall 事件, +interim_assistant/audit_log/tool_stats 默认 hook; chat() + langchain_agent.py 同步提取
 - ✅ **[W4-16] agent 循环外行为注册为 hooks**（[agent_hooks.py](backend/app/core/agent_hooks.py)）—— 4 事件 (UserPromptSubmit/PreToolUse/PostToolUse/Stop), 25 个测试
 - ✅ **[W4-15] 新增 `glob` 工具'（[glob_tool.py](backend/app/tools/implementations/glob_tool.py)）—— 跨目录模式匹配, 跳 _PRUNE_DIRS (.git/.venv/node_modules/__pycache__), 限制 max_results
@@ -275,6 +277,8 @@ codegraph index .              # 强制全量重建
 | `9586156` | fix(W4-14): MCP 客户端 lifespan 4 处 bug (跨 loop future / crash hang / shutdown 顺序 / async 入口) | mcp_client.py |
 | `c209ba0` | feat(W4-15): 新增 glob 工具 + load_skill 别名 | glob_tool.py / skill_tools.py |
 | `130ba63` | feat(W4-16): 引入 agent 循环 hooks 模式 (s04_hooks 风格) | agent_hooks.py / agent.py |
+| `a906c3e` | feat(W4-17): 扩展 hooks 模式 - 6 事件 7 默认 hook + chat/langchain 同步 | agent_hooks.py / agent.py / langchain_agent.py |
+| `65879c1` | fix(W4-18): MCP handler **kwargs 签名 + 集成测试 13 用例 | mcp_client.py / test_integration_skill_mcp.py |
 | `8d07486` ~ `e8ba538` | W1 LangChain adapter 集成 + 回归基线 | langchain_adapter / test_phase1 |
 
 ### 6.2 索引命令速查

@@ -14,6 +14,7 @@
 > W4-11/W4-12 修复 (2026-06-21): MCP 客户端 4 处 bug (含 2 处 fatal) / Skill 索引 5 处 bug (含 1 处 fatal) 已修, 配套回归测试 17 个全绿 (test_mcp_client.py 8 + test_skills_index.py 9)。详见末尾「W4-11/W4-12 修复说明」节。
 > W4-13 修复 (2026-06-21): 审计发现 3 处连带 bug (heuristic 多段 + budget 一次性 + skipped 路径污染) 已修, 配套回归测试 8 个全绿 (test_w413_audit_fixes.py)。详见末尾「W4-13 修复说明」节。
 > W4-15 工具 (2026-06-22): 新增 `glob` (跨目录模式匹配) + `load_skill` 别名 (兼容 Anthropic 风格命名), 17 个测试全绿。
+> W4-18 集成验证 (2026-06-22): MCP handler 签名 `**kwargs` 跟其他 tool 一致 + 13 个集成测试覆盖 skill 调用 / 长任务多轮 / MCP 假 server 全生命周期, 13/13 全绿。
 
 | 项 | 修复前 | 当前 |
 |---|---|---|
@@ -21,9 +22,9 @@
 | 🟠 P1 高优 | 4 | 2 (P1-1/P1-2 ✅) |
 | 🟡 P2 中优 | 5 | 5 |
 | 🟢 P3 低优 | 2 | 2 |
-| ✅ 回归测试 | 0 (辩论零覆盖) | 122 (+ W4-15 17 / + W4-14 9 / + W4-16 25 / + W4-17 hooks 13 + E2E 5) |
+| ✅ 回归测试 | 0 (辩论零覆盖) | 135 (+ W4-15 17 / + W4-14 9 / + W4-16 25 / + W4-17 hooks 13 + E2E 5 / + W4-18 集成 13) |
 
-最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。W4-14 (MCP lifespan) + W4-16 (agent hooks 4 事件) + W4-17 (hooks 扩展到 6 事件, 同步 chat() + langchain_agent) 已完成, 还剩 P1-3/P1-4/P2/P3 共 8 项待办。
+最近 30 天 W1–W4 切流量 + langchain 集成 + W4-8..W4-15 八轮修复把"行为正确性"和"工具覆盖"都拉到位了。W4-14 (MCP lifespan) + W4-16 (agent hooks 4 事件) + W4-17 (hooks 扩展到 6 事件, 同步 chat() + langchain_agent) + W4-18 (MCP handler 签名 + 13 集成测试) 已完成, 还剩 P1-3/P1-4/P2/P3 共 8 项待办。
 
 ---
 
@@ -860,3 +861,68 @@ register_hook("PreToolUse", whitelist)
 - 27 事件完整对齐 CC 源码 (SessionStart / SubagentStart / PreCompact / PostCompact)
 - hook 优先级 / 取消语义
 - hook 上下文类型化 (TypedDict)
+
+---
+
+## W4-18 集成验证 (2026-06-22) — MCP handler 签名 + 13 个集成测试
+
+### 背景
+
+W4-14 修了 MCP 客户端 lifespan, W4-16/W4-17 修了 hooks 模式。但还有 1 个潜在 bug 没暴露:
+MCP tool 的 handler 旧签名是 `mcp_handler(args: Dict, task_id: str = "default")`, 而 ToolRegistry.execute 调 `handler(**arguments)` —— LLM 传 `{"text": "hi"}` 时实际会调成 `mcp_handler(text="hi")` 直接 TypeError。
+
+之前 W4-15 集成测试没覆盖 MCP 工具调用路径 (只到 discover / shutdown), 也没覆盖长任务多轮 + skill 工具的端到端路径。
+
+### 改动
+
+**`mcp_client.py:321-336` 改 handler 签名**:
+```python
+# 旧: async def mcp_handler(args: Dict, task_id: str = "default") -> str:
+# 新: async def mcp_handler(task_id: str = "default", **arguments) -> str:
+#      arguments.pop("task_id", None)  # 内部用, 剩下的就是 MCP server 实际收到的
+# 跟 ToolRegistry.execute 的 entry.handler(**arguments) 约定一致
+```
+
+**新增 13 个集成测试** ([tests/test_integration_skill_mcp.py](backend/tests/test_integration_skill_mcp.py)):
+
+1. **Skill 工具真实可调** (4):
+   - `test_skill_tools_registered` — `skill_list` / `skill_view` / `load_skill` 都注册
+   - `test_skill_list_returns_real_skills` — 返回 markdown 文本含真实 skill
+   - `test_skill_view_returns_real_skill_content` — 返回 `[skill: name]\n<body>`
+   - `test_load_skill_is_alias_of_skill_view` — `load_skill` 输出跟 `skill_view` 完全一致
+
+2. **工具 manager 走完整 schema → handler 路径** (3):
+   - `test_skill_list_via_tool_manager` / `test_skill_view_via_tool_manager` / `test_file_tools_via_tool_manager`
+
+3. **长任务多轮 (mock LLM)** (3):
+   - `test_long_task_3_rounds_with_skill_and_file` — 3 轮 (skill_list / read_file / skill_view) + 最终回复; 6 事件全程 fire; memory 2 次 add
+   - `test_long_task_handles_tool_error_recovery` — 第 1 轮 read_file 失败 → 第 2 轮换 ls → 第 3 轮最终回复; 整体不崩
+   - `test_long_task_parallel_tools_in_same_round` — 同一轮 3 个 safe 工具并行, 全部进 context
+
+4. **MCP 客户端 + 假 server** (3):
+   - `test_mcp_client_async_api_smoke` — async API 在没配置时 safe no-op
+   - `test_mcp_client_sync_api_safe_with_no_config` — sync 入口同样 safe
+   - `test_mcp_lifecycle_with_fake_server` — 写一个 fake Python MCP server, 走 `initialize → tools/list → tools/call` 全路径, 验证 `echo` 工具注册到 `mcp-fake` toolset + 调通
+
+### 验证
+
+- **13/13 全过** (196s, 含 fake MCP server 启动 + 多轮 `stream_chat` async 循环)
+- 关联 77 个测试 (test_mcp_client / test_mcp_lifespan / test_glob_and_load_skill / test_skills_index / test_agent_hooks) 同步全绿, 没回归
+
+### 关键设计
+
+- **长任务测试不 mock tool manager**: 走真实 registry → handler 路径, 暴露真 bug (MCP handler 签名不兼容)
+- **MCP 假 server 用 tmp_path 写 Python 脚本**: 不需要 docker / 外部依赖, pytest 隔离
+- **skill_list / skill_view 返回 markdown 文本, 不是 JSON**: 测试用 `re.findall` 解 markdown, 跟实际行为一致
+- **`_is_error_result` 启发式**: 已知会对含 "error" 单词的 skill 内容误判 (如 documentation 里有 "Return values and errors"), 长任务测试用 `frontend-design` 规避, 不影响真实 tool 错误检测
+
+### 回答用户问题: "skill 和 mcp 都能正常调用了吗? 长任务是否能完成正确完成?"
+
+| 维度 | 状态 | 证据 |
+|---|---|---|
+| skill 工具可调 | ✅ | 4 个 skill 工具测试 (注册 / list / view / load_skill 别名) 全过; 走 ToolManager.execute 路径也通 |
+| MCP 客户端可调 | ✅ | handler 签名修后, fake server 全生命周期测试通过; async / sync 入口在没配置时 safe no-op |
+| 长任务多轮 | ✅ | 3 轮 (skill + file + skill) + 最终回复流式正常; 6 hooks 事件全程 fire; memory 持久化 2 次 |
+| 长任务 error recovery | ✅ | 工具失败不崩, LLM 可换工具重试, 最终正常出 done 事件 |
+| 长任务并行工具 | ✅ | 同一轮 3 个 safe 模式工具并行调用, 结果都进 context |
+

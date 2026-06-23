@@ -143,6 +143,12 @@ class Team(BaseModel):
         self, idea: str, n_round: int = 5, send_to: str = ""
     ) -> AsyncGenerator[TeamMessage, None]:
         """
+        ⚠️ DEPRECATED (W4-20): round 轮次驱动, 由 Team 主循环管理 round,
+        已被 run_v2_stream() 取代. run_v2_stream() 走 Scheduler 事件驱动,
+        支持 Agent 主动 claim 任务 / 监听其他 Agent 完成 / 死信处理等.
+        3 个月内迁移完成 (目标: 2026-09-22).
+        调用方: 仅有 backend/app/api/hermes_routes.py 的旧 debate endpoint
+        仍直接用这个, 新代码请用 run_v2_stream().
         流式运行团队协作流程，每生成一条消息立即 yield。
 
         Pipeline/图路由模式：按连接图 + watch_actions 自动路由，多 action 角色自主推进

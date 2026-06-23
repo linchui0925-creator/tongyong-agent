@@ -1,0 +1,4 @@
+# Terminal 黑名单 regex (P2-4 W4-20 热加载)
+# 在此追加需要禁止的正则, 一行一个. 注释用 # 开头.
+# 已在内置黑名单: rm -rf / / sudo / curl|sh / wget|sh / > /etc/ / mkfs / dd of=/dev/ / fork bomb
+# 此文件为空 = 仅用内置黑名单.

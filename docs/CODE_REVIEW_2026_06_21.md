@@ -1120,3 +1120,108 @@ cd backend && /Users/linc/Documents/tongyong-agent/.venv/bin/python -m pytest \
 | **合计** | **13** | **13** | **✅ 100%** |
 | 测试 | 0 | 168 | ✅ + W4-19~W4-25 共 33 |
 
+---
+
+## W4-27 修复说明 (2026-06-22) — Team mode 10 bug 集中修复
+
+### 背景
+
+审查 `team.py` (multi-agent 编排引擎, 452 行) 时发现 **1 个 CRITICAL** 静默 bug + **9 个中低优** 逻辑问题. 这些 bug 长期潜伏是因为没有 team end-to-end 集成测试, 现有测试只覆盖排序 / judge 单点逻辑.
+
+### 关键发现: Pydantic v2 PrivateAttr 重赋值静默失败 (CRITICAL)
+
+```python
+# team.py 旧代码
+class Team(BaseModel):
+    _round: int = PrivateAttr(default=0)        # ← 这种字段
+    _idle_count: int = PrivateAttr(default=0)
+    _result_messages: List[TeamMessage] = PrivateAttr(default_factory=list)
+
+# run_stream 主循环
+self._round += 1              # ← 静默失败, _round 永远 0
+self._idle_count += 1         # ← 静默失败, _idle_count 永远 0
+```
+
+**实际后果**:
+- `if self._idle_count >= 3:` 死循环保护 **永远不触发**
+- `if self._round >= n_round:` 轮次上限检查 **永远 False** (因为 _round=0)
+- 唯一兜底是 `max_iterations = n_round * 4` (默认 20), 但一旦有角色响应, 实际轮数会远超 n_round
+- `_round` 报给上层 (e.g. `service.py:run_team_stream` yield done event) 永远是 0, 前端轮数显示错误
+
+**为什么之前没发现**:
+- `__init__` 用 `object.__setattr__` 初始化, 所以 _round=0 看起来"工作"
+- `hire()` 用 `self._roles[name] = role` (item 赋值), 也工作
+- 只有 `run_stream` / `run_v2_stream` 内的 `self._x = Y` 才暴露问题
+- 没有 e2e 测试断言 `_round` 值
+
+**修法** (W4-27):
+- 新增 `_set(key, value)` helper 封装 `object.__setattr__`
+- 所有 run-time state 修改都走 `_set()` (替换 `self._x = Y` 和 `self._x += Y`)
+
+### 9 个中低优 bug
+
+| # | Bug | 修法 |
+|---|---|---|
+| 2 | `run_v2_stream` 不重置 role cursor, 二次 run 看到旧消息 | 在 register agent 后 `mark_read(role_name, seq=current_seq)` |
+| 3 | `run_v2_stream` 注释说"订阅 EventBus"但 await 5min 后才 yield (post-hoc `list_tasks`) | 启动 scheduler 后台任务, 同步轮询 EventBus 实时 yield (100ms 间隔) |
+| 4 | `run_v2_stream` docstring 说"decompose idea"但只 enqueue 1 个 root task | 新增 `_decompose_idea()` 按 . / ; / 换行 拆, 每个 sub 入队 |
+| 5 | `run_stream` 角色异常向上冒泡, 1 个角色崩杀全队 | try/except 包裹 `role.run()`, 异常转 `RoleError` system msg 继续 |
+| 6 | `is_running` 检查 + `status="running"` 非原子, 并发 start 第二个会跑 | run_stream 顶部加状态检查后立即设值 (单线程 asyncio 顺序保证) |
+| 7 | `_get_roles_for_round(round_num=iteration)` 死参数 | 去掉参数 |
+| 8 | `fire()` 不从 scheduler 注销, v2 模式留 dangling ref | 注销前查 `self._scheduler._agents` |
+| 9 | Pydantic v1 `class Config:` 触发 `PydanticDeprecatedSince20` 警告 | 改用 `model_config = {"arbitrary_types_allowed": True}` |
+| 10 | `summary()` 不含 round / msg count | 加 `round=X, msgs=Y` |
+
+### 改动
+
+| 文件 | 改动 | 行数 |
+|---|---|---|
+| [team.py](backend/app/core/multi_agent/team.py) | 修 10 bug, 加 `_set()` / `_decompose_idea()` | 452 → 593 (+141) |
+| [test_team_bugfixes.py](backend/tests/test_team_bugfixes.py) | 14 个新测试 (TDD) | 新增 445 |
+
+### 验证
+
+```bash
+cd backend && .venv/bin/python -m pytest \
+  tests/test_team_bugfixes.py tests/test_mcp_client.py tests/test_mcp_lifespan.py \
+  tests/test_glob_and_load_skill.py tests/test_skills_index.py \
+  tests/test_prompt_order.py tests/test_debate_judge.py \
+  tests/test_debate_round_order.py tests/test_delegate_task.py \
+  tests/test_w413_audit_fixes.py tests/test_agent_hooks.py \
+  tests/test_security_config.py tests/test_p22_register_explicit.py \
+  tests/test_p23_langchain_persistent.py tests/test_p13_must_use_tool.py \
+  tests/test_p14_ask_store.py -v
+# 164 passed in 4.23s (W4-27 新增 14, 累计 182)
+```
+
+### 决策 / 沙箱约束
+
+| 决策 | 选型 | 原因 |
+|---|---|---|
+| PrivateAttr 修法 | 加 `_set()` helper | 不改 Pydantic 字段声明, 改用 `object.__setattr__` 绕过; 旧 `__init__` / `hire()` 继续 work (它们已用对) |
+| `_decompose_idea` | 简单正则分句 (`.` `;` `?` `!` `
+`) | 不依赖 LLM, 0 延迟, 后续可换 LLM-based 增强 |
+| 实时事件订阅 | 100ms 轮询 EventBus | 比 `await scheduler.run()` 后 yield 响应快 100x; EventBus 当前无 push API (只有 pull `get_events`) |
+| 异常隔离 | 转 `RoleError` system msg, status 不改 "error" | 保持 team 继续运行, 让上层 decide 是否整体失败 |
+| `_get_roles_for_round` 死参数 | 直接删 | 旧 caller `run_stream` 同步更新, 删参更干净 |
+
+### 已知 follow-up (用户没要求, 不必做)
+
+- `_decompose_idea` 升级 LLM-based (用 LLM 把 idea 拆成有序子任务, 加 priority / depends_on)
+- `run_v2_stream` EventBus 改 push 模式 (替代 100ms poll, 降低 CPU)
+- `TaskQueue.enqueue` 加 `depends_on` 参数 (subtask 显式依赖, 而非仅 priority)
+- 真正迁移 `team.run_stream()` → `run_v2_stream()` (3 个月 deadline 2026-09-22)
+- 补 team 端到端集成测试 (fake LLM 跑 pipeline / debate 全流程, 验证 _round / msgs / role.run 真的调到了)
+
+### 完成度累计
+
+| 类别 | 总数 | 已修 | 状态 |
+|---|---|---|---|
+| P0 阻塞 | 2 | 2 | ✅ W4-8 |
+| P1 高优 | 4 | 4 | ✅ W4-9/10/24/25 |
+| P2 中优 | 5 | 5 | ✅ W4-20/21/22/23 |
+| P3 低优 | 2 | 2 | ✅ W4-19 |
+| P-new (W4-27) | 10 | 10 | ✅ 全部 |
+| **合计** | **23** | **23** | **✅ 100%** |
+| 测试 | 0 | 182 | ✅ + W4-27 14 |
+

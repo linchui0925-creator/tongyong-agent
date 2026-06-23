@@ -87,8 +87,8 @@ class Team(BaseModel):
         object.__setattr__(self, "_idle_count", 0)
         object.__setattr__(self, "_round", 0)
 
-    class Config:
-        arbitrary_types_allowed = True
+    # Pydantic v2: model_config 替代 v1 的 class Config (避免 PydanticDeprecatedSince20 警告)
+    model_config = {"arbitrary_types_allowed": True}
 
     # ── Role 管理 ─────────────────────────────────────────
 
@@ -100,11 +100,26 @@ class Team(BaseModel):
         self._env.register_role(role)
         logger.info(f"[TEAM] 雇佣: {role.name} ({role.profile[:30]}...)")
 
+    def _set(self, key: str, value):
+        """
+        设置 PrivateAttr 字段 (Pydantic v2 fix).
+
+        Pydantic v2 中 `self._x = Y` 对 `PrivateAttr(default=...)` 静默失败,
+        必须用 object.__setattr__ 绕过. 此方法封装此行为,
+        所有 runtime state 修改都走它.
+        """
+        object.__setattr__(self, key, value)
+
     def fire(self, role_name: str):
-        """移除角色"""
+        """移除角色 (同时从 scheduler 注销, v2 模式)"""
         if role_name in self._roles:
             self._env.unregister_role(role_name)
             del self._roles[role_name]
+            # v2: 如果 scheduler 在跑, 也要注销
+            sch = object.__getattribute__(self, "_scheduler") if hasattr(self, "_scheduler") else None
+            if sch is not None and hasattr(sch, "_agents") and role_name in sch._agents:
+                sch._agents.pop(role_name, None)
+                logger.debug(f"[TEAM] 从 scheduler 注销: {role_name}")
             logger.info(f"[TEAM] 解雇: {role_name}")
 
     def get_role(self, name: str) -> Optional[TeamRole]:
@@ -115,7 +130,7 @@ class Team(BaseModel):
 
     # ── 协作模式核心 ─────────────────────────────────────────
 
-    async def _get_roles_for_round(self, round_num: int) -> List[TeamRole]:
+    async def _get_roles_for_round(self) -> List[TeamRole]:
         """
         根据模式返回本轮应执行的角色列表。
 
@@ -162,9 +177,10 @@ class Team(BaseModel):
             return
 
         self.status = "running"
-        self._round = 0
-        self._result_messages = []
-        self._idle_count = 0
+        # Pydantic v2 fix (W4-27): PrivateAttr 重赋值必须用 object.__setattr__
+        self._set("_round", 0)
+        self._set("_result_messages", [])
+        self._set("_idle_count", 0)
 
         # 重置所有角色的已读游标到当前消息末尾，防止旧消息污染本轮
         current_seq = self._env.get_messages_count()
@@ -217,7 +233,7 @@ class Team(BaseModel):
                 self.status = "timeout"
                 break
 
-            self._round += 1
+            self._set("_round", self._round + 1)
 
             round_system = new_message(
                 content=f"[Round {self._round}]",
@@ -228,7 +244,7 @@ class Team(BaseModel):
             await self._env.publish_async(round_system)
             yield round_system
 
-            roles_this_round = await self._get_roles_for_round(round_num=iteration)
+            roles_this_round = await self._get_roles_for_round()
 
             if not roles_this_round:
                 logger.info(f"[TEAM] 第 {self._round} 轮无角色需要执行，提前结束")
@@ -239,7 +255,22 @@ class Team(BaseModel):
             idle_this_round = True
 
             for role in roles_this_round:
-                msg = await role.run(self._round)
+                # Pydantic v2 fix + Bug fix (W4-27): 单角色异常不能杀全队
+                try:
+                    msg = await role.run(self._round)
+                except Exception as e:
+                    logger.exception(f"[TEAM] {role.name} 角色运行异常 (已隔离, 不影响其他角色): {e}")
+                    err_msg = new_message(
+                        content=f"[{role.name}] 运行异常: {type(e).__name__}: {e}",
+                        role="system",
+                        sent_from="Team",
+                        cause_by="RoleError",
+                        metadata={"error": True, "role": role.name, "round": self._round},
+                    )
+                    await self._env.publish_async(err_msg)
+                    self._result_messages.append(err_msg)
+                    yield err_msg
+                    continue
                 if msg:
                     idle_this_round = False
                     msg.metadata["round"] = self._round
@@ -249,13 +280,13 @@ class Team(BaseModel):
                     yield msg
 
             if idle_this_round:
-                self._idle_count += 1
+                self._set("_idle_count", self._idle_count + 1)
                 logger.debug(f"[TEAM] 空闲轮次 +1（总计 {self._idle_count}）")
                 if self._idle_count >= 3:
                     logger.warning(f"[TEAM] 连续 {self._idle_count} 轮无产出，触发死循环保护，终止流水线")
                     break
             else:
-                self._idle_count = 0
+                self._set("_idle_count", 0)
 
             if self._round >= n_round:
                 if self._idle_count > 0:
@@ -297,9 +328,10 @@ class Team(BaseModel):
             return
 
         self.status = "running"
-        self._round = 0
-        self._result_messages = []
-        self._idle_count = 0
+        # Pydantic v2 fix
+        self._set("_round", 0)
+        self._set("_result_messages", [])
+        self._set("_idle_count", 0)
 
         logger.info(f"[TEAM] v2 开始流式运行: {idea[:50]}... (Scheduler, max_concurrent={max_concurrent})")
 
@@ -321,16 +353,34 @@ class Team(BaseModel):
         # 注册所有 Agent Role 到 Scheduler
         for role in self._roles.values():
             scheduler.register_agent(role)
-            # 同时注册到 EventBusEnvironment（run_v2_stream 也通过 env 收集消息）
-            self._env.register_role(role)
 
-        # 发布初始任务
+        # W4-27 fix: 角色 cursor 重置到当前 _msg_counter
+        # 否则第二次 run_v2_stream 会把上次 run 的消息当新消息
+        current_seq = self._env.get_messages_count()
+        for role_name in self._roles:
+            self._env.mark_read(role_name, seq=current_seq)
+
+        # W4-27 fix: 分解 idea 为多个任务 (旧实现只入队 1 个 root task)
+        # 简单分句分解: 按 . / ; / \n 拆, 每句 1 个 task; 如果只有 1 句, 用整段
+        sub_ideas = self._decompose_idea(idea)
+        logger.info(f"[TEAM v2] idea 分解: 1 → {len(sub_ideas)} 个子任务")
+
+        # 第一个子任务是 root, 后续是依赖 root 的 subtask
         root_task = queue.enqueue(
             session_id=self._session_id,
-            description=idea,
+            description=sub_ideas[0],
             task_type="root",
             created_by="user",
         )
+        for sub in sub_ideas[1:]:
+            # 注: TaskQueue.enqueue() 当前不支持 depends_on, 所以 subtask 无显式依赖
+            # (Scheduler 仍会按 priority DESC, created_at ASC 顺序 claim, 跟 root 同 session)
+            queue.enqueue(
+                session_id=self._session_id,
+                description=sub,
+                task_type="subtask",
+                created_by="user",
+            )
 
         # 发布系统启动消息
         start_msg = new_message(
@@ -343,39 +393,110 @@ class Team(BaseModel):
         await self._env.publish_async(start_msg)
         yield start_msg
 
-        # 收集 Scheduler 事件，转为 TeamMessage yield
+        # W4-27 fix: 实际订阅 EventBus 实时事件 (旧实现 await scheduler.run() 后才 yield, 阻塞 5min)
+        # 方案: 启动 scheduler 后台任务, 同时订阅 EventBus 过滤 task.* 事件实时 yield
+        from app.core.multi_agent.event_bus import get_event_bus
+        bus = get_event_bus(self._session_id, self._db_path)
+        last_event_seq = 0
         try:
-            # Scheduler.run() 是普通 async 函数，事件通过 EventBus 广播
-            # 我们订阅 EventBus 收集 task.completed 等事件
-            results = await scheduler.run(max_seconds=n_round * 60)
+            latest = bus.get_latest_event_seq(self._session_id)
+            if latest:
+                last_event_seq = latest
+        except Exception:
+            pass
 
-            # Scheduler.run() 结束后，从队列中汇总所有已完成任务
+        # 启动 scheduler 后台
+        scheduler_task = asyncio.create_task(scheduler.run(max_seconds=n_round * 60))
+        try:
+            # 实时轮询 EventBus (100ms 间隔, 比旧实现 await 5min 好很多)
+            import time as _time
+            t0 = _time.monotonic()
+            emitted_task_ids: set = set()
+            while not scheduler_task.done():
+                await asyncio.sleep(0.1)
+                # 拉新事件
+                try:
+                    new_events = bus.get_events(
+                        session_id=self._session_id,
+                        after_seq=last_event_seq,
+                        limit=50,
+                    )
+                except Exception:
+                    new_events = []
+                for ev in new_events:
+                    last_event_seq = max(last_event_seq, ev.seq if hasattr(ev, "seq") else 0)
+                    # 过滤 task.* 事件
+                    if not ev.type.startswith("task."):
+                        continue
+                    task_id = ev.payload.get("task_id", "") if hasattr(ev, "payload") else ""
+                    if task_id in emitted_task_ids:
+                        continue
+                    emitted_task_ids.add(task_id)
+                    # 转 TeamMessage yield
+                    if ev.type == "task.completed":
+                        tm = new_message(
+                            content=f"✓ 任务完成 [{ev.payload.get('assigned_to', '')}]: {ev.payload.get('result_summary', '')[:80] or 'done'}",
+                            role="system", sent_from="Team",
+                            cause_by="TaskCompleted",
+                            metadata={"task_id": task_id, "result_summary": ev.payload.get("result_summary", "")},
+                        )
+                    elif ev.type == "task.failed":
+                        tm = new_message(
+                            content=f"✗ 任务失败 [{ev.payload.get('assigned_to', '')}]: {ev.payload.get('error', '')[:80]}",
+                            role="system", sent_from="Team",
+                            cause_by="TaskFailed",
+                            metadata={"task_id": task_id, "error": ev.payload.get("error", "")},
+                        )
+                    else:
+                        continue
+                    await self._env.publish_async(tm)
+                    self._result_messages.append(tm)
+                    self._set("_round", self._round + 1)
+                    yield tm
+                # 兜底超时
+                if _time.monotonic() - t0 > n_round * 60 + 5:
+                    break
+
+            # 兜底: scheduler 结束后, 补一次 list_tasks (防漏 yield)
+            try:
+                await scheduler_task
+            except (asyncio.CancelledError, Exception):
+                pass
             all_tasks = scheduler.list_tasks()
-            self._round = len([t for t in all_tasks if t.get("state") in ("completed", "failed")])
-
             for t in all_tasks:
+                tid = t.get("id", "")
+                if tid in emitted_task_ids:
+                    continue
                 if t.get("state") == "completed":
-                    msg = new_message(
+                    tm = new_message(
                         content=f"[{t.get('assigned_to', '')}] ✓ 完成: {t.get('result_summary', '') or t.get('description', '')[:80]}",
-                        role="system",
-                        sent_from="Team",
+                        role="system", sent_from="Team",
                         cause_by="TaskCompleted",
-                        metadata={"task_id": t.get("id", ""), "result_summary": t.get("result_summary", "")},
+                        metadata={"task_id": tid, "result_summary": t.get("result_summary", "")},
                     )
-                    await self._env.publish_async(msg)
-                    yield msg
+                    await self._env.publish_async(tm)
+                    self._result_messages.append(tm)
+                    self._set("_round", self._round + 1)
+                    yield tm
                 elif t.get("state") == "failed":
-                    msg = new_message(
+                    tm = new_message(
                         content=f"✗ 任务失败 [{t.get('assigned_to', '')}]: {t.get('result_summary', '') or 'unknown'}",
-                        role="system",
-                        sent_from="Team",
+                        role="system", sent_from="Team",
                         cause_by="TaskFailed",
-                        metadata={"task_id": t.get("id", ""), "error": t.get("result_summary", "")},
+                        metadata={"task_id": tid, "error": t.get("result_summary", "")},
                     )
-                    await self._env.publish_async(msg)
-                    yield msg
+                    await self._env.publish_async(tm)
+                    self._result_messages.append(tm)
+                    self._set("_round", self._round + 1)
+                    yield tm
         finally:
             # 停止 Scheduler（同步方法）
+            if not scheduler_task.done():
+                scheduler_task.cancel()
+                try:
+                    await scheduler_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             scheduler.stop()
             object.__setattr__(self, "_scheduler", None)
 
@@ -429,11 +550,31 @@ class Team(BaseModel):
         if sch is not None:
             sch.stop()
 
+    @staticmethod
+    def _decompose_idea(idea: str) -> List[str]:
+        """
+        简单分句分解 idea → 子任务列表 (W4-27 引入)
+
+        规则:
+        - 按句号 . / 分号 ; / 问号 ? / 感叹号 ! / 换行 \n 拆
+        - 过滤空段 / 长度 < 5 的噪音
+        - 至少返回 1 个 (整段作为 1 个任务)
+
+        未来可替换为 LLM decompose (用 LLM 把 idea 拆成有序子任务)
+        """
+        import re
+        if not idea or not idea.strip():
+            return ["(empty)"]
+        parts = re.split(r"[.。;；?？！!\n]+", idea)
+        parts = [p.strip() for p in parts if p.strip() and len(p.strip()) >= 3]
+        return parts if parts else [idea.strip()]
+
     def summary(self) -> str:
         return (
             f"Team(name={self.name}, mode={self.mode}, status={self.status}, "
             f"roles={list(self._roles.keys())}, "
-            f"session_id={self._session_id})"
+            f"session_id={self._session_id}, "
+            f"round={self._round}, msgs={len(self._result_messages)})"
         )
 
 

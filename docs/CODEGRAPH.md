@@ -15,6 +15,8 @@
 > 📝 W4-13 修复 (2026-06-21): 审计发现 3 处连带 bug (heuristic 多段只取第一 + budget 一次性 + skipped 路径污染), 详见 [CODE_REVIEW_2026_06_21.md](CODE_REVIEW_2026_06_21.md) §P1 节
 > 📝 W4-15 工具 (2026-06-22): 新增 `glob` 工具 (按模式跨目录匹配, 跳 _PRUNE_DIRS) + `load_skill` 别名 (指向 skill_view, 兼容用户熟悉的 Anthropic 风格命名)
 > 📝 W4-14 修复 (2026-06-22): MCP 客户端 4 处 bug — 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 详见末尾 W4-14 节
+> 📝 W4-16 引入 (2026-06-22): 借鉴 shareAI-lab/learn-claude-code s04_hooks 模式, agent.py 循环外行为 (step_callback / 工具 tracking / constraint engine / memory save) 全部注册为 hooks, 循环只调 trigger_hooks()
+> 📝 W4-17 扩展 (2026-06-22): hooks 加 2 事件 (PreLLMCall/PostLLMCall) + 3 默认 hook (interim_assistant/audit_log/tool_stats) + chat() + langchain_agent.py 同步提取; 共 6 事件 7 默认 hook, 117 unit + 5 E2E 测试
 
 
 | 维度 | 数值 |
@@ -212,6 +214,8 @@ frontend/src/
 - 🟡 **`terminal` 工具白名单 `_ALLOWED_COMMANDS` 是硬编码列表**（[security_config.py](backend/app/tools/security_config.py)），新增命令需改源码
 - 🟡 **`ask` 工具 `_ask_pending` 是 AgentEngine 实例属性**（[agent.py:117-119](backend/app/core/agent.py)），多 worker 部署（uvicorn workers>1）会丢问题
 - ✅ **[W4-14] MCP 客户端 lifespan 修复**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— 4 处 bug: 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 配套 9 个新测试
+- ✅ **[W4-17] hooks 扩展 6 事件 7 默认 hook**（[agent_hooks.py](backend/app/core/agent_hooks.py)）—— +PreLLMCall/PostLLMCall 事件, +interim_assistant/audit_log/tool_stats 默认 hook; chat() + langchain_agent.py 同步提取
+- ✅ **[W4-16] agent 循环外行为注册为 hooks**（[agent_hooks.py](backend/app/core/agent_hooks.py)）—— 4 事件 (UserPromptSubmit/PreToolUse/PostToolUse/Stop), 25 个测试
 - ✅ **[W4-15] 新增 `glob` 工具'（[glob_tool.py](backend/app/tools/implementations/glob_tool.py)）—— 跨目录模式匹配, 跳 _PRUNE_DIRS (.git/.venv/node_modules/__pycache__), 限制 max_results
 - ✅ **[W4-15] `load_skill` 别名**（[skill_tools.py:243-281](backend/app/tools/implementations/skill_tools.py)）—— 指向 skill_view, 兼容 Anthropic 风格命名, description 注明是 alias
 - 🟢 **watchdog 自愈**（[scripts/dev-watchdog.sh](scripts/dev-watchdog.sh)）W4-5 已修
@@ -270,6 +274,7 @@ codegraph index .              # 强制全量重建
 | `9c1beca` ~ `9a61b38` | W2 行为对齐基线 | stream.py |
 | `9586156` | fix(W4-14): MCP 客户端 lifespan 4 处 bug (跨 loop future / crash hang / shutdown 顺序 / async 入口) | mcp_client.py |
 | `c209ba0` | feat(W4-15): 新增 glob 工具 + load_skill 别名 | glob_tool.py / skill_tools.py |
+| `130ba63` | feat(W4-16): 引入 agent 循环 hooks 模式 (s04_hooks 风格) | agent_hooks.py / agent.py |
 | `8d07486` ~ `e8ba538` | W1 LangChain adapter 集成 + 回归基线 | langchain_adapter / test_phase1 |
 
 ### 6.2 索引命令速查

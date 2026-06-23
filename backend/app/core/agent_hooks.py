@@ -9,8 +9,10 @@ W4-16 (2026-06-22) 引入: 借鉴 learn-claude-code s04_hooks 模式。
   - 加新功能 (如: 自动 git commit / Slack 通知 / 工具白名单) 只需要
     register_hook() 一行, 不再改 agent.py 的 while 循环
 
-4 个事件对应 agent cycle 关键节点:
+6 个事件对应 agent cycle 关键节点 (W4-17 扩展):
   - UserPromptSubmit: 每轮 LLM 调用前
+  - PreLLMCall: LLM API 实际调用前 (可选 hook, 供 budget / cache / 替换用)
+  - PostLLMCall: LLM 返回后, 工具处理前 (interim_assistant 流式回调)
   - PreToolUse: 每个工具调用前 (可返回非 None 阻断)
   - PostToolUse: 每个工具调用后
   - Stop: 循环退出前 (收尾)
@@ -30,6 +32,8 @@ logger = logging.getLogger(__name__)
 # 4 个核心事件 (与 s04_hooks 教学版对齐)
 HOOKS: Dict[str, List[Callable]] = {
     "UserPromptSubmit": [],
+    "PreLLMCall": [],       # W4-17: LLM 调用前 (供 LLM-level 拦截 / 缓存 / budget 检查)
+    "PostLLMCall": [],      # W4-17: LLM 返回后, 工具处理前 (供 interim_assistant 流式回调)
     "PreToolUse": [],
     "PostToolUse": [],
     "Stop": [],
@@ -43,7 +47,7 @@ def register_hook(event: HookEvent, callback: Callable) -> None:
     """注册一个 hook 回调到指定事件
 
     Args:
-        event: 4 个事件之一 (UserPromptSubmit / PreToolUse / PostToolUse / Stop)
+        event: 6 个事件之一 (UserPromptSubmit / PreLLMCall / PostLLMCall / PreToolUse / PostToolUse / Stop)
         callback: 回调函数, 接收一个 ctx dict 参数
                   - UserPromptSubmit: ctx 包含 round, remaining, context, session_id, message, step_callback
                   - PreToolUse: ctx 包含 tool_name, arguments, tool_call_id, context
@@ -225,8 +229,80 @@ def setup_default_hooks(get_time: Callable[[], float] = None) -> None:
                 logger.warning(f"constraint_engine.reset_session failed: {e}")
         return None
 
+    def hook_interim_assistant(ctx: Dict[str, Any]) -> None:
+        """PostLLMCall: LLM 返回后, 把中间文本回调给前端 (interim_assistant_callback)
+
+        W4-17 新增: 把原循环内联 5 行挪到这里, 循环不再关心"流式中间输出怎么发"
+        """
+        cb = ctx.get("interim_assistant_callback")
+        content = ctx.get("llm_content")
+        if cb is None or not content:
+            return None
+        try:
+            cb(content)
+        except Exception as e:
+            logger.warning(f"interim_assistant_callback 执行失败: {e}")
+        return None
+
+    def hook_audit_tool_use(ctx: Dict[str, Any]) -> None:
+        """PostToolUse: 把工具调用写到结构化审计日志
+
+        W4-17 新增: 给 ops 团队用的工具调用审计, JSONL 格式, 写到 AUDIT_LOG_PATH
+        (默认 backend/data/audit/tool_audit.jsonl, 测试时可换)
+        失败不抛: 审计失败不能影响主流程
+        """
+        path = ctx.get("audit_log_path")
+        if path is None:
+            # 默认路径, 但要避免在测试 / 无盘环境下炸
+            try:
+                from pathlib import Path
+                default = Path("backend/data/audit/tool_audit.jsonl")
+                if not default.parent.exists():
+                    return None
+                path = str(default)
+            except Exception:
+                return None
+        import json as _json
+        try:
+            record = {
+                "ts": _time(),
+                "session_id": ctx.get("session_id"),
+                "tool": ctx.get("tool_name"),
+                "args_keys": sorted(list((ctx.get("arguments") or {}).keys())),
+                "is_error": ctx.get("is_error", False),
+                "elapsed": round(ctx.get("elapsed", 0.0), 3),
+                "tool_call_id": ctx.get("tool_call_id"),
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(_json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.debug(f"audit log write failed: {e}")
+        return None
+
+    def hook_tool_stats(ctx: Dict[str, Any]) -> None:
+        """PostToolUse: 累积工具调用统计 (调用次数 / 错误次数 / 累计耗时)
+
+        W4-17 新增: 简单 dict 计数, 暴露给监控 / 调试
+        ctx["tool_stats"] 是个 dict, hook 写入; 调用方读 ctx["tool_stats"]
+        """
+        stats = ctx.get("tool_stats")
+        if stats is None:
+            return None
+        name = ctx.get("tool_name", "unknown")
+        is_error = ctx.get("is_error", False)
+        elapsed = float(ctx.get("elapsed", 0.0) or 0.0)
+        entry = stats.setdefault(name, {"calls": 0, "errors": 0, "total_elapsed": 0.0})
+        entry["calls"] += 1
+        entry["total_elapsed"] += elapsed
+        if is_error:
+            entry["errors"] += 1
+        return None
+
     register_hook("UserPromptSubmit", hook_step_callback)
+    register_hook("PostLLMCall", hook_interim_assistant)
     register_hook("PreToolUse", hook_track_tool_used)
     register_hook("PostToolUse", hook_post_tool_side_effects)
+    register_hook("PostToolUse", hook_audit_tool_use)
+    register_hook("PostToolUse", hook_tool_stats)
     register_hook("Stop", hook_memory_save)
-    logger.info("default agent hooks registered (4 events)")
+    logger.info("default agent hooks registered (6 events, 7 hooks)")

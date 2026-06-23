@@ -45,9 +45,21 @@ def _isolate_hooks():
 
 # ── 1. 基础 API ─────────────────────────────────
 
-def test_hooks_registry_has_four_events():
-    """HOOKS 字典必须包含 4 个核心事件 (s04_hooks 教学版)"""
-    assert set(HOOKS.keys()) == {"UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+def test_hooks_registry_has_six_events():
+    """HOOKS 字典必须包含 6 个核心事件 (W4-17 加了 PreLLMCall / PostLLMCall)"""
+    assert set(HOOKS.keys()) == {
+        "UserPromptSubmit", "PreLLMCall", "PostLLMCall",
+        "PreToolUse", "PostToolUse", "Stop",
+    }
+
+
+def test_setup_default_hooks_registers_six():
+    """setup_default_hooks 注册 6 个事件各至少 1 个 hook (W4-17)"""
+    setup_default_hooks()
+    listed = list_hooks()
+    for ev in ["UserPromptSubmit", "PostLLMCall", "PreToolUse", "PostToolUse", "Stop"]:
+        assert ev in listed
+        assert len(listed[ev]) >= 1, f"{ev} 应当至少注册 1 个 hook"
 
 
 def test_register_hook_appends_to_event():
@@ -365,3 +377,133 @@ def test_pretooluse_block_semantic():
     # read_file 不阻断
     result = trigger_hooks("PreToolUse", {"tool_name": "read_file"})
     assert result is None
+
+
+# ── 7. W4-17 新事件 (PreLLMCall / PostLLMCall) ──────────
+
+@pytest.mark.asyncio
+async def test_post_llm_call_default_hook_calls_interim_callback():
+    """W4-17: PostLLMCall hook 默认实现调用 interim_assistant_callback"""
+    setup_default_hooks()
+    called_with = []
+    def interim_cb(content):
+        called_with.append(content)
+    await trigger_hooks_async("PostLLMCall", {
+        "llm_content": "思考中...",
+        "interim_assistant_callback": interim_cb,
+    })
+    assert called_with == ["思考中..."]
+
+
+@pytest.mark.asyncio
+async def test_post_llm_call_default_hook_handles_none():
+    """PostLLMCall hook 在 callback=None 或 content 为空时是 no-op"""
+    setup_default_hooks()
+    # 不应抛
+    await trigger_hooks_async("PostLLMCall", {
+        "llm_content": None, "interim_assistant_callback": None,
+    })
+    await trigger_hooks_async("PostLLMCall", {
+        "llm_content": "", "interim_assistant_callback": lambda c: None,
+    })
+
+
+@pytest.mark.asyncio
+async def test_post_llm_call_default_hook_catches_exception():
+    """PostLLMCall hook 在 callback 抛错时不传播"""
+    setup_default_hooks()
+    def bad_cb(content): raise RuntimeError("ws closed")
+    # 不应抛
+    await trigger_hooks_async("PostLLMCall", {
+        "llm_content": "x", "interim_assistant_callback": bad_cb,
+    })
+
+
+@pytest.mark.asyncio
+async def test_pre_llm_call_event_fires():
+    """PreLLMCall 事件能正常 trigger (没有默认 hook, 但能 fire)"""
+    calls = []
+    def pre_llm_cb(ctx):
+        calls.append(ctx.get("messages_count"))
+    register_hook("PreLLMCall", pre_llm_cb)
+    await trigger_hooks_async("PreLLMCall", {"messages_count": 42})
+    assert calls == [42]
+
+
+# ── 8. W4-17 新默认 hook: hook_audit_tool_use ──────────
+
+def test_audit_tool_use_writes_jsonl(tmp_path):
+    """W4-17: hook_audit_tool_use 写一行 JSONL 到 audit_log_path"""
+    setup_default_hooks()
+    log_path = str(tmp_path / "audit.jsonl")
+    trigger_hooks("PostToolUse", {
+        "tool_name": "read_file",
+        "arguments": {"path": "/etc/hosts"},
+        "is_error": False,
+        "elapsed": 0.05,
+        "tool_call_id": "tc-1",
+        "session_id": "sess-1",
+        "audit_log_path": log_path,
+    })
+    trigger_hooks("PostToolUse", {
+        "tool_name": "terminal",
+        "arguments": {"command": "ls"},
+        "is_error": True,
+        "elapsed": 1.2,
+        "tool_call_id": "tc-2",
+        "session_id": "sess-1",
+        "audit_log_path": log_path,
+    })
+    import json
+    lines = open(log_path).read().strip().split("\n")
+    assert len(lines) == 2
+    r1 = json.loads(lines[0])
+    r2 = json.loads(lines[1])
+    assert r1["tool"] == "read_file"
+    assert r1["is_error"] is False
+    assert r1["args_keys"] == ["path"]
+    assert r2["tool"] == "terminal"
+    assert r2["is_error"] is True
+    assert r2["elapsed"] == 1.2
+
+
+def test_audit_tool_use_silent_on_missing_path():
+    """audit_log_path 为 None 时不抛, 也不写"""
+    setup_default_hooks()
+    # 不应抛
+    trigger_hooks("PostToolUse", {
+        "tool_name": "x", "audit_log_path": None,
+    })
+
+
+# ── 9. W4-17 新默认 hook: hook_tool_stats ──────────
+
+def test_tool_stats_accumulates_counts():
+    """hook_tool_stats 累积每个工具的调用次数 / 错误次数 / 累计耗时"""
+    setup_default_hooks()
+    stats = {}
+    trigger_hooks("PostToolUse", {
+        "tool_name": "read_file", "is_error": False, "elapsed": 0.1,
+        "tool_stats": stats,
+    })
+    trigger_hooks("PostToolUse", {
+        "tool_name": "read_file", "is_error": True, "elapsed": 0.2,
+        "tool_stats": stats,
+    })
+    trigger_hooks("PostToolUse", {
+        "tool_name": "grep", "is_error": False, "elapsed": 0.3,
+        "tool_stats": stats,
+    })
+    assert stats["read_file"]["calls"] == 2
+    assert stats["read_file"]["errors"] == 1
+    assert abs(stats["read_file"]["total_elapsed"] - 0.3) < 1e-9
+    assert stats["grep"]["calls"] == 1
+    assert stats["grep"]["errors"] == 0
+    assert abs(stats["grep"]["total_elapsed"] - 0.3) < 1e-9
+
+
+def test_tool_stats_no_op_when_ctx_missing():
+    """tool_stats 不在 ctx 时 hook 是 no-op"""
+    setup_default_hooks()
+    # 不应抛
+    trigger_hooks("PostToolUse", {"tool_name": "x"})

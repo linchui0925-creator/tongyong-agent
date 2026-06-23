@@ -28,6 +28,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
+from app.core.agent_hooks import trigger_hooks, trigger_hooks_async
 
 from app.core.base import Message
 from app.core.langchain_callbacks import SSEStreamCallback
@@ -248,10 +249,19 @@ async def stream_chat_langchain(
             collected_content.append(event.get("content", ""))
         elif event_type == "tool_start":
             tool_name = event.get("tool_name", "")
-            if tool_name not in tools_used:
-                tools_used.append(tool_name)
+            tool_args = event.get("arguments", {})
+            # W4-17: PreToolUse hook (langchain 路径, callback 内)
+            # 同步 trigger: callback 不是 async, 用 sync trigger_hooks
+            trigger_hooks("PreToolUse", {
+                "tool_name": tool_name,
+                "arguments": tool_args,
+                "tool_call_id": event.get("tool_call_id", ""),
+                "context": ctx,
+                "tools_used": tools_used,
+                "session_id": session_id,
+            })
             if tool_name == "terminal":
-                cmd = event.get("arguments", {}).get("command", "")
+                cmd = tool_args.get("command", "")
                 if cmd:
                     commands_executed.append(cmd)
 
@@ -347,8 +357,15 @@ async def stream_chat_langchain(
                 tool_name = event.get("name", "unknown")
                 tool_input = event.get("data", {}).get("input", {})
                 emoji = _get_emoji(tool_name)
-                if tool_name not in tools_used:
-                    tools_used.append(tool_name)
+                # W4-17: PreToolUse hook (langchain astream_events 路径)
+                trigger_hooks("PreToolUse", {
+                    "tool_name": tool_name,
+                    "arguments": tool_input if isinstance(tool_input, dict) else {},
+                    "tool_call_id": "",
+                    "context": ctx,
+                    "tools_used": tools_used,
+                    "session_id": session_id,
+                })
                 if tool_name == "terminal":
                     cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
                     if cmd:
@@ -485,17 +502,27 @@ async def stream_chat_langchain(
     #       只有 stream_chat_langchain() 这条路径漏掉 — 跟 chat() 一样补上。
     # session_id 必须非空 — 早期空 session 走 ephemeral，这里也跳过。
     # W4-3: 写库用 display_text (无 think 段), user 消息保留原文 (用户没说 think)。
+    # W4-17: Stop hook (langchain 路径)
     if session_id:
+        # 把"保存 user/assistant 到 memory_storage"挪到 agent_hooks 注册表
+        # 默认 hook (hook_memory_save) 处理; 这里构造一个 fake context 给 hook 用
+        _ctx_for_hook = ctx if hasattr(ctx, "get_messages") else None
         try:
-            mem = getattr(agent_engine, "memory_storage", None)
-            if mem is not None:
-                await mem.add_message(session_id, "user", message)
-                if display_text:
-                    await mem.add_message(session_id, "assistant", display_text)
-                logger.info(
-                    f"[langchain] persisted 2 messages to session={session_id}, "
-                    f"full_text_len={len(display_text)} (cleaned from {len(full_text)})"
-                )
+            # 注意: langchain 路径没有 self.context, 用 _ctx_for_hook
+            await trigger_hooks_async("Stop", {
+                "context": _ctx_for_hook,
+                "final_response_chunks": [display_text] if display_text else [],
+                "tools_used": tools_used,
+                "commands_executed": commands_executed,
+                "session_id": session_id,
+                "message": message,
+                "memory_storage": getattr(agent_engine, "memory_storage", None),
+                "constraint_engine": getattr(agent_engine, "_constraint_engine", None),
+            })
+            logger.info(
+                f"[langchain] persisted via Stop hook: session={session_id}, "
+                f"display_len={len(display_text)} (cleaned from {len(full_text)})"
+            )
         except Exception as _persist_err:
             logger.error(f"[langchain] 持久化消息失败: {_persist_err}", exc_info=True)
 

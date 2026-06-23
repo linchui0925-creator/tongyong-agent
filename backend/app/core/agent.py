@@ -403,20 +403,45 @@ class AgentEngine:
                     self.context.add_message("assistant", assistant_tc_content)
 
                     for tc in llm_response.tool_calls:
-                        tools_used.append(tc.tool_name)
+                        # W4-17: PreToolUse hook (chat() 路径)
+                        await trigger_hooks_async("PreToolUse", {
+                            "tool_name": tc.tool_name,
+                            "arguments": tc.arguments,
+                            "tool_call_id": tc.tool_call_id,
+                            "context": self.context,
+                            "tools_used": tools_used,
+                            "session_id": session_id,
+                        })
                         emoji = _tool_registry.get_emoji(tc.tool_name)
                         logger.info(f"工具调用: {emoji} {tc.tool_name}({tc.arguments})")
 
                         # 执行工具
+                        import time as _t
+                        _t0 = _t.time()
                         try:
                             tool_result = await tool_mgr.execute(tc.tool_name, tc.arguments)
+                            _err = False
                         except Exception as _tool_exec_err:
                             logger.error(f"工具执行失败 {emoji} {tc.tool_name}: {_tool_exec_err}")
                             tool_result = f"工具执行失败: {_tool_exec_err}"
+                            _err = True
+                        _elapsed = _t.time() - _t0
 
-                        # 记录命令执行
-                        if tc.tool_name == "terminal":
-                            commands_executed.append(tc.arguments.get("command", ""))
+                        # W4-17: PostToolUse hook (chat() 路径)
+                        await trigger_hooks_async("PostToolUse", {
+                            "tool_name": tc.tool_name,
+                            "arguments": tc.arguments,
+                            "result": tool_result,
+                            "is_error": _err,
+                            "elapsed": _elapsed,
+                            "tool_call_id": tc.tool_call_id,
+                            "context": self.context,
+                            "session_id": session_id,
+                            "constraint_engine": self._constraint_engine,
+                            "tools_used": tools_used,
+                            "commands_executed": commands_executed,
+                            "tool_results_for_hermes": [],
+                        })
 
                         # 将工具结果以 JSON 格式追加到上下文（含 tool_call_id 供 DashScope 使用）
                         tool_msg_content = _json.dumps({
@@ -452,8 +477,17 @@ class AgentEngine:
 
         self.context.add_message("assistant", response)
 
-        await self.memory_storage.add_message(session_id, "user", message)
-        await self.memory_storage.add_message(session_id, "assistant", response)
+        # W4-17: Stop hook (chat() 路径)
+        await trigger_hooks_async("Stop", {
+            "context": self.context,
+            "final_response_chunks": [response],
+            "tools_used": tools_used,
+            "commands_executed": commands_executed,
+            "session_id": session_id,
+            "message": message,
+            "memory_storage": self.memory_storage,
+            "constraint_engine": self._constraint_engine,
+        })
 
         if self.llm:
             try:
@@ -1257,12 +1291,15 @@ class AgentEngine:
                     budget.advance()
                     break
 
-                # ── interim_assistant_callback：流式输出中间思考 ──
-                if interim_assistant_callback and llm_response.content:
-                    try:
-                        interim_assistant_callback(llm_response.content)
-                    except Exception as e:
-                        logger.warning(f"interim_assistant_callback 执行失败: {e}")
+                # W4-17: PostLLMCall hook (interim_assistant 流式回调挪到 agent_hooks 注册表)
+                await trigger_hooks_async("PostLLMCall", {
+                    "llm_response": llm_response,
+                    "llm_content": getattr(llm_response, "content", None),
+                    "interim_assistant_callback": interim_assistant_callback,
+                    "context": self.context,
+                    "session_id": session_id,
+                    "round": budget.current_round + 1,
+                })
 
                 # ── 处理工具调用 ──
                 tool_calls_data = [

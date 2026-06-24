@@ -6,6 +6,7 @@
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
@@ -67,13 +68,22 @@ async def _startup_database(app: FastAPI) -> None:
 
 
 async def _startup_llm(app: FastAPI) -> None:
-    """验证 LLM 连接"""
+    """验证 LLM 连接 (P2 增强: 支持 SKIP 跳过 + 5s 快速失败)"""
+    if os.environ.get("SKIP_LLM_VALIDATION") == "1":
+        logger.info("[skip] LLM 启动期验证已跳过 (SKIP_LLM_VALIDATION=1)")
+        return
     engine = app.extra.get("agent_engine") if hasattr(app, "extra") else None
     if not engine or not engine.llm:
         return
     try:
-        is_available = await engine.llm.initialize()
+        # 5s 快速失败: 启动期只验可达性, 不等真实生成
+        import asyncio
+        is_available = await asyncio.wait_for(
+            engine.llm.initialize(), timeout=5.0
+        )
         logger.info(f"LLM连接验证: {'成功' if is_available else '失败'}")
+    except asyncio.TimeoutError:
+        logger.warning("[startup] LLM 验证 5s 超时, 跳过 (chat 时会重试)")
     except Exception as e:
         logger.error(f"LLM连接验证失败: {e}")
 

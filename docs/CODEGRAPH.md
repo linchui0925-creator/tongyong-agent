@@ -26,6 +26,7 @@
 > 📝 W4-24 修复 (2026-06-22): `must_use_tool` 触发词 `.lower()` → `.casefold()` (Unicode 标准); 提取 `MUST_USE_TOOL_TRIGGERS` / `VISIBLE_CHROME_TRIGGERS` 模块常量; 2nd round LLM 仍不用 tool → 显式 fallback 错误
 > 📝 W4-25 修复 (2026-06-22): `_ask_pending` AgentEngine 内存 dict → SQLite store (`app/core/ask_store.py`); 多 worker (uvicorn --workers>1) 部署共享; TTL 1h 自动过期; 11 个测试 (含 multi-process 共享)
 > 📝 W4-27 修复 (2026-06-22): Team mode 10 个 bug 集中修复 (CRITICAL: Pydantic v2 PrivateAttr 静默失败导致 `_round`/`_idle_count` 永远 0, 死循环保护失效); `_decompose_idea()` 替代单 root task; `run_v2_stream` 实际订阅 EventBus 实时事件; per-role 异常隔离; 14 个新测试
+> 📝 **W4-28 修复 (2026-06-23)**: `_startup_llm` 加 `SKIP_LLM_VALIDATION=1` env 跳过 + 5s 快速失败 (`asyncio.wait_for`): 之前外网不通时 120s×3 重试 ≈ 6min 卡死, 现在要么跳过要么 5s 内 fail; 启动 + in-process TestClient 端到端验证: GET /, /health, /ready, /docs, /openapi.json 全 200, POST /api/chat/stream (langchain + legacy 两条路径) SSE 管道通 (`event: start` → `progress` → LLM 调用, sandbox 无外网在 LLM 步失败属预期); 顺手补 `.venv311` 缺失的 `langchain_core` / `langgraph-checkpoint-sqlite` (生产 venv 一直没装, 启动后 chat 直接 ImportError)
 
 
 | 维度 | 数值 |
@@ -223,6 +224,7 @@ frontend/src/
 - 🟡 **`terminal` 工具白名单 `_ALLOWED_COMMANDS` 是硬编码列表**（[security_config.py](backend/app/tools/security_config.py)），新增命令需改源码
 - 🟡 **`ask` 工具 `_ask_pending` 是 AgentEngine 实例属性**（[agent.py:117-119](backend/app/core/agent.py)），多 worker 部署（uvicorn workers>1）会丢问题
 - ✅ **[W4-14] MCP 客户端 lifespan 修复**（[mcp_client.py](backend/app/tools/mcp_client.py)）—— 4 处 bug: 跨 loop future 泄漏 / 进程 crash 时 future hang 60s / shutdown 顺序错乱 / 不接 FastAPI lifespan; 配套 9 个新测试
+- ✅ **[W4-28] 启动期 LLM 验证 5s fast-fail + SKIP env 跳过**（[lifespan.py](backend/app/lifespan.py) `_startup_llm`）—— `asyncio.wait_for(..., 5.0)` 替代无 timeout 调用, 触发 `TimeoutError` 记 warning 继续; `SKIP_LLM_VALIDATION=1` env 跳过整段 (sandbox / air-gap 环境用); 顺带补 `.venv311` 缺的两个包 (`langchain_core` `langgraph-checkpoint-sqlite`)，生产 venv 启动后 `/api/chat/stream` 不再 ImportError
 - ✅ **[W4-27] Team mode 10 bug 集中修复**（[team.py](backend/app/core/multi_agent/team.py) 452→593 行 + 14 测试）—— CRITICAL: Pydantic v2 PrivateAttr 重赋值静默失败 (run_stream `_round`/`_idle_count`/`_result_messages` 全部失效, 死循环保护死), 加 `_set()` helper 封装 `object.__setattr__`; per-role 异常隔离 (1 个角色崩不杀全队); `_decompose_idea()` 把多句 idea 拆成多 task; `run_v2_stream` 实际订阅 EventBus 实时 yield (旧实现 await 5min 后才 yield); role cursor reset / fire unregister scheduler / Pydantic v2 ConfigDict / 死参数 / summary 加 round+msgs
 - ✅ **[W4-25] ask_pending SQLite 持久化**（[ask_store.py](backend/app/core/ask_store.py)）—— 替代 AgentEngine 内存 dict, 多 worker 共享, TTL 1h
 - ✅ **[W4-24] must_use_tool casefold + 2nd fallback**（[agent.py:116-138](backend/app/core/agent.py)）—— `.casefold()` 替代 `.lower()`, 触发词提模块常量, 2nd round LLM 不用 tool → 显式 fallback
@@ -303,6 +305,7 @@ codegraph index .              # 强制全量重建
 | `fe4fb15` | fix(W4-23): langchain_agent checkpointer 恢复 + system 去重 | langchain_agent.py / main.py |
 | `04b43d2` | fix(W4-24): must_use_tool casefold + 2nd round fallback | agent.py (MUST_USE_TOOL_TRIGGERS) |
 | `41f5d49` | fix(W4-25): _ask_pending AgentEngine 内存 dict → SQLite store | ask_store.py / agent.py / ask.py / lifespan.py |
+| (W4-28)   | fix(W4-28): lifespan `_startup_llm` SKIP_LLM_VALIDATION + 5s fast-fail; .venv311 补 langchain_core / langgraph-checkpoint-sqlite | lifespan.py / requirements.txt |
 | (W4-27)   | fix(W4-27): Team mode 10 bug (Pydantic v2 PrivateAttr + per-role exception + decompose + EventBus subscribe) | team.py / test_team_bugfixes.py |
 | `8d07486` ~ `e8ba538` | W1 LangChain adapter 集成 + 回归基线 | langchain_adapter / test_phase1 |
 

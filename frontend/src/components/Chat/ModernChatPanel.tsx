@@ -14,6 +14,8 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useStreamChat } from '../../hooks/useStreamChat';
 import { Message, ContextInfo } from '../../types';
+import { MarkdownContent } from './MarkdownContent';
+import { ThemeSwitcher } from '../Theme/ThemeSwitcher';
 import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
@@ -176,7 +178,7 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
           )}
           {parts.map((p, i) => p.type === 'code'
             ? <CodeBlock key={i} code={p.content} />
-            : <div key={i} className="chat-bubble-text">{p.content}</div>
+            : <MarkdownContent key={i} text={p.content} variant={isUser ? 'user' : 'agent'} />
           )}
           {msg.progressLabel && msg.status === 'streaming' && (
             <div className="chat-bubble-progress">{msg.progressLabel}</div>
@@ -227,6 +229,7 @@ function ChatHeader({ isStreaming, messageCount }: {
         </div>
       </div>
       <div className="chat-header-meta">
+        <ThemeSwitcher />
         <span className="chat-header-count">{messageCount} 条消息</span>
       </div>
     </div>

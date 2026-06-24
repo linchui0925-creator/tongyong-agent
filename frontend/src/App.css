@@ -1,14 +1,22 @@
 /**
- * TongYong Agent — Warm Amber Theme
- * Warm dark palette with amber/orange accents, cozy atmosphere.
+ * TongYong Agent — Global Styles
+ *
+ * 主题系统 (W4-30): 4 套配色 (themes.ts) 通过 ThemeProvider 注入 :root CSS variables
+ * 这里只放:
+ * - 默认 fallback tokens (ThemeProvider 注入前)
+ * - 全局重置 + 字体
+ * - 跨页面共享组件 (btn / input / scrollbar / 动画 / 工具类)
+ *
+ * 实际 chat 面板的样式在 ModernChatPanel.css
  */
 
-/* ========== Fonts ========== */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
 
-/* ========== Design Tokens ========== */
+/* ========== Default tokens (ThemeProvider 启动前 fallback) ========== */
 :root {
-  /* Background — warm dark stone */
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
   --bg-primary:   #1c1917;
   --bg-secondary: #292524;
   --bg-tertiary:  #3f3a36;
@@ -17,19 +25,16 @@
   --bg-inset:     #141110;
   --bg-glass:     rgba(41, 37, 36, 0.85);
 
-  /* Accent — warm amber */
   --accent:       #f59e0b;
   --accent-hover: #fbbf24;
-  --accent-subtle:  rgba(245, 158, 11, 0.15);
-  --accent-border:  rgba(245, 158, 11, 0.35);
+  --accent-subtle: rgba(245, 158, 11, 0.15);
+  --accent-border: rgba(245, 158, 11, 0.35);
 
-  /* Text — warm off-white */
   --text-primary:   #f5f5f4;
   --text-secondary: #d6d3d1;
   --text-tertiary:  #a8a29e;
   --text-muted:     #78716c;
 
-  /* Semantic */
   --success: #84cc16;
   --success-subtle: rgba(132, 204, 22, 0.12);
   --warning: #f59e0b;
@@ -37,30 +42,21 @@
   --danger: #f87171;
   --danger-subtle: rgba(248, 113, 113, 0.12);
 
-  /* Borders */
   --border:       rgba(255, 255, 255, 0.08);
   --border-hover: rgba(255, 255, 255, 0.14);
   --border-light: rgba(255, 255, 255, 0.05);
 
-  /* Spacing */
   --sp-1:  4px;  --sp-2:  8px;  --sp-3:  12px;
-  --sp-4:  16px; --sp-5:  20px; --sp-6:  24px;
-  --sp-8:  32px; --sp-10: 40px; --sp-12: 48px;
+  --sp-4: 16px;  --sp-5:  20px; --sp-6:  24px;
+  --sp-8: 32px;  --sp-10: 40px; --sp-12: 48px;
 
-  /* Radius */
-  --r-sm:  4px;  --r-md:  6px;  --r-lg:  8px;
-  --r-xl:  12px; --r-2xl: 16px;
+  --r-sm: 4px;  --r-md: 6px;   --r-lg:  8px;
+  --r-xl: 12px; --r-2xl: 16px; --r-full: 9999px;
 
-  /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
 
-  /* Font */
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
-
-  /* Transitions */
   --t-fast:   0.12s ease;
   --t-normal: 0.2s ease;
 }
@@ -71,16 +67,17 @@ html, body, #root { height: 100%; overflow: hidden; }
 
 body {
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 400;
   color: var(--text-primary);
   background: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  line-height: 1.5;
+  line-height: 1.55;
+  transition: background 0.25s ease, color 0.25s ease;
 }
 
-/* ========== App Shell ========== */
+/* ========== Layout ========== */
 .app {
   display: flex;
   flex-direction: column;
@@ -88,67 +85,59 @@ body {
   background: var(--bg-primary);
 }
 
-/* ========== Header (thin nav bar) ========== */
 .app-header {
   display: flex;
   align-items: center;
-  height: 40px;
-  padding: 0 var(--sp-4);
+  padding: 0 var(--sp-5);
+  height: 52px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  gap: var(--sp-4);
-  -webkit-app-region: drag;
+  gap: var(--sp-6);
 }
 
 .app-header h1 {
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 600;
-  color: var(--text-secondary);
-  letter-spacing: -0.2px;
-  white-space: nowrap;
-  -webkit-app-region: no-drag;
+  color: var(--text-primary);
+  margin-right: var(--sp-4);
+  letter-spacing: -0.02em;
 }
 
 .app-nav {
   display: flex;
-  gap: 2px;
-  -webkit-app-region: no-drag;
+  gap: var(--sp-1);
 }
 
 .app-nav button {
-  padding: var(--sp-1) var(--sp-3);
+  padding: 6px 14px;
   background: transparent;
   border: none;
-  border-radius: var(--r-sm);
   color: var(--text-tertiary);
-  font-family: var(--font);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  border-radius: var(--r-md);
+  font-family: var(--font);
   transition: all var(--t-fast);
-  letter-spacing: 0.1px;
 }
 
 .app-nav button:hover {
-  color: var(--text-secondary);
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .app-nav button.active {
-  color: var(--accent);
-  background: var(--accent-subtle);
+  background: var(--accent);
+  color: #fff;
 }
 
-/* ========== Body ========== */
 .app-container {
   display: flex;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
 }
 
-/* ========== Sidebar ========== */
 .app-sidebar {
   width: 260px;
   background: var(--bg-secondary);
@@ -156,42 +145,28 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  align-items: stretch;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .sidebar-section {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  align-items: stretch;
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--border-light);
 }
 
-.sidebar-section:last-child {
-  flex: 0 0 auto;
-  border-top: 1px solid var(--border-light);
-  overflow: visible;
-}
-
-/* ========== Main Content ========== */
 .app-main {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
   background: var(--bg-primary);
 }
 
-/* ========== Shared Buttons ========== */
+/* ========== Buttons ========== */
 .btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   font-family: var(--font);
   font-size: 12px;
   font-weight: 500;
@@ -203,10 +178,7 @@ body {
   line-height: 1.5;
 }
 
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-}
+.btn-primary { background: var(--accent); color: #fff; }
 .btn-primary:hover { background: var(--accent-hover); }
 
 .btn-secondary {
@@ -219,22 +191,13 @@ body {
   color: var(--text-primary);
 }
 
-.btn-ghost {
-  background: transparent;
-  color: var(--text-tertiary);
-}
-.btn-ghost:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
+.btn-ghost { background: transparent; color: var(--text-tertiary); }
+.btn-ghost:hover { background: var(--bg-hover); color: var(--text-secondary); }
 
-.btn-danger {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
+.btn-danger { background: var(--danger-subtle); color: var(--danger); }
 .btn-danger:hover { background: var(--danger); color: #fff; }
 
-/* ========== Shared Inputs ========== */
+/* ========== Inputs ========== */
 .input {
   width: 100%;
   padding: var(--sp-2) var(--sp-3);
@@ -251,24 +214,18 @@ body {
 .input::placeholder { color: var(--text-muted); }
 
 /* ========== Scrollbar ========== */
-::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 2px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 3px;
+}
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ========== Animations ========== */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes slideDown {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ========== Utilities ========== */
 .empty-state {
@@ -289,4 +246,6 @@ body {
 }
 @media (max-width: 700px) {
   .app-sidebar { width: 200px; }
+  .app-header h1 { font-size: 16px; }
+  .app-nav button { padding: 6px 10px; font-size: 12px; }
 }

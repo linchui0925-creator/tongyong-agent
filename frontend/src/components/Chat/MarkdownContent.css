@@ -1,0 +1,249 @@
+/**
+ * MarkdownContent.css — chat-friendly markdown 渲染 (W4-30)
+ * 配色用 theme variables, 在 user (深气泡) 和 agent (浅气泡) 下都好看
+ */
+
+.md-content {
+  font-family: var(--font, sans-serif);
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: inherit;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+/* ── 段落 ── */
+.md-content .md-p {
+  margin: 0;
+}
+.md-content .md-p + .md-p { margin-top: 8px; }
+
+/* 段落之间间隔 (当内容有多个 block 时) */
+.md-content > * + * { margin-top: 10px; }
+.md-content .md-p:first-child { margin-top: 0; }
+.md-content > *:last-child { margin-bottom: 0; }
+
+/* ── 标题 ── */
+.md-content .md-h1,
+.md-content .md-h2,
+.md-content .md-h3,
+.md-content .md-h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.md-content .md-h1 { font-size: 1.25em; margin-top: 4px; }
+.md-content .md-h2 { font-size: 1.15em; margin-top: 4px; }
+.md-content .md-h3 { font-size: 1.05em; margin-top: 2px; }
+.md-content .md-h4 { font-size: 1em; }
+
+/* ── 列表 ── */
+.md-content .md-ul,
+.md-content .md-ol {
+  margin: 0;
+  padding-left: 1.4em;
+}
+.md-content .md-li {
+  margin: 2px 0;
+}
+.md-content .md-li::marker {
+  color: var(--text-tertiary, #a8a29e);
+  font-size: 0.9em;
+}
+.md-content .md-li > .md-p {
+  margin: 0;
+}
+.md-content .md-li + .md-li {
+  margin-top: 4px;
+}
+
+/* ── 行内 ── */
+.md-content .md-strong {
+  font-weight: 600;
+  color: inherit;
+}
+.md-content .md-em {
+  font-style: italic;
+}
+.md-content .md-del {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+/* ── 链接 ── */
+.md-content .md-link {
+  color: var(--accent, #f59e0b);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.12s ease;
+  word-break: break-all;
+}
+.md-content .md-link:hover {
+  border-bottom-color: currentColor;
+}
+
+/* User 气泡用白底深色, 链接用浅色 */
+.md-content--user .md-link {
+  color: #BFDBFE;
+}
+.md-content--user .md-link:hover {
+  border-bottom-color: #BFDBFE;
+}
+
+/* ── 引用 ── */
+.md-content .md-blockquote {
+  margin: 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent, #f59e0b);
+  background: rgba(0, 0, 0, 0.20);
+  border-radius: 0 6px 6px 0;
+  color: inherit;
+  font-style: italic;
+  opacity: 0.92;
+}
+.md-content .md-blockquote > *:first-child { margin-top: 0; }
+.md-content .md-blockquote > *:last-child { margin-bottom: 0; }
+
+.md-content--user .md-blockquote {
+  background: rgba(0, 0, 0, 0.20);
+  border-left-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── 水平线 ── */
+.md-content .md-hr {
+  border: none;
+  border-top: 1px solid currentColor;
+  opacity: 0.15;
+  margin: 8px 0;
+}
+
+/* ── 行内 code ── */
+.md-content .md-code-inline {
+  background: rgba(0, 0, 0, 0.30);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.88em;
+  word-break: break-all;
+}
+
+.md-content--user .md-code-inline {
+  background: rgba(0, 0, 0, 0.30);
+  border-color: rgba(255, 255, 255, 0.20);
+  color: #FFFFFF;
+}
+
+/* ── 代码块 ── */
+.md-content .md-code-block {
+  position: relative;
+  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.40);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.md-content--user .md-code-block {
+  background: rgba(0, 0, 0, 0.30);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.md-content .md-code-pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #E5E7EB;
+}
+
+.md-content .md-code-pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  white-space: pre;
+}
+
+.md-content .md-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.75);
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: var(--font, sans-serif);
+  transition: all 0.12s ease;
+  z-index: 1;
+}
+
+.md-content .md-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+/* ── 表格 ── */
+.md-content .md-table-wrap {
+  overflow-x: auto;
+  margin: 4px 0;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+}
+
+.md-content--user .md-table-wrap {
+  border-color: rgba(255, 255, 255, 0.20);
+}
+
+.md-content .md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+
+.md-content .md-th,
+.md-content .md-td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: top;
+}
+
+.md-content .md-th {
+  background: rgba(0, 0, 0, 0.30);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md-content .md-tbody .md-tr:last-child .md-td {
+  border-bottom: none;
+}
+
+.md-content .md-tbody .md-tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ── GFM: Task list ── */
+.md-content input[type="checkbox"] {
+  margin-right: 6px;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+/* ── 选区高亮 ── */
+.md-content ::selection {
+  background: var(--accent-subtle, rgba(245, 158, 11, 0.30));
+}
+
+.md-content--user ::selection {
+  background: rgba(255, 255, 255, 0.25);
+}

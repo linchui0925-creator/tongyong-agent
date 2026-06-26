@@ -49,6 +49,9 @@ frontend/layout-*.png
 
 # Docs (allow only specific)
 *.md
+!README.md
+!USER.md
+!AGENTS.md
 !docs/CODEGRAPH.md
 !docs/CODE_REVIEW_2026_06_21.md
 !docs/API.md

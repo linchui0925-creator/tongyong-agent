@@ -420,7 +420,18 @@ class YiLLM(OpenAICompatibleLLM):
 
 
 class MiniMaxLLM(OpenAICompatibleLLM):
-    """MiniMax（稀宇科技）"""
+    """MiniMax（稀宇科技）
+
+    W4-32 修复 (2026-06-25): 部分 MiniMax 模型 (典型 MiniMax-Text-01) 在 chat
+    completions 端点 **不返回 message.tool_calls 字段**, 而是把工具调用编码
+    成 XML/JSON 文本放进 content (例如:
+        <minimax:tool_call>pip install requests</minimax:tool_call>
+        <tool_call>{"name":"terminal","arguments":{"command":"ls"}}</tool_call>
+    ).
+    旧实现只读 tool_calls → 拿不到 → 整段当 assistant 文本显示 → LLM 看起来
+    "只会说不会做"。修法: content 里再扫一遍 XML, 命中就转成 ToolCallResult,
+    拿不到时 (cleaned) 当普通 assistant 文本。
+    """
     DEFAULT_API_BASE = "https://api.minimax.chat/v1"
     DEFAULT_MODEL = "MiniMax-Text-01"
 
@@ -429,8 +440,9 @@ class MiniMaxLLM(OpenAICompatibleLLM):
         self.api_base = self.DEFAULT_API_BASE
 
     def _parse_response(self, result: Dict) -> LLMResponse:
-        """解析响应，清理 Qwen 风格的 thinking 标签后再解析"""
+        """解析响应：先看 tool_calls 结构化字段, 再扫 content 兜底 XML"""
         import re
+        from app.llm.xml_tool_call_parser import parse_xml_tool_calls
 
         choices = result.get("choices", [])
         if not choices:
@@ -445,7 +457,7 @@ class MiniMaxLLM(OpenAICompatibleLLM):
         content = re.sub(r'<think>[\s\S]*?</think>', '', content)
         content = content.strip()
 
-        # 工具调用
+        # 工具调用 — 路径 A: 标准结构化字段
         tool_calls_raw = message.get("tool_calls", [])
         if tool_calls_raw:
             tool_calls = []
@@ -462,6 +474,16 @@ class MiniMaxLLM(OpenAICompatibleLLM):
                     tool_call_id=tc.get("id", ""),
                 ))
             return LLMResponse(content=content, tool_calls=tool_calls)
+
+        # 工具调用 — 路径 B (W4-32 兜底): content 里的 XML
+        xml_calls, cleaned_content = parse_xml_tool_calls(content)
+        if xml_calls:
+            logger.warning(
+                "[MiniMax W4-32] 模型未在 tool_calls 字段返回结构化调用, "
+                "已从 content XML 兜底解析 %d 个: %s",
+                len(xml_calls), [tc.tool_name for tc in xml_calls],
+            )
+            return LLMResponse(content=cleaned_content, tool_calls=xml_calls)
 
         return LLMResponse(content=content)
 

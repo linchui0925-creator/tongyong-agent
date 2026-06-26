@@ -321,3 +321,9 @@ codegraph impact FuncName              # 受影响节点
 codegraph affected file1 file2         # 改文件后受影响的测试
 ```
 
+### W4-32: XML 工具调用兜底 (P1 hallucination)
+
+- 现象: 部分 LLM (典型 MiniMax-Text-01) 不返回结构化 `tool_calls`, 把调用编码成 XML 文本塞 content
+- 修复: `app/llm/xml_tool_call_parser.py` + `MiniMaxLLM._parse_response` 兜底分支
+- 监控: 关键词 `[MiniMax W4-32]` logger.warning
+- 单元测试: `tests/test_xml_tool_call_parser.py` (28 用例)

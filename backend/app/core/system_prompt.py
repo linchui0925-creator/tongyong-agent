@@ -40,9 +40,22 @@ class SystemPromptGenerator:
 
 ## 工具调用
 
-**你通过 function calling 执行操作。**
+**你通过 function calling 执行操作。** 工具清单和描述通过 API 的 `tools` 参数传递，模型推理时自动看到。**不要**调用 `read_file` 读工具详情——`tools` 参数已经包含完整 schema。
 
-工具清单和描述通过 API 的 `tools` 参数传递，模型推理时自动看到。**不要**调用 `read_file` 读工具详情——`tools` 参数已经包含完整 schema。
+### 调用形式（极其重要 — 触发幻觉判定）
+
+**正确**：通过结构化 `tool_calls` 字段返回 (OpenAI 协议)。系统在 `message.tool_calls` 字段读到，自动执行。
+**错误 ❌**：在 `content` 文本里手写 XML 标签冒充调用 — 这只是普通文本，**不会被执行**，只会让用户看到一串"我打算..."的自言自语。
+
+禁止的伪调用形式 (见到的会在 `_parse_response` 兜底, 但可能语义错位 — 所以请不要生成):
+- `<minimax:tool_call>...</minimax:tool_call>`
+- `<tool_call>...</tool_call>` (仅在 content 里手写时)
+- `<function_calls>...</function_calls>`
+- `<invoke name="x">...</invoke>` (仅在 content 里手写时)
+- `[TOOL_CALL]...[/TOOL_CALL]`
+- `<tool_use>...</tool_use>`
+
+判断标准：**调用必须出现在 `tool_calls` 数组里, 不是 `content` 文本里**。如果你只能控制自己的输出文本, 那就是"声称要做但没真做"。
 
 ## 执行纪律
 

@@ -193,6 +193,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `2bcb54b` | W4-32 | XML 工具调用兜底 — 修 minimax/MiniMax-Text-01 幻觉 (parser + system_prompt) |
 | `f7e5f20` | W4-30 | chat 字体 + markdown (react-markdown) + 4 套主题切换 |
 | `b6fea2d` | W4-29 | chat UI 改 WeChat/iMessage 风格, 加 header/avatar |
 | `3beb4f3` | W4-28 | `_startup_llm` 5s fast-fail + `SKIP_LLM_VALIDATION=1` |

@@ -21,7 +21,7 @@
 | LLM 路由 | 通过 `LLMManager` 统一, 支持运行时切换 provider |
 | Agent 协作 | `app/core/multi_agent/team.py` 593 行 — Leader + 多个角色 |
 | 持久化 | SQLite (`backend/data/agent.db`), ChromaDB 向量, langgraph checkpoint |
-| 默认 LLM | MiniMax-M2.5 (从 `llm_config.json` 恢复) — ⚠ minimax function call 不稳, 建议换 deepseek/yi (W4-37 建议) |
+| 默认 LLM | **deepseek / deepseek-v4-flash** (W4-38 切换, 用户提供 sk-d3a5fa6f...411a) — minimax 5 种幻觉模式修了不赢, 直接换原生 OpenAI 兼容 function call 的 deepseek |
 | 协议端口 | backend 8000, frontend 5173 (vite dev proxy /api → 8000) |
 
 ---
@@ -189,7 +189,7 @@ with TestClient(app) as c:
 14. **5 个 provider 不传 tools / 不解析 tool_calls** (W4-34) — baichuan/wenxin/xfyun/chatglm/ollama 改继承 `OpenAICompatibleLLM`,自动获得 tools + tool_calls 解析。ollama 切到 `/v1` OpenAI 兼容端点(0.1.14+),保留 embedding/init 的原生 /api 端点。
 15. **agent 写 HTML 端到端阻塞** (W4-35) — (a) `agent.py:1538` path_scoped 调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` unbound (try 成功路径), ReAct 循环 UnboundLocalError 死掉; (b) `_is_sensitive_write` 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成 `/private/var/` 敏感路径, 拒绝写。修法: 跟 line_scoped 一致用 `is_error` 决 success / result / error_msg; `_SENSITIVE_PATH_PREFIXES` 拆细 + 加 `_SAFE_PATH_PREFIXES` 白名单。
 16. **minimax 嵌套 XML tool_call 解析 (W4-32 只覆盖平展)** (W4-36) — minimax 实际输出是**嵌套**: `<minimax:tool_call>` 包多个 `<write_file>` / `<terminal>` 子块, 闭标签错配 (`<write_file>...</invoke>`), content 多行含 HTML 标签。W4-32 parser 3 处 fail: 整段当单条 / 把 HTML 标签当 tool_name / content 截到首行。修法: 3 路 fallback (平展 JSON / 平展 bash / 嵌套子块) + `_KNOWN_TOOLS` 白名单定位 + `_parse_kv_block` value 跨行。
-17. **minimax 闭标签写错 + 装执行幻觉** (W4-37) — (a) `<minimax:tool_call>...</minimax:_call>` 闭标签少了 "tool" 整段匹配不到; (b) minimax 偶尔纯文本写"已写入 /path 成功"但 0 tool_call, 用户看到"已写好"但文件没真写。修法: (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时兜底任意 `</minimax:...>`; (b) `MiniMaxLLM.chat` override 检测"成功词+路径"组合触发 retry 1 次加 system reminder, 仅本类生效不污染其他 LLM。
+17. **minimax 闭标签写错 + 装执行幻觉** (W4-37, 现已换 deepseek 默认) — minimax 5 种工具调用失败模式, 修不完. **W4-38 决策**: 默认 LLM 换 deepseek/deepseek-v4-flash, 用户提供 sk. minimax 修复作为兜底保留 (其他用户可能还在用). — (a) `<minimax:tool_call>...</minimax:_call>` 闭标签少了 "tool" 整段匹配不到; (b) minimax 偶尔纯文本写"已写入 /path 成功"但 0 tool_call, 用户看到"已写好"但文件没真写。修法: (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时兜底任意 `</minimax:...>`; (b) `MiniMaxLLM.chat` override 检测"成功词+路径"组合触发 retry 1 次加 system reminder, 仅本类生效不污染其他 LLM。
 
 ---
 
@@ -197,6 +197,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (W4-38) | 切 LLM | 默认从 minimax 换 deepseek/deepseek-v4-flash, 用户提供 sk-d3a5fa6f...411a. minimax 5 种工具调用幻觉修了不赢, 换原生 OpenAI 兼容 function call |
 | `ed9d196` | W4-37 | minimax 闭标签容错 (`</minimax:_call>` 等) + 装执行纯文本 retry 1 次 (MiniMaxLLM.chat override, 仅本类生效) |
 | `3b18b82` | W4-36 | minimax 嵌套 XML tool_call 解析: 3 路 fallback (平展 JSON/bash/嵌套) + 已知工具名白名单 + value 跨行, 写 HTML 端到端真跑通 |
 | `65e08d0` | W4-35 | agent 端到端写 HTML: 修 path_scoped UnboundLocalError + macOS TMPDIR 误判, + E2E 测试 (mock LLM → 真实写文件 → 字节级验证) |

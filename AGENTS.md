@@ -186,6 +186,7 @@ with TestClient(app) as c:
 11. **Team mode 旧 `team.run_stream` 标 DEPRECATED** (W4-20) — 3 个月内迁 `run_v2_stream()`。
 12. **`MultiMax` / `minimaxi` 是真实 provider 名称** — 配置里有真 key, 别当 typo 改。
 13. **`backend/data/` 包含持久化数据** — 不能 git clean -fdx。
+14. **5 个 provider 不传 tools / 不解析 tool_calls** (W4-34) — baichuan/wenxin/xfyun/chatglm/ollama 改继承 `OpenAICompatibleLLM`,自动获得 tools + tool_calls 解析。ollama 切到 `/v1` OpenAI 兼容端点(0.1.14+),保留 embedding/init 的原生 /api 端点。
 
 ---
 
@@ -193,6 +194,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `135bd6a` | W4-34 | 5 provider 改继承 OpenAICompatibleLLM, 恢复 tools 传 + tool_calls 解析 (-70% LOC), 加 CI gate 测试 |
 | `e263351` | W4-33 | prompt 精简 10.4KB → 5.3KB (-49%), 删 cli/*.md + personality.md |
 | `2bcb54b` | W4-32 | XML 工具调用兜底 — 修 minimax/MiniMax-Text-01 幻觉 (parser + system_prompt) |
 | `f7e5f20` | W4-30 | chat 字体 + markdown (react-markdown) + 4 套主题切换 |
@@ -211,6 +213,20 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-34: 5 Provider Function Call 适配审计修复
+
+- **现象**: 审计 15 个注册 provider,8 个 `chat()` 签名接 `tools` 但 body 完全不传,LLM 永远只回纯文本:
+  - baichuan / wenxin / xfyun / chatglm: OpenAI 兼容端点但 `json={"model", "messages"}` 不带 `tools`
+  - ollama: 走原生 `/api/chat`, 协议不带 `tools` 字段
+  - 另: anthropic / google 走自家非 OpenAI 协议(待 W4-35)
+- **修法**: 5 文件改继承 `OpenAICompatibleLLM`,只设 `DEFAULT_API_BASE` / `DEFAULT_MODEL`,吃基类完整实现
+  - 5 文件: -281 / +74 行 (-70%)
+  - ollama 额外切 `/v1` OpenAI 兼容端点(0.1.14+ 稳定),保留 embedding / initialize 的 `/api` 原生端点
+- **CI gate**: `tests/test_provider_function_call_contract.py` — 用 `inspect` 沿 MRO 静态扫所有 15 provider,验证 `chat()` 接受 `tools` 形参 / body 塞 `tools` / `_parse_response` 读 `tool_calls`。38 passed 8 skipped (anthropic/google/openai/tongyi 明确豁免,待 W4-35)
+- **结果**: 11/15 provider 完整 function call 适配 (含默认 minimax); 4 个非 OpenAI 协议待 W4-35
+
+---
 
 ### W4-33: System Prompt 精简 (-49%)
 

@@ -26,7 +26,14 @@
 > 📝 W4-24 修复 (2026-06-22): `must_use_tool` 触发词 `.lower()` → `.casefold()` (Unicode 标准); 提取 `MUST_USE_TOOL_TRIGGERS` / `VISIBLE_CHROME_TRIGGERS` 模块常量; 2nd round LLM 仍不用 tool → 显式 fallback 错误
 > 📝 W4-25 修复 (2026-06-22): `_ask_pending` AgentEngine 内存 dict → SQLite store (`app/core/ask_store.py`); 多 worker (uvicorn --workers>1) 部署共享; TTL 1h 自动过期; 11 个测试 (含 multi-process 共享)
 > 📝 W4-27 修复 (2026-06-22): Team mode 10 个 bug 集中修复 (CRITICAL: Pydantic v2 PrivateAttr 静默失败导致 `_round`/`_idle_count` 永远 0, 死循环保护失效); `_decompose_idea()` 替代单 root task; `run_v2_stream` 实际订阅 EventBus 实时事件; per-role 异常隔离; 14 个新测试
-> 📝 **W4-28 修复 (2026-06-23)**: `_startup_llm` 加 `SKIP_LLM_VALIDATION=1` env 跳过 + 5s 快速失败 (`asyncio.wait_for`): 之前外网不通时 120s×3 重试 ≈ 6min 卡死, 现在要么跳过要么 5s 内 fail; 启动 + in-process TestClient 端到端验证: GET /, /health, /ready, /docs, /openapi.json 全 200, POST /api/chat/stream (langchain + legacy 两条路径) SSE 管道通 (`event: start` → `progress` → LLM 调用, sandbox 无外网在 LLM 步失败属预期); 顺手补 `.venv311` 缺失的 `langchain_core` / `langgraph-checkpoint-sqlite` (生产 venv 一直没装, 启动后 chat 直接 ImportError)
+> 📝 **W4-28 修复 (2026-06-23)**: `_startup_llm` 加 `SKIP_LLM_VALIDATION=1` env 跳过 + 5s 快速失败
+> 📝 W4-29 重构 (2026-06-23): `ModernChatPanel.tsx` 改 WeChat/iMessage 社交对话风格, header + avatar, 518 行; `MarkdownContent.tsx` 引入 react-markdown
+> 📝 W4-30 特性 (2026-06-23): 4 套主题 (`dark-stone` / `light-clean` / `sepia-warm` / `midnight-blue`) + 用户自主配色切换
+> 📝 W4-32 修复 (2026-06-25): minimax/MiniMax-Text-01 工具调用幻觉 — content 不带 `message.tool_calls` 字段, 改成 XML 编码文本; 加 `xml_tool_call_parser.py` + system_prompt 提示
+> 📝 W4-33 重构 (2026-06-29): System Prompt 精简 10.4KB → 5.3KB (-49%), 删 cli/*.md (5) + personality.md, 解决 4 层 prompt 重复点 ≥ 5 + 矛盾 3 处
+> 📝 **W4-34 修复 (2026-06-29)**: provider function call 适配审计 — 5 provider (baichuan/wenxin/xfyun/chatglm/ollama) chat() 签名接 `tools` 但 body 不传, LLM 永远只回纯文本。改继承 `OpenAICompatibleLLM` (-281/+74 行, -70%), 加 `tests/test_provider_function_call_contract.py` CI gate 用 `inspect` 沿 MRO 扫 15 provider 验证 tools 传 + tool_calls 解析。38 passed 8 skipped (anthropic/google/openai/tongyi 豁免, 待 W4-35)。结果 11/15 provider 完整适配, 默认 minimax 不受影响
+
+ (`asyncio.wait_for`): 之前外网不通时 120s×3 重试 ≈ 6min 卡死, 现在要么跳过要么 5s 内 fail; 启动 + in-process TestClient 端到端验证: GET /, /health, /ready, /docs, /openapi.json 全 200, POST /api/chat/stream (langchain + legacy 两条路径) SSE 管道通 (`event: start` → `progress` → LLM 调用, sandbox 无外网在 LLM 步失败属预期); 顺手补 `.venv311` 缺失的 `langchain_core` / `langgraph-checkpoint-sqlite` (生产 venv 一直没装, 启动后 chat 直接 ImportError)
 
 
 | 维度 | 数值 |

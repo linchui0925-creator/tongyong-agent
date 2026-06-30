@@ -198,6 +198,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `29f44e1` | W4-40 | chat 文件路径可点击链接 (Codex/Claude 风格 pill): pathDetector + remarkFilePaths + FilePathLink, 5 种 icon + 颜色 accent |
 | `85c0d66` | W4-39 | deepseek reasoning model 解析: content 空 → reasoning_content fallback + XML 兜底 |
 | (W4-38) | 切 LLM | 默认从 minimax 换 deepseek/deepseek-v4-flash, 用户提供 sk-d3a5fa6f...411a. minimax 5 种工具调用幻觉修了不赢, 换原生 OpenAI 兼容 function call |
 | `ed9d196` | W4-37 | minimax 闭标签容错 (`</minimax:_call>` 等) + 装执行纯文本 retry 1 次 (MiniMaxLLM.chat override, 仅本类生效) |

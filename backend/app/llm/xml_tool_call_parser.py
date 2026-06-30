@@ -126,6 +126,115 @@ def _parse_kimi_open_tag(open_tag: str, inner: str) -> Optional[Tuple[str, dict]
     return name, args
 
 
+def _parse_kv_block(body: str) -> dict:
+    r"""解析 body 里的 `key: value` 行为 arguments dict (W4-36 改: value 跨行)
+
+    minimax 嵌套子块 body 形如:
+        path: hello.html
+        content: <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>...
+        </h1>
+        </body>
+        </html>
+
+    v1 按行只取首行 value → content 被截到 `<!DOCTYPE html>`.
+    v2: value 跨行, 直到下一行匹配 `^[a-zA-Z_]\w*:\s` 模式 (新 key) 或段尾.
+    """
+    args: dict = {}
+    # key: 模式: 单词开头 + 冒号 + 空白
+    key_re = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$")
+    current_key: Optional[str] = None
+    current_val: List[str] = []
+
+    def _flush():
+        nonlocal current_key, current_val
+        if current_key is None:
+            return
+        val = "\n".join(current_val).strip() if current_val else ""
+        if val:
+            if val.lower() in ("true", "false"):
+                val = val.lower() == "true"
+            args[current_key] = val
+
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        km = key_re.match(stripped)
+        # 判 key 条件: 1) 匹配 key: 模式, 2) 行首 (无缩进) 才是 key
+        if km and not line[:len(line) - len(stripped)]:
+            _flush()
+            current_key = km.group(1)
+            current_val = [km.group(2)] if km.group(2) else []
+        else:
+            # 续行
+            if current_key is not None:
+                current_val.append(line.rstrip())
+    _flush()
+    return args
+
+
+def _parse_minimax_nested(inner: str) -> List[Tuple[str, dict]]:
+    """W4-36 加: 解析 minimax 嵌套结构 (v2: 已知工具名白名单)
+
+    inner 形如 (LLM 实际输出):
+        <write_file>
+        path: hello.html
+        content: <!DOCTYPE html>...<h1>...</h1>...</html>
+        </invoke>
+        <terminal>
+        ls hello.html
+        </terminal>
+
+    W4-32 parser 把整段当单条 tool_call, 启发式成 terminal "path: hello.html" -> 错.
+    v1 实现按 `<...>` 切子块, 错把 HTML 标签 (<head> <title> <h1>) 当成 tool_name.
+    v2 (W4-36): 用**已知工具名白名单**定位子块起始, body 不再按 `<` 切, 用 key: value 解析.
+    闭标签错配 (<write_file>...</invoke>) 自然处理: body 吃到下一个已知工具名或 </minimax:tool_call>.
+    """
+    if not inner or not inner.strip():
+        return []
+
+    # 已知工具名白名单 (跟 ToolRegistry 同步, 加新工具时同步更新)
+    _KNOWN_TOOLS = frozenset({
+        "write_file", "read_file", "patch", "search_files", "ls", "glob",
+        "terminal", "browser", "ask", "delegate_task", "skill_view",
+        "load_skill", "desktop", "cdp", "mcp", "grep", "web_search",
+        "web_fetch", "memory", "imagegen",
+    })
+
+    out: List[Tuple[str, dict]] = []
+    open_re = re.compile(
+        r"<(" + "|".join(re.escape(t) for t in _KNOWN_TOOLS) + r")>",
+    )
+    matches = list(open_re.finditer(inner))
+    if not matches:
+        return []
+
+    for i, m in enumerate(matches):
+        name = m.group(1)
+        body_start = m.end()
+        # body 终点: 下一个 <known_tool> 起始, 或 </minimax:tool_call>, 或段尾
+        if i + 1 < len(matches):
+            body_end = matches[i + 1].start()
+        else:
+            close = inner.find("</minimax:tool_call>", body_start)
+            body_end = close if close != -1 else len(inner)
+        body = inner[body_start:body_end].strip()
+        # 去掉尾部错配闭标签
+        body = re.sub(r"</\w+>\s*$", "", body).strip()
+        if not body:
+            continue
+        # 解析 body: 优先 key: value 块
+        args = _parse_kv_block(body)
+        if not args:
+            if name == "terminal":
+                first_line = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+                args = {"command": first_line} if first_line else {}
+            else:
+                args = {"raw": body}
+        out.append((name, args))
+    return out
+
+
 def _parse_inner(inner: str, fallback_name: Optional[str]) -> Optional[Tuple[str, dict]]:
     """把标签内部文本解析成 (tool_name, arguments)
 
@@ -218,17 +327,37 @@ def parse_xml_tool_calls(content: str) -> Tuple[List[ToolCallResult], str]:
         # Hermes 风格: function_calls 里直接嵌 <invoke ...>...</invoke>
         if kind == "kimi":
             parsed = _parse_kimi_open_tag(open_tag, inner)
+            parsed_list = [parsed] if parsed else []
+        elif kind == "minimax":
+            # W4-36 三路 fallback 兼容 W4-32 老格式 + LLM 实际嵌套格式:
+            # 1. 平展 JSON:  <minimax:tool_call>{"name": "x", ...}</minimax:tool_call>
+            # 2. 平展 bash:  <minimax:tool_call>pip install requests -q</minimax:tool_call>
+            #    (启发式: 无 < 标签, 整段当 terminal command)
+            # 3. 嵌套子块:  <minimax:tool_call><write_file>...</write_file>...</minimax:tool_call>
+            inner_stripped = inner.strip()
+            if inner_stripped.startswith("{"):
+                # 路径 1: 平展 JSON
+                flat = _parse_inner(inner, None)
+                parsed_list = [flat] if flat else []
+            elif "<" not in inner_stripped:
+                # 路径 2: 平展 bash → terminal
+                first_line = next((ln.strip() for ln in inner_stripped.splitlines() if ln.strip()), "")
+                parsed_list = [("terminal", {"command": first_line})] if first_line else []
+            else:
+                # 路径 3: 嵌套子块 (W4-36 新支持)
+                parsed_list = _parse_minimax_nested(inner)
         else:
             parsed = _parse_inner(inner, None)
+            parsed_list = [parsed] if parsed else []
         remaining = remaining[:start] + remaining[end_idx + len(close_tag):]
-        if parsed is None:
+        if not parsed_list:
             continue
-        name, args = parsed
-        out.append(ToolCallResult(
-            tool_name=name,
-            arguments=args,
-            tool_call_id=f"xml_{kind}_{len(out)}",
-        ))
+        for name, args in parsed_list:
+            out.append(ToolCallResult(
+                tool_name=name,
+                arguments=args,
+                tool_call_id=f"xml_{kind}_{len(out)}",
+            ))
 
     return out, remaining
 

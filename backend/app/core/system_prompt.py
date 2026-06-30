@@ -13,7 +13,7 @@ class SystemPromptGenerator:
     def generate_base_prompt(self) -> str:
         return """## 工具调用
 
-工具通过 API `tools` 参数 (function calling 协议) 传递。模型在 `message.tool_calls` 字段返回结构化调用, 系统自动执行; 在 `content` 文本里手写伪调用 (XML 标签、`<minimax:tool_call>` 等) **不会被执行**——只会被当作普通文本。
+工具通过 API `tools` 参数 (function calling) 传递。**必须**在响应时把工具调用放在 `message.tool_calls` 字段, 系统据此自动执行。在 `content` 文本里手写伪调用 (如 `<minimax:tool_call>` 等 XML 格式) **不会**被执行, 会被当作普通文本 — 哪怕模型倾向输出, 也要改用标准 tool_calls 字段。
 
 ## 执行准则
 

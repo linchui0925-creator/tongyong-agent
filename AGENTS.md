@@ -21,7 +21,7 @@
 | LLM 路由 | 通过 `LLMManager` 统一, 支持运行时切换 provider |
 | Agent 协作 | `app/core/multi_agent/team.py` 593 行 — Leader + 多个角色 |
 | 持久化 | SQLite (`backend/data/agent.db`), ChromaDB 向量, langgraph checkpoint |
-| 默认 LLM | **deepseek / deepseek-v4-flash** (W4-38 切换, 用户提供 sk-d3a5fa6f...411a) — minimax 5 种幻觉模式修了不赢, 直接换原生 OpenAI 兼容 function call 的 deepseek |
+| 默认 LLM | **deepseek / deepseek-v4-flash** (W4-38 切换, 用户提供 sk-d3a5fa6f...411a) — reasoning model, W4-39 加 reasoning_content + XML 兜底 |
 | 协议端口 | backend 8000, frontend 5173 (vite dev proxy /api → 8000) |
 
 ---
@@ -190,6 +190,7 @@ with TestClient(app) as c:
 15. **agent 写 HTML 端到端阻塞** (W4-35) — (a) `agent.py:1538` path_scoped 调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` unbound (try 成功路径), ReAct 循环 UnboundLocalError 死掉; (b) `_is_sensitive_write` 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成 `/private/var/` 敏感路径, 拒绝写。修法: 跟 line_scoped 一致用 `is_error` 决 success / result / error_msg; `_SENSITIVE_PATH_PREFIXES` 拆细 + 加 `_SAFE_PATH_PREFIXES` 白名单。
 16. **minimax 嵌套 XML tool_call 解析 (W4-32 只覆盖平展)** (W4-36) — minimax 实际输出是**嵌套**: `<minimax:tool_call>` 包多个 `<write_file>` / `<terminal>` 子块, 闭标签错配 (`<write_file>...</invoke>`), content 多行含 HTML 标签。W4-32 parser 3 处 fail: 整段当单条 / 把 HTML 标签当 tool_name / content 截到首行。修法: 3 路 fallback (平展 JSON / 平展 bash / 嵌套子块) + `_KNOWN_TOOLS` 白名单定位 + `_parse_kv_block` value 跨行。
 17. **minimax 闭标签写错 + 装执行幻觉** (W4-37, 现已换 deepseek 默认) — minimax 5 种工具调用失败模式, 修不完. **W4-38 决策**: 默认 LLM 换 deepseek/deepseek-v4-flash, 用户提供 sk. minimax 修复作为兜底保留 (其他用户可能还在用). — (a) `<minimax:tool_call>...</minimax:_call>` 闭标签少了 "tool" 整段匹配不到; (b) minimax 偶尔纯文本写"已写入 /path 成功"但 0 tool_call, 用户看到"已写好"但文件没真写。修法: (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时兜底任意 `</minimax:...>`; (b) `MiniMaxLLM.chat` override 检测"成功词+路径"组合触发 retry 1 次加 system reminder, 仅本类生效不污染其他 LLM。
+18. **deepseek reasoning model 解析 (跟 minimax 一样的 XML 坑)** (W4-39) — deepseek-v4-flash 是 reasoning model, 响应 (a) `content=""` + `reasoning_content="..."` 真实内容在 reasoning_content, 原 `_parse_response_with_thinking` 只读 content 拿不到; (b) 工具调用走 `<minimax:tool_call>` XML 不走 `tool_calls` 字段. 修法: 1) content 空 fallback reasoning_content; 2) 路径 B 加 XML 兜底 (跟 MiniMaxLLM 一致). 5 个新 test.
 
 ---
 
@@ -197,6 +198,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `85c0d66` | W4-39 | deepseek reasoning model 解析: content 空 → reasoning_content fallback + XML 兜底 |
 | (W4-38) | 切 LLM | 默认从 minimax 换 deepseek/deepseek-v4-flash, 用户提供 sk-d3a5fa6f...411a. minimax 5 种工具调用幻觉修了不赢, 换原生 OpenAI 兼容 function call |
 | `ed9d196` | W4-37 | minimax 闭标签容错 (`</minimax:_call>` 等) + 装执行纯文本 retry 1 次 (MiniMaxLLM.chat override, 仅本类生效) |
 | `3b18b82` | W4-36 | minimax 嵌套 XML tool_call 解析: 3 路 fallback (平展 JSON/bash/嵌套) + 已知工具名白名单 + value 跨行, 写 HTML 端到端真跑通 |
@@ -220,6 +222,23 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-39: deepseek reasoning model 解析
+
+- **现象**: 切到 deepseek/deepseek-v4-flash 后用户实测"写 hello.html" 仍报 minimax 格式. 排查 backend log 发现:
+  - HTTP POST https://api.deepseek.com/v1/chat/completions 200 OK
+  - 但响应 `content=""` + `reasoning_content="..."` (空 content)
+  - 工具调用走 `<minimax:tool_call>` XML 不走 `tool_calls` 字段
+  - `tool_count: 0` — agent 0 工具调用
+- **根因**: `_parse_response_with_thinking` (DeepSeekLLM 用) 只读 `content` + `tool_calls`, reasoning_content 拿不到, XML 也没兜底
+- **修法**:
+  1. `_parse_response_with_thinking` 加 `reasoning_content` fallback — content 空时用 reasoning_content
+  2. 加路径 B XML 兜底 (跟 MiniMaxLLM 一致) — reasoning model 也可能输出 minimax 风格 XML
+- **测试**: `tests/test_w439_deepseek_reasoning_xml.py` 5 个
+- **回归**: 84 passed 8 skipped
+- **遗留**: 真正治本是换 deepseek-chat (V3) 而不是 deepseek-v4-flash (reasoning), reasoning 模型天生不擅长工具调用
+
+---
 
 ### W4-37: minimax 闭标签容错 + 装执行 retry
 

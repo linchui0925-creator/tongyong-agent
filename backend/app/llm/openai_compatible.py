@@ -329,28 +329,36 @@ class OpenAICompatibleLLM(BaseLLM):
         return LLMResponse(content=content, usage=usage)
 
     def _parse_response_with_thinking(self, result: Dict) -> LLMResponse:
-        """解析包含 thinking 内容的响应（如 DeepSeek-R1）"""
+        """解析包含 thinking 内容的响应（如 DeepSeek-R1）
+
+        W4-39 修 (2026-06-30): reasoning model (deepseek-v4-flash 等) 经常:
+          (a) content="" + reasoning_content="..." — 推理过程在 reasoning_content, 真实内容/工具调用也在那
+          (b) content="<minimax:tool_call>..." 但 message.tool_calls=[] — XML 格式输出
+        原实现只读 content + tool_calls, 两种都拿不到. 修法:
+          1. content 空时用 reasoning_content 作 fallback
+          2. 加 XML 兜底 (跟 MiniMaxLLM 路径 B 一样)
+        """
         choices = result.get("choices", [])
         if not choices:
             raise LLMError("响应格式错误", "INVALID_RESPONSE", result)
 
         message = choices[0].get("message", {})
         content = message.get("content") or ""
+        reasoning_content = message.get("reasoning_content") or ""
 
-        # 尝试从 content 中提取 <think>...晖 部分
+        # W4-39 修 (a): content 空时用 reasoning_content 兜底
+        if not content.strip() and reasoning_content.strip():
+            content = reasoning_content
+
+        # 尝试从 content 中提取 <think>...</think> 部分
         thinking_chunks = []
         import re
 
-        # 首先尝试匹配完整的 <think>...晖 对
-        # 修复 (W4-1 2026-06-09): 闭标签原写 Unicode "晖" 同形字, 永远不匹配
-        #   正确闭标签是 </think>, 改用 <\/think> (反斜杠在 raw 字符串中不需要, 但加也 OK)
         think_match = re.search(r'<think>([\s\S]*?)</think>', content)
         if think_match:
             thinking_text = think_match.group(1).strip()
-            # 移除 thinking 部分
             content = re.sub(r'<think>[\s\S]*?</think>', '', content, count=1).strip()
 
-            # 将 thinking 内容切分成小块用于流式展示
             lines_text = thinking_text.split('\n')
             current_chunk = ""
             for line in lines_text:
@@ -363,7 +371,7 @@ class OpenAICompatibleLLM(BaseLLM):
             if current_chunk:
                 thinking_chunks.append(current_chunk)
 
-        # 工具调用
+        # 工具调用 — 路径 A: 标准结构化字段
         tool_calls_raw = message.get("tool_calls", [])
         if tool_calls_raw:
             tool_calls = []
@@ -380,6 +388,19 @@ class OpenAICompatibleLLM(BaseLLM):
                     tool_call_id=tc.get("id", ""),
                 ))
             return LLMResponse(content=content, tool_calls=tool_calls, thinking=thinking_chunks)
+
+        # W4-39 修 (b): 路径 B 兜底 — content 里的 XML 工具调用
+        # reasoning model 也可能输出 <minimax:tool_call> 这种 minimax 风格 XML
+        # (deepseek-v4-flash 实测: 工具调用走 XML 不走 tool_calls 字段)
+        from app.llm.xml_tool_call_parser import parse_xml_tool_calls
+        xml_calls, cleaned_content = parse_xml_tool_calls(content)
+        if xml_calls:
+            logger.warning(
+                "[DeepSeek W4-39] 模型未在 tool_calls 字段返回结构化调用, "
+                "已从 content XML 兜底解析 %d 个: %s",
+                len(xml_calls), [tc.tool_name for tc in xml_calls],
+            )
+            return LLMResponse(content=cleaned_content, tool_calls=xml_calls, thinking=thinking_chunks)
 
         return LLMResponse(content=content, thinking=thinking_chunks)
 

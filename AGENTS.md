@@ -188,6 +188,7 @@ with TestClient(app) as c:
 13. **`backend/data/` 包含持久化数据** — 不能 git clean -fdx。
 14. **5 个 provider 不传 tools / 不解析 tool_calls** (W4-34) — baichuan/wenxin/xfyun/chatglm/ollama 改继承 `OpenAICompatibleLLM`,自动获得 tools + tool_calls 解析。ollama 切到 `/v1` OpenAI 兼容端点(0.1.14+),保留 embedding/init 的原生 /api 端点。
 15. **agent 写 HTML 端到端阻塞** (W4-35) — (a) `agent.py:1538` path_scoped 调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` unbound (try 成功路径), ReAct 循环 UnboundLocalError 死掉; (b) `_is_sensitive_write` 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成 `/private/var/` 敏感路径, 拒绝写。修法: 跟 line_scoped 一致用 `is_error` 决 success / result / error_msg; `_SENSITIVE_PATH_PREFIXES` 拆细 + 加 `_SAFE_PATH_PREFIXES` 白名单。
+16. **minimax 嵌套 XML tool_call 解析 (W4-32 只覆盖平展)** (W4-36) — minimax 实际输出是**嵌套**: `<minimax:tool_call>` 包多个 `<write_file>` / `<terminal>` 子块, 闭标签错配 (`<write_file>...</invoke>`), content 多行含 HTML 标签。W4-32 parser 3 处 fail: 整段当单条 / 把 HTML 标签当 tool_name / content 截到首行。修法: 3 路 fallback (平展 JSON / 平展 bash / 嵌套子块) + `_KNOWN_TOOLS` 白名单定位 + `_parse_kv_block` value 跨行。
 
 ---
 
@@ -195,6 +196,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `3b18b82` | W4-36 | minimax 嵌套 XML tool_call 解析: 3 路 fallback (平展 JSON/bash/嵌套) + 已知工具名白名单 + value 跨行, 写 HTML 端到端真跑通 |
 | `65e08d0` | W4-35 | agent 端到端写 HTML: 修 path_scoped UnboundLocalError + macOS TMPDIR 误判, + E2E 测试 (mock LLM → 真实写文件 → 字节级验证) |
 | `135bd6a` | W4-34 | 5 provider 改继承 OpenAICompatibleLLM, 恢复 tools 传 + tool_calls 解析 (-70% LOC), 加 CI gate 测试 |
 | `e263351` | W4-33 | prompt 精简 10.4KB → 5.3KB (-49%), 删 cli/*.md + personality.md |
@@ -215,6 +217,23 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-36: minimax 嵌套 XML tool_call 解析 (写 HTML 端到端真跑通)
+
+- **现象**: 用户前端实测"写一个 hello.html" 报"已经写好了", 但 `hello.html` 实际没写出来. backend log 看 LLM 输出 `<minimax:tool_call>\n<write_file>\npath: hello.html\ncontent: <!DOCTYPE html>...\n</invoke>\n<terminal>\nls hello.html\n</terminal>\n</minimax:tool_call>`, agent 把它当纯文本显示, 0 个 tool_call 被执行.
+- **根因**: W4-32 parser 3 处 fail 处理这种格式
+  1. 整段当单条 tool_call -> 启发式成 `terminal` + `command: "path: hello.html"` (错)
+  2. 按 `<name>` 切子块 -> 错把 HTML 标签 (`<head>` `<title>` `<h1>`) 当 tool_name, content 截到 `<!DOCTYPE html>`
+  3. `key: value` 按行只取首行 value -> content 多行被截
+- **修法** (W4-36):
+  1. `parse_xml_tool_calls` 加 kind=="minimax" 三路 fallback: 平展 JSON (走原 `_parse_inner`) / 平展 bash (无 `<` 时整段当 terminal command) / 嵌套子块 (调 `_parse_minimax_nested`)
+  2. `_parse_minimax_nested` 用 `_KNOWN_TOOLS` 白名单定位子块起始, body 不再按 `<` 切, 闭标签错配容忍
+  3. `_parse_kv_block` 改 value 跨行, 续行到下一个 `^[a-zA-Z_]\w*:\s` 模式
+  4. `system_prompt.py` 调强: 明确禁止 XML 伪调用, 必须用 `message.tool_calls` 字段, 即便 minimax 模型倾向输出 XML 也要改
+- **测试**: `tests/test_w436_minimax_nested_xml.py` 8 个覆盖嵌套/平展/MiniMaxLLM 真实解析路径
+- **回归**: W4-32 老测试 28 个 + W4-36 新测试 8 个 + 88 安全子集 = **124 passed 9 skipped**
+
+---
 
 ### W4-35: Agent 端到端写 HTML (修 2 真 bug)
 

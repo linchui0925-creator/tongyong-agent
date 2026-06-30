@@ -187,6 +187,7 @@ with TestClient(app) as c:
 12. **`MultiMax` / `minimaxi` 是真实 provider 名称** — 配置里有真 key, 别当 typo 改。
 13. **`backend/data/` 包含持久化数据** — 不能 git clean -fdx。
 14. **5 个 provider 不传 tools / 不解析 tool_calls** (W4-34) — baichuan/wenxin/xfyun/chatglm/ollama 改继承 `OpenAICompatibleLLM`,自动获得 tools + tool_calls 解析。ollama 切到 `/v1` OpenAI 兼容端点(0.1.14+),保留 embedding/init 的原生 /api 端点。
+15. **agent 写 HTML 端到端阻塞** (W4-35) — (a) `agent.py:1538` path_scoped 调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` unbound (try 成功路径), ReAct 循环 UnboundLocalError 死掉; (b) `_is_sensitive_write` 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成 `/private/var/` 敏感路径, 拒绝写。修法: 跟 line_scoped 一致用 `is_error` 决 success / result / error_msg; `_SENSITIVE_PATH_PREFIXES` 拆细 + 加 `_SAFE_PATH_PREFIXES` 白名单。
 
 ---
 
@@ -194,6 +195,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `65e08d0` | W4-35 | agent 端到端写 HTML: 修 path_scoped UnboundLocalError + macOS TMPDIR 误判, + E2E 测试 (mock LLM → 真实写文件 → 字节级验证) |
 | `135bd6a` | W4-34 | 5 provider 改继承 OpenAICompatibleLLM, 恢复 tools 传 + tool_calls 解析 (-70% LOC), 加 CI gate 测试 |
 | `e263351` | W4-33 | prompt 精简 10.4KB → 5.3KB (-49%), 删 cli/*.md + personality.md |
 | `2bcb54b` | W4-32 | XML 工具调用兜底 — 修 minimax/MiniMax-Text-01 幻觉 (parser + system_prompt) |
@@ -213,6 +215,22 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-35: Agent 端到端写 HTML (修 2 真 bug)
+
+- **现象**: 用户让 agent 写 HTML 文件, 实际跑不通, 40s 后 budget 耗尽退出
+- **根因 1 (CRITICAL)**: `app/core/agent.py:1538` path_scoped 工具执行后调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` (unbound 在 try 成功路径), 触发 UnboundLocalError, 整个 ReAct 循环死掉, agent 永远到不了 final text
+- **根因 2**: `app/tools/implementations/file_tools.py` `_SENSITIVE_PATH_PREFIXES` 含 `"/private/var/"` 太宽, 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成敏感路径, 拒绝写任何文件到 pytest tmp_path
+- **修法**:
+  - `agent.py` L1538 改跟 L1376 (line_scoped) 一致, 用 `is_error` 决 `success` / `result` / `error_msg`; 顺手 PostToolUse hook 的 `is_error` 也用真实值
+  - `file_tools.py` 拆 `/private/var/` → `log/db/audit/root/lib`; 加 `_SAFE_PATH_PREFIXES` (`/private/var/folders/`, `/private/var/tmp/`, `/tmp/`, `/var/folders/`, 用户家) 优先放行
+- **E2E 测试**: `tests/test_w434_agent_writes_html.py` 3 个
+  - `test_agent_writes_html_file_and_content_verified`: mock LLM 决策 `write_file` → 真实 `AgentEngine.stream_chat` 走 ReAct → 真实 `write_file_tool` 写文件 → 字节级读回验证
+  - `test_agent_writes_html_then_serves_via_http_and_curl_200`: 写 + 启 `python -m http.server` + curl 200 + 内容匹配 (`needs_network` skipif, sandbox bind 不上时自动 skip, 真实环境跑)
+  - `test_write_file_tool_writes_html_directly`: 直接调 `write_file_tool` 验证工具本身
+- **结果**: 2 passed 1 skipped (sandbox), 116 passed 9 skipped 全量安全子集无回归
+
+---
 
 ### W4-34: 5 Provider Function Call 适配审计修复
 

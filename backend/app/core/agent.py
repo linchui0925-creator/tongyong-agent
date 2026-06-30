@@ -1541,23 +1541,25 @@ class AgentEngine:
                         )
 
                     # 存储易读的纯文本
+                    # W4-35 修: 旧实现 success=False hardcode + error_msg=error_msg 在 try 成功路径 unbound.
+                    # path_scoped 模式应跟 line_scoped (L1376 区域) 一致, 用 is_error 决 success / result / error_msg.
                     tool_text = _format_tool_result_text(
                         name=tool_name,
-                        success=False,
-                        result="",
-                        error_msg=error_msg,
-                        error_type=error_type,
-                        suggestion=result_structured.get("suggestion", ""),
+                        success=not is_error,
+                        result=tool_result if not is_error else "",
+                        error_msg=tool_result if is_error else "",
+                        error_type=_classify_error_type(tool_result) if is_error else "",
+                        suggestion=result_structured.get("suggestion", "") if is_error else "",
                         tool_call_id=tc.get("id", "")
                     )
                     self.context.add_message("tool", tool_text)
 
-                    # W4-16: PostToolUse hook (path_scoped 错误路径, success=False)
+                    # W4-16: PostToolUse hook (path_scoped, 跟 line_scoped 一样 is_error 反映真实结果)
                     await trigger_hooks_async("PostToolUse", {
                         "tool_name": tool_name,
                         "arguments": args,
                         "result": tool_result,
-                        "is_error": True,
+                        "is_error": is_error,
                         "elapsed": _elapsed,
                         "tool_call_id": tc.get("id", ""),
                         "context": self.context,

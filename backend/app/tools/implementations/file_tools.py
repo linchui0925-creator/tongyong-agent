@@ -30,7 +30,20 @@ _BLOCKED_DEVICE_PATHS = frozenset({
 
 _SENSITIVE_PATH_PREFIXES = (
     "/etc/", "/boot/", "/usr/lib/systemd/",
-    "/private/etc/", "/private/var/",
+    "/private/etc/",
+    # /private/var/ 拆细: macOS TMPDIR (/private/var/folders/) 是用户数据, 不算敏感
+    "/private/var/log/", "/private/var/db/", "/private/var/audit/",
+    "/private/var/root/", "/private/var/lib/",
+)
+
+# 用户安全目录白名单 (W4-35 修: 优先放行, 避免 _SENSITIVE_PATH_PREFIXES 误拦)
+import os as _os_for_safe
+_SAFE_PATH_PREFIXES = (
+    "/private/var/folders/",  # macOS per-user TMPDIR (pytest tmp_path 落这里)
+    "/private/var/tmp/",  # macOS system tmp
+    "/tmp/",  # linux system tmp
+    "/var/folders/",  # symlink target
+    _os_for_safe.path.expanduser("~"),  # 用户家目录
 )
 _SENSITIVE_EXACT_PATHS = frozenset({
     "/var/run/docker.sock", "/run/docker.sock",
@@ -202,10 +215,18 @@ def _resolve_path(path: str) -> Optional[Path]:
 
 
 def _is_sensitive_write(path: Path) -> bool:
-    """检查是否为敏感系统路径"""
+    """检查是否为敏感系统路径
+
+    W4-35 修: 优先检查 _SAFE_PATH_PREFIXES (用户 TMPDIR / 家目录) 放行,
+    避免 _SENSITIVE_PATH_PREFIXES 把 macOS `/private/var/folders/...` 误判.
+    """
     resolved = str(path.resolve())
     if resolved in _SENSITIVE_EXACT_PATHS:
         return True
+    # 用户安全目录优先放行
+    for safe in _SAFE_PATH_PREFIXES:
+        if resolved.startswith(safe):
+            return False
     for prefix in _SENSITIVE_PATH_PREFIXES:
         if resolved.startswith(prefix):
             return True

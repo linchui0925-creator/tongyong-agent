@@ -11,6 +11,8 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
+import { remarkFilePaths } from './filePathRemark';
+import { FilePathLink } from './FilePathLink';
 import './MarkdownContent.css';
 
 function CopyButton({ text }: { text: string }) {
@@ -40,10 +42,9 @@ export function MarkdownContent({ text, variant = 'agent' }: MarkdownContentProp
   if (!text) return null;
   return (
     <div className={`md-content md-content--${variant}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
-        components={{
+      {(() => {
+        // W4-40: 跟原始 Components 类型交叉, 加 filePath 自定义节点 (类型未导出所以 any)
+        const customComponents: import('react-markdown').Components & { filePath: (p: { value: string }) => JSX.Element } = {
           // 标题 — 紧凑, 跟 chat 气泡协调
           h1: ({ children, ...props }) => <h1 className="md-h1" {...props}>{children}</h1>,
           h2: ({ children, ...props }) => <h2 className="md-h2" {...props}>{children}</h2>,
@@ -106,10 +107,19 @@ export function MarkdownContent({ text, variant = 'agent' }: MarkdownContentProp
           tr: ({ children, ...props }) => <tr className="md-tr" {...props}>{children}</tr>,
           th: ({ children, ...props }) => <th className="md-th" {...props}>{children}</th>,
           td: ({ children, ...props }) => <td className="md-td" {...props}>{children}</td>,
-        }}
+          // W4-40: 文件路径节点 — remarkFilePaths 注入的自定义类型
+          filePath: ({ value }) => <FilePathLink path={value} />,
+        };
+        return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkFilePaths]}
+        rehypePlugins={[rehypeSanitize]}
+        components={customComponents}
       >
         {text}
       </ReactMarkdown>
+        );
+      })()}
     </div>
   );
 }

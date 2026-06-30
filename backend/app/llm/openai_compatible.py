@@ -431,13 +431,64 @@ class MiniMaxLLM(OpenAICompatibleLLM):
     旧实现只读 tool_calls → 拿不到 → 整段当 assistant 文本显示 → LLM 看起来
     "只会说不会做"。修法: content 里再扫一遍 XML, 命中就转成 ToolCallResult,
     拿不到时 (cleaned) 当普通 assistant 文本。
+
+    W4-36 修: 三路 fallback (平展 JSON/平展 bash/嵌套子块) + 已知工具名白名单 + value 跨行.
+    W4-37 修: minimax 偶尔直接装执行 (content 写"已写到 /path" 但 0 tool_call).
+              装执行检测 + chat override 自动 retry 1 次加 system reminder, 仅本类生效.
     """
-    DEFAULT_API_BASE = "https://api.minimax.chat/v1"
+    DEFAULT_API_BASE = "https://api.minimaxi.chat/v1"
     DEFAULT_MODEL = "MiniMax-Text-01"
 
     def __init__(self, api_key: str, model: str = None):
         super().__init__(api_key, model)
         self.api_base = self.DEFAULT_API_BASE
+
+    # W4-37 装执行检测
+    import re as _re
+    _FAKE_EXEC_KEYWORDS = (
+        "已写入", "已写到", "已创建", "已安装", "已完成", "已添加", "已修改",
+        "已删除", "已保存", "已生成", "已运行", "已执行", "已部署", "已配置",
+        "Successfully", "Done", "Created", "Saved", "Wrote", "Installed",
+    )
+    _PATH_PATTERN = _re.compile(r"(/[\w./\-]+|\w+[/.]\w+\.[a-zA-Z]{1,5})")
+
+    def _looks_like_fake_execution(self, content: str) -> bool:
+        """检测 content 是否像"装执行" (说有结果但没真调工具)"""
+        if not content or len(content) < 10:
+            return False
+        has_keyword = any(kw in content for kw in self._FAKE_EXEC_KEYWORDS)
+        has_path = bool(self._PATH_PATTERN.search(content))
+        return has_keyword and has_path
+
+    async def chat(self, messages, tools=None):
+        """Override: 装执行检测, 自动 retry 1 次 (W4-37)
+
+        minimax 模型偶尔在 content 文本里直接"装执行" — 描述"已写入 /path" 等
+        但没真调工具. 检测到时加 system reminder 重试, 给 model 一次改过的机会.
+        """
+        resp = await super().chat(messages, tools)
+        if resp.has_tool_calls:
+            return resp
+        content = getattr(resp, "content", "") or ""
+        if self._looks_like_fake_execution(content):
+            from app.core.base import Message
+            reminder = Message(
+                role="system",
+                content=(
+                    "你上一轮响应描述了执行结果但没有实际调用任何工具. "
+                    "如果你需要执行工具, **必须**在 message.tool_calls 字段返回结构化调用, "
+                    "不要在 content 文本里描述虚假执行. 如果你**确实**无法调用工具 "
+                    "(模型不支持), 就如实说'我无法调用工具, 请换支持 function calling 的模型', "
+                    "不要编造结果."
+                ),
+            )
+            retry_messages = list(messages) + [reminder]
+            logger.warning(
+                "[MiniMax W4-37] 装执行检测, 自动 retry 1 次: %s",
+                content[:100],
+            )
+            resp = await super().chat(retry_messages, tools)
+        return resp
 
     def _parse_response(self, result: Dict) -> LLMResponse:
         """解析响应：先看 tool_calls 结构化字段, 再扫 content 兜底 XML"""

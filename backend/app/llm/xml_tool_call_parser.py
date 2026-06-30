@@ -65,14 +65,22 @@ def _find_open(content: str) -> Optional[Tuple[int, int, str, str]]:
 def _find_close(content: str, start: int, close_tag: str) -> int:
     """从 start 找 close_tag, 返回其起始位置; 找不到返回 -1
 
+    W4-37 修: 找不到精确 close 时, 试 minimax 容错 (闭标签写错的常见情况,
+    e.g. </minimax:_call> 少 "tool"). 通用 fallback 任意 </minimax:...> 闭标签.
     返回 close tag 的 **起始** 位置 (而不是结束), caller 切片时:
       inner = content[after_open : close_start]
       remaining = content[:start] + content[close_start + len(close_tag) :]
     """
     idx = content.find(close_tag, start)
-    if idx == -1:
-        return -1
-    return idx
+    if idx != -1:
+        return idx
+    # W4-37 容错: minimax 闭标签写错时 (如 </minimax:_call>), 试任意 </minimax:...>
+    if close_tag == "</minimax:tool_call>":
+        import re as _re
+        m = _re.search(r"</minimax:[^>]*>", content[start:])
+        if m:
+            return start + m.start()
+    return -1
 
 
 # ── 单条内容解析 ──────────────────────────────────────────────────────

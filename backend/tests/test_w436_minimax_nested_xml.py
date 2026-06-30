@@ -216,3 +216,149 @@ content: <h1>hi</h1>
     assert resp.tool_calls[0].tool_name == "write_file"
     assert resp.tool_calls[0].arguments["path"] == "demo.html"
     assert "<h1>hi</h1>" in resp.tool_calls[0].arguments["content"]
+
+
+# ═════════════════════════════════════════════════════════
+# W4-37: 装执行检测 + retry
+# ═════════════════════════════════════════════════════════
+
+import asyncio
+from unittest.mock import MagicMock, AsyncMock
+
+
+def _make_msg(role: str, content: str):
+    from app.core.base import Message
+    return Message(role=role, content=content)
+
+
+@pytest.mark.asyncio
+async def test_minimax_fake_execution_detected_and_retry():
+    """MiniMaxLLM.chat: 装执行 → 加 reminder retry 1 次"""
+    from app.llm.openai_compatible import MiniMaxLLM
+    from app.llm.base import LLMResponse, ToolCallResult
+
+    call_log = []
+
+    async def fake_chat_super(self, messages, tools=None):
+        call_log.append(("call", len(messages)))
+        # 第 1 次: 装执行纯文本 (无 tool_call)
+        if len(call_log) == 1:
+            return LLMResponse(content="已写入 /tmp/hello.html 成功, 共 100 字符")
+        # 第 2 次: 真 tool_call
+        return LLMResponse(
+            content="好的",
+            tool_calls=[ToolCallResult(
+                tool_name="write_file",
+                arguments={"path": "/tmp/hello.html", "content": "<h1>hi</h1>"},
+                tool_call_id="tc1",
+            )],
+        )
+
+    # patch OpenAICompatibleLLM.chat
+    from app.llm.openai_compatible import OpenAICompatibleLLM
+    original_chat = OpenAICompatibleLLM.chat
+    OpenAICompatibleLLM.chat = fake_chat_super
+    try:
+        llm = MiniMaxLLM(api_key="test")
+        msgs = [_make_msg("user", "写 hello.html")]
+        resp = await llm.chat(msgs, tools=None)
+
+        # 1. 被调了 2 次 (装执行 + retry)
+        assert len(call_log) == 2, f"expected 2 calls, got {len(call_log)}"
+
+        # 2. retry 时 messages 比第 1 次多 1 (system reminder)
+        _, n1 = call_log[0]
+        _, n2 = call_log[1]
+        assert n2 == n1 + 1, f"retry should add 1 message, got {n1} -> {n2}"
+
+        # 3. 最终响应有 tool_call
+        assert resp.has_tool_calls
+        assert resp.tool_calls[0].tool_name == "write_file"
+    finally:
+        OpenAICompatibleLLM.chat = original_chat
+
+
+@pytest.mark.asyncio
+async def test_minimax_fake_execution_not_triggered_for_normal_text():
+    """普通文本 (无执行词 + 路径) → 不 retry"""
+    from app.llm.openai_compatible import MiniMaxLLM, OpenAICompatibleLLM
+    from app.llm.base import LLMResponse
+
+    call_count = [0]
+    async def fake_chat_super(self, messages, tools=None):
+        call_count[0] += 1
+        return LLMResponse(content="这是一个普通回答, 不涉及工具调用")
+
+    original_chat = OpenAICompatibleLLM.chat
+    OpenAICompatibleLLM.chat = fake_chat_super
+    try:
+        llm = MiniMaxLLM(api_key="test")
+        msgs = [_make_msg("user", "你好")]
+        await llm.chat(msgs, tools=None)
+        # 只调 1 次, 不 retry
+        assert call_count[0] == 1
+    finally:
+        OpenAICompatibleLLM.chat = original_chat
+
+
+@pytest.mark.asyncio
+async def test_minimax_fake_execution_not_triggered_when_has_tool_calls():
+    """响应含 tool_call → 不 retry (即使文本也有'已写入'词)"""
+    from app.llm.openai_compatible import MiniMaxLLM, OpenAICompatibleLLM
+    from app.llm.base import LLMResponse, ToolCallResult
+
+    call_count = [0]
+    async def fake_chat_super(self, messages, tools=None):
+        call_count[0] += 1
+        return LLMResponse(
+            content="已写入 /tmp/x",  # 装执行词但有 tool_call
+            tool_calls=[ToolCallResult(
+                tool_name="write_file", arguments={"path": "/tmp/x", "content": "x"},
+                tool_call_id="tc",
+            )],
+        )
+
+    original_chat = OpenAICompatibleLLM.chat
+    OpenAICompatibleLLM.chat = fake_chat_super
+    try:
+        llm = MiniMaxLLM(api_key="test")
+        msgs = [_make_msg("user", "写")]
+        resp = await llm.chat(msgs, tools=None)
+        assert call_count[0] == 1
+        assert resp.has_tool_calls
+    finally:
+        OpenAICompatibleLLM.chat = original_chat
+
+
+# ═════════════════════════════════════════════════════════
+# W4-37: 闭标签容错 (</minimax:_call> 等)
+# ═════════════════════════════════════════════════════════
+
+def test_minimax_close_tag_typo_tolerated():
+    """闭标签写错 </minimax:_call> (少 'tool') → 仍能解析"""
+    from app.llm.xml_tool_call_parser import parse_xml_tool_calls
+
+    raw = """<minimax:tool_call>
+<terminal>
+ls -la hello.html
+</terminal>
+</minimax:_call>"""
+    calls, _ = parse_xml_tool_calls(raw)
+    assert len(calls) == 1
+    assert calls[0].tool_name == "terminal"
+    assert "ls -la hello.html" in calls[0].arguments["command"]
+
+
+def test_minimax_close_tag_extra_typo_tolerated():
+    """闭标签写错 </minimax:tool-call> (中划线不是冒号) → 仍能解析"""
+    from app.llm.xml_tool_call_parser import parse_xml_tool_calls
+
+    raw = """<minimax:tool_call>
+<write_file>
+path: a.html
+content: <p>hi</p>
+</write_file>
+</minimax:tool-call>"""
+    calls, _ = parse_xml_tool_calls(raw)
+    assert len(calls) == 1
+    assert calls[0].tool_name == "write_file"

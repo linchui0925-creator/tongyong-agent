@@ -1,80 +1,62 @@
+"""Ollama 本地 LLM 实现
+
+W4-34 改:
+1. 切到 OpenAI 兼容端点 /v1/chat/completions (ollama 0.1.14+ 稳定支持),
+   继承 OpenAICompatibleLLM, 自动获得 tools 传 + tool_calls 解析 + 重试。
+2. 保留 get_embedding / initialize 的特殊点 (ollama 原生 /api 端点, 用 prompt 字段, /tags 探活)。
+3. api_key 改为可选 (本地 ollama 不需要 key)。
+
+旧实现走 /api/chat 原生端点, body 不传 tools, 永远只回纯文本 — 已修。
 """
-Ollama 本地LLM实现
-支持本地Ollama服务运行的模型
-"""
-from typing import List, AsyncIterator, Optional, Dict
-from app.llm.base import BaseLLM, LLMError, LLMResponse
-from app.core.base import Message
 import logging
+from typing import List
+
 import httpx
-import asyncio
+
+from app.llm.openai_compatible import OpenAICompatibleLLM
+from app.core.base import Message
 
 logger = logging.getLogger(__name__)
 
+# ollama 原生 API 根 (用于 embedding + 探活, 不参与 chat)
+_OLLAMA_NATIVE_BASE = "http://localhost:11434/api"
 
-class OllamaLLM(BaseLLM):
+
+class OllamaLLM(OpenAICompatibleLLM):
     DEFAULT_MODEL = "llama3"
-    DEFAULT_API_BASE = "http://localhost:11434/api"
-    
+    # OpenAI 兼容端点 (ollama 0.1.14+ 支持 function calling)
+    DEFAULT_API_BASE = "http://localhost:11434/v1"
+
     def __init__(self, api_key: str = None, model: str = None):
-        super().__init__(api_key, model or self.DEFAULT_MODEL)
-        self.api_base = self.DEFAULT_API_BASE
-    
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> LLMResponse:
-        chat_messages = [{"role": msg.role, "content": msg.content} for msg in messages]
-        
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{self.api_base}/chat",
-                json={"model": self.model, "messages": chat_messages, "stream": False}
-            )
-            response.raise_for_status()
-            result = response.json()
-            if "message" in result:
-                return LLMResponse(content=result["message"]["content"])
-            raise LLMError("响应格式错误", "INVALID_RESPONSE")
-    
+        super().__init__(api_key, model)
+
     async def get_embedding(self, text: str) -> List[float]:
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.api_base}/embeddings",
-                json={"model": self.model, "prompt": text}
-            )
-            response.raise_for_status()
-            result = response.json()
-            if "embedding" in result:
-                return result["embedding"]
-        
+        # ollama 原生 /api/embeddings 用 prompt 不是 input
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{_OLLAMA_NATIVE_BASE}/embeddings",
+                    json={"model": self.model, "prompt": text},
+                )
+                response.raise_for_status()
+                result = response.json()
+                if "embedding" in result:
+                    return result["embedding"]
+        except Exception as e:
+            logger.warning(f"ollama embedding 失败, 用 fallback hash: {e}")
+
+        # fallback: hash 派生伪向量
         import hashlib
         hash_bytes = hashlib.sha256(text.encode()).digest()
         return [(hash_bytes[i % len(hash_bytes)] / 128.0) - 1.0 for i in range(1024)]
-    
-    async def stream_chat(self, messages: List[Message]) -> AsyncIterator[str]:
-        chat_messages = [{"role": msg.role, "content": msg.content} for msg in messages]
-        
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
-                "POST",
-                f"{self.api_base}/chat",
-                json={"model": self.model, "messages": chat_messages, "stream": True}
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        try:
-                            import json
-                            data = json.loads(line)
-                            if "message" in data and "content" in data["message"]:
-                                yield data["message"]["content"]
-                        except:
-                            continue
-    
+
     async def initialize(self) -> bool:
+        # 走 /tags 探活, 不烧一次 chat
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(f"{self.api_base}/tags")
+                response = await client.get(f"{_OLLAMA_NATIVE_BASE}/tags")
                 self._initialized = response.status_code == 200
                 return self._initialized
-        except:
+        except Exception:
             self._initialized = False
             return False

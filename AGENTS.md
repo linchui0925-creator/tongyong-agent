@@ -193,6 +193,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `e66173e` | W4-33 | prompt 精简 10.4KB → 5.3KB (-49%), 删 cli/*.md + personality.md |
 | `2bcb54b` | W4-32 | XML 工具调用兜底 — 修 minimax/MiniMax-Text-01 幻觉 (parser + system_prompt) |
 | `f7e5f20` | W4-30 | chat 字体 + markdown (react-markdown) + 4 套主题切换 |
 | `b6fea2d` | W4-29 | chat UI 改 WeChat/iMessage 风格, 加 header/avatar |
@@ -206,6 +207,27 @@ with TestClient(app) as c:
 | `b0df7af` | W4-21 | 工具模块 `_register_tools()` 显式注册 |
 
 历史 commit 看 `git log --oneline -50`。
+
+---
+
+## 6.5 已知坑 (按 W4 倒序)
+
+### W4-33: System Prompt 精简 (-49%)
+
+- **现象**: 4 层 prompt (domains + base + cap + skills) 实际注入 10.4KB, 重复点 ≥ 5 处, 3 处自相矛盾
+  - 身份讲 2 遍 (base.## 身份 + identity.md)
+  - 工具讲 4 遍 (base.## 工具调用 + env_capabilities + cli/commands.md + 5 个 cli/*.md)
+  - 记忆讲 4 遍 (base + personality + memory_system + _inject_memory 实际内容)
+  - 禁装执行讲 3 遍 (执行纪律 / 节奏 / 校验 / identity.## 任务执行规则)
+  - 矛盾: base 说"专业友好的 AI 助手" vs identity 说"通义千问驱动"
+  - 矛盾: base.## 平台提示 说"用纯文本回复" vs W4-30 markdown 渲染
+- **修法**:
+  - base.py 2.5KB → 762B (-70%), 删 ## 身份/## 记忆机制/## 平台提示/### 调用形式详尽枚举
+  - identity.md 2.5KB → 784B (-68%), 删 ## 任务执行规则 (与 base 重复)
+  - 删 cli/*.md (5 个) + personality.md, 与 P4 (删 tools.md) 同理
+- **实际注入**: 10.4KB → 5.3KB (-49%)
+- **锁基线**: `tests/test_prompt_slim.py` 16 用例 (字节预算 + 章节必须存在 + 重复点不能再出现)
+- **已知坑**: cron.md 仍每次都注入 (~1.5KB) — 后续可改成 `integrator.get_filtered(message)` 按需加载
 
 ---
 

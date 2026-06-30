@@ -32,6 +32,7 @@
 > 📝 W4-32 修复 (2026-06-25): minimax/MiniMax-Text-01 工具调用幻觉 — content 不带 `message.tool_calls` 字段, 改成 XML 编码文本; 加 `xml_tool_call_parser.py` + system_prompt 提示
 > 📝 W4-33 重构 (2026-06-29): System Prompt 精简 10.4KB → 5.3KB (-49%), 删 cli/*.md (5) + personality.md, 解决 4 层 prompt 重复点 ≥ 5 + 矛盾 3 处
 > 📝 **W4-36 修复 (2026-06-30)**: minimax 嵌套 XML tool_call 解析 — LLM 实际输出 `<minimax:tool_call><write_file>...<terminal>...</terminal></minimax:tool_call>` 嵌套 + 错配闭标签 `</invoke>`, W4-32 parser 3 处 fail (整段当单条 / HTML 标签当 tool_name / content 截到首行). 修法: 三路 fallback (平展 JSON / 平展 bash / 嵌套子块) + `_KNOWN_TOOLS` 白名单定位 + `_parse_kv_block` value 跨行 + system_prompt 调强禁止 XML 伪调用. 8 个 E2E 测试, 124 passed 9 skipped
+> 📝 **W4-37 修复 (2026-06-30)**: minimax 闭标签容错 + 装执行 retry - (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时 fallback 任意 `</minimax:...>` 闭标签 (修 `</minimax:_call>` 等 typo); (b) `MiniMaxLLM.chat` override 检测成功词加路径加 0 tool_call 触发 retry 1 次加 system reminder, 仅本类生效. 5 个新 E2E test, 13/13 W4-37 测试加 211/211 安全子集过
 
 > 📝 **W4-35 修复 (2026-06-29)**: agent 端到端写 HTML — 修 2 真 bug 阻塞 `AgentEngine` 调 `write_file` 写文件: (1) `app/core/agent.py:1538` path_scoped 调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` unbound, ReAct 循环 UnboundLocalError 死掉; (2) `_is_sensitive_write` 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成 `/private/var/` 敏感路径。修法: 跟 line_scoped 一致用 `is_error` 决 success / result / error_msg; 拆 `/private/var/` + 加 `_SAFE_PATH_PREFIXES` 白名单。新增 `tests/test_w434_agent_writes_html.py` 3 个 E2E (mock LLM → 真实写文件 → 字节级验证; 写 + 启 server + curl)
 
@@ -216,6 +217,8 @@ frontend/src/
 - ✅ **[W4-9 已修] 辩论 mode round 按 debate_position 排序**（[team.py:28-36, 119-120](backend/app/core/multi_agent/team.py)）—— 抽出 module-level helper `sort_roles_by_debate_position()`, first/second/third/fourth/judge 顺序保证, 未填 position 兜底 99
 - ✅ **[W4-10 已修] delegate_task 改用 ContextVar 隔离委派深度**（[delegate_task.py:39, 433, 484](backend/app/tools/implementations/delegate_task.py)）—— `set/reset(token)` 配对, 异常路径仍 finally reset, 跨 Task 不串扰
 - 🟡 **`must_use_tool` 触发词列表对中文小写化无意义**（[agent.py:706-709](backend/app/core/agent.py)），`.lower()` 对中文是恒等
+- ✅ **[W4-37] minimax 闭标签容错 + 装执行 retry**（[xml_tool_call_parser.py:_find_close](backend/app/llm/xml_tool_call_parser.py) + [openai_compatible.py:MiniMaxLLM.chat](backend/app/llm/openai_compatible.py)）—— 闭标签写错 (`</minimax:_call>` 等) 整段匹配不到 → `_find_close` fallback 任意 `</minimax:...>`; minimax 偶尔纯文本装执行 (成功词+路径 + 0 tool_call) → `MiniMaxLLM.chat` override 检测 retry 1 次加 system reminder, 仅本类生效. 5 个新 E2E test
+- 🟠 **minimax LLM function call 整体不靠谱** (W4-37 新发现) — 5 种 minimax 工具调用失败模式 (嵌套 XML/平展 JSON/平展 bash/闭标签 typo/装执行纯文本), 修不完, **建议换 deepseek/yi** (原生 OpenAI 兼容 function call, 不需要 XML 兜底)
 - 🟡 **辩论模式上游仍是 round 轮次驱动**（[team.py:200-260](backend/app/core/multi_agent/team.py)），run_v2_stream 与 run_stream 并存，无明确弃用时间表
 
 ### 4.3 测试 / 覆盖率

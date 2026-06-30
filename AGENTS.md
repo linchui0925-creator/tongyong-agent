@@ -21,7 +21,7 @@
 | LLM 路由 | 通过 `LLMManager` 统一, 支持运行时切换 provider |
 | Agent 协作 | `app/core/multi_agent/team.py` 593 行 — Leader + 多个角色 |
 | 持久化 | SQLite (`backend/data/agent.db`), ChromaDB 向量, langgraph checkpoint |
-| 默认 LLM | MiniMax-M2.5 (从 `llm_config.json` 恢复) |
+| 默认 LLM | MiniMax-M2.5 (从 `llm_config.json` 恢复) — ⚠ minimax function call 不稳, 建议换 deepseek/yi (W4-37 建议) |
 | 协议端口 | backend 8000, frontend 5173 (vite dev proxy /api → 8000) |
 
 ---
@@ -189,6 +189,7 @@ with TestClient(app) as c:
 14. **5 个 provider 不传 tools / 不解析 tool_calls** (W4-34) — baichuan/wenxin/xfyun/chatglm/ollama 改继承 `OpenAICompatibleLLM`,自动获得 tools + tool_calls 解析。ollama 切到 `/v1` OpenAI 兼容端点(0.1.14+),保留 embedding/init 的原生 /api 端点。
 15. **agent 写 HTML 端到端阻塞** (W4-35) — (a) `agent.py:1538` path_scoped 调 `_format_tool_result_text` 传 `success=False` hardcode + `error_msg=error_msg` unbound (try 成功路径), ReAct 循环 UnboundLocalError 死掉; (b) `_is_sensitive_write` 把 macOS per-user TMPDIR `/private/var/folders/...` 误判成 `/private/var/` 敏感路径, 拒绝写。修法: 跟 line_scoped 一致用 `is_error` 决 success / result / error_msg; `_SENSITIVE_PATH_PREFIXES` 拆细 + 加 `_SAFE_PATH_PREFIXES` 白名单。
 16. **minimax 嵌套 XML tool_call 解析 (W4-32 只覆盖平展)** (W4-36) — minimax 实际输出是**嵌套**: `<minimax:tool_call>` 包多个 `<write_file>` / `<terminal>` 子块, 闭标签错配 (`<write_file>...</invoke>`), content 多行含 HTML 标签。W4-32 parser 3 处 fail: 整段当单条 / 把 HTML 标签当 tool_name / content 截到首行。修法: 3 路 fallback (平展 JSON / 平展 bash / 嵌套子块) + `_KNOWN_TOOLS` 白名单定位 + `_parse_kv_block` value 跨行。
+17. **minimax 闭标签写错 + 装执行幻觉** (W4-37) — (a) `<minimax:tool_call>...</minimax:_call>` 闭标签少了 "tool" 整段匹配不到; (b) minimax 偶尔纯文本写"已写入 /path 成功"但 0 tool_call, 用户看到"已写好"但文件没真写。修法: (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时兜底任意 `</minimax:...>`; (b) `MiniMaxLLM.chat` override 检测"成功词+路径"组合触发 retry 1 次加 system reminder, 仅本类生效不污染其他 LLM。
 
 ---
 
@@ -196,6 +197,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `ed9d196` | W4-37 | minimax 闭标签容错 (`</minimax:_call>` 等) + 装执行纯文本 retry 1 次 (MiniMaxLLM.chat override, 仅本类生效) |
 | `3b18b82` | W4-36 | minimax 嵌套 XML tool_call 解析: 3 路 fallback (平展 JSON/bash/嵌套) + 已知工具名白名单 + value 跨行, 写 HTML 端到端真跑通 |
 | `65e08d0` | W4-35 | agent 端到端写 HTML: 修 path_scoped UnboundLocalError + macOS TMPDIR 误判, + E2E 测试 (mock LLM → 真实写文件 → 字节级验证) |
 | `135bd6a` | W4-34 | 5 provider 改继承 OpenAICompatibleLLM, 恢复 tools 传 + tool_calls 解析 (-70% LOC), 加 CI gate 测试 |
@@ -217,6 +219,20 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-37: minimax 闭标签容错 + 装执行 retry
+
+- **现象**: W4-36 修完嵌套 XML 之后用户前端再实测"写 hello.html" 仍报"已写好"但文件没真出现. 两种 minimax 失败模式:
+  1. **闭标签写错**: LLM 输出 `<minimax:tool_call>...</minimax:_call>` (少 "tool"), 整段因闭标签不匹配被丢弃, 0 tool_call
+  2. **装执行纯文本**: LLM 直接在 content 文本里写"已写入 /tmp/hello.html 成功" (成功词 + 路径), 但 0 tool_call, 用户看到"已写好"实际没调工具
+- **修法**:
+  1. `xml_tool_call_parser._find_close` 找不到精确 `</minimax:tool_call>` 时, fallback 任意 `</minimax:...>` 闭标签 (`re.search(r"</minimax:[^>]*>", content[start:])`)
+  2. `MiniMaxLLM.chat` override (子类, 不影响其他 LLM) 检测 `_looks_like_fake_execution` (16 成功词 + 路径正则), 命中时拼 system reminder retry 1 次, reminder 明确说"不要在 content 文本里描述虚假执行, 不能调就如实说换模型"
+- **测试**: `tests/test_w436_minimax_nested_xml.py` 加 5 个 (W4-37 闭标签 typo / 闭标签中划线 / 装执行 retry / 普通文本不触发 / 有 tool_call 不触发)
+- **回归**: 13/13 W4-37 测试过 + 211/211 安全子集过
+- **遗留风险**: minimax 模型整体 function call 不靠谱, 装执行启发式 (成功词+路径) 可能误判用户问句, 后续建议换 deepseek/yi (原生 OpenAI 兼容 function call, 不需要 XML 兜底)
+
+---
 
 ### W4-36: minimax 嵌套 XML tool_call 解析 (写 HTML 端到端真跑通)
 

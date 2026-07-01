@@ -42,8 +42,14 @@ function walk(node: Parent | PhrasingContent | Root): void {
         newChildren.push({ type: 'text', value: text.slice(cursor) } as Text);
       }
     } else if ('children' in child) {
-      walk(child as Parent);
-      newChildren.push(child);
+      // 不递归进 code 元素 — 里面的 text 留给 MarkdownContent 的 code 组件处理
+      // 否则 code 组件会看到 children 是 filePath 元素, String(children) 变 '[object Object]'
+      if (child.type === 'code' || child.type === 'inlineCode') {
+        newChildren.push(child);
+      } else {
+        walk(child as Parent);
+        newChildren.push(child);
+      }
     } else {
       newChildren.push(child);
     }

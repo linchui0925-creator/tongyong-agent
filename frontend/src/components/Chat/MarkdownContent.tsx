@@ -12,6 +12,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { remarkFilePaths } from './filePathRemark';
+import { detectFilePaths } from './pathDetector';
 import { FilePathLink } from './FilePathLink';
 import './MarkdownContent.css';
 
@@ -78,11 +79,23 @@ export function MarkdownContent({ text, variant = 'agent' }: MarkdownContentProp
           ),
           // 水平线
           hr: () => <hr className="md-hr" />,
-          // 代码
+          // 代码 — W4-40 fix: inline code 命中文件路径时, 渲染 FilePathLink (可点击打开) 而非复制按钮
+          // isInline 判断: mdast 里 inlineCode 和 code 节点都有 position, 之前 !node?.position 永远 false
+          // 走 node.type === 'inlineCode' 或 props.inline === true
           code: ({ className, children, ...props }) => {
-            const isInline = !(props as any).node?.position;
+            // W4-40 fix: inline code 命中文件路径时, 渲染 FilePathLink (可点击打开) 而非复制按钮
+            // hast 节点对 inline 和 block 都长一样 (tagName='code'), 用单行 vs 多行判断 inline
+            // 单行 = inline, 多行 = block (不可能是文件路径)
             const codeText = String(children).replace(/\n$/, '');
+            const isInline = !codeText.includes('\n');
             if (isInline) {
+              // W4-40 fix: `hello.html` / `./foo.py` / `/abs/path` — 路径被 markdown 包成 inline code, 在这层改成可点击 pill
+              // 复用 detectFilePaths 保证跟 remark 插件判定一致 (含 bare filename / 绝对 / 相对 / 排除 markdown link + URL)
+              const trimmed = codeText.trim();
+              const looksLikePath = trimmed.length > 0 && detectFilePaths(trimmed).some(p => p.path === trimmed);
+              if (looksLikePath) {
+                return <FilePathLink path={trimmed} />;
+              }
               return <code className="md-code-inline" {...props}>{children}</code>;
             }
             return (

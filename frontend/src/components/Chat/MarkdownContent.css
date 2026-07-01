@@ -310,3 +310,95 @@
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
 }
+
+
+/* ── W4-44: FilePathLink actions (open/copy 按钮 + toast) ── */
+.md-content .file-link-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: baseline;
+  max-width: 100%;
+}
+.md-content .file-link-wrap .file-link {
+  /* 让 pill 自身还能正常 inline, action 按钮浮在右侧 hover 时 */
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.md-content .file-link-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px 1px 4px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-left: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  vertical-align: baseline;
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+  opacity: 0;
+  transition: opacity 100ms, background 100ms, border-color 100ms;
+}
+.md-content .file-link-wrap:hover .file-link-action,
+.md-content .file-link-wrap:focus-within .file-link-action {
+  opacity: 1;
+}
+.md-content .file-link-action:hover {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+}
+.md-content .file-link--copied {
+  background: color-mix(in srgb, #10b981 18%, transparent);
+  border-color: color-mix(in srgb, #10b981 40%, transparent);
+}
+.md-content .file-link__check {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: #10b981;
+  font-weight: 700;
+}
+.md-content .file-link-toast {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: #1f2937;
+  color: #f3f4f6;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+  font-family: var(--font, sans-serif);
+}
+.md-content .file-link-toast code {
+  display: inline-block;
+  padding: 0 4px;
+  background: #374151;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  margin-left: 2px;
+}
+.md-content .file-link-toast::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  border: 4px solid transparent;
+  border-top-color: #1f2937;
+}
+.md-content .file-link-toast kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 2px;
+  background: #374151;
+  border: 1px solid #4b5563;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}

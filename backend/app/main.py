@@ -21,6 +21,7 @@ from app.api import dreaming as dreaming_api
 from app.api import skills as skills_api
 from app.api import marketplace as marketplace_api
 from app.api import tool_harness as tool_harness_api
+from app.api import files as files_api
 from app.api.stream import router as stream_router
 from app.core.multi_agent.api import router as team_router
 from app.hermes.routes import router as hermes_router
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(skills_api.router)
     app.include_router(marketplace_api.router)
     app.include_router(tool_harness_api.router)
+    app.include_router(files_api.router)
     app.include_router(stream_router, prefix="/api/chat")
     try:
         from app.api.im_gateway import router as im_gateway_router

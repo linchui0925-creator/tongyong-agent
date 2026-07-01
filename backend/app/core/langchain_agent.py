@@ -29,6 +29,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 from app.core.agent_hooks import trigger_hooks, trigger_hooks_async
+from app.core.agent import _missing_tool_evidence, _required_tool_evidence
 
 from app.core.base import Message
 from app.core.langchain_callbacks import SSEStreamCallback
@@ -537,6 +538,17 @@ async def stream_chat_langchain(
     full_text_clean = re.sub(r"<think>[\s\S]*?</think>", "", full_text, flags=re.DOTALL).strip()
     # display_text 是"用户实际看到的回答" — 用于 ctx 内存 + 持久化
     display_text = full_text_clean
+    required_evidence = _required_tool_evidence(message)
+    missing_evidence = _missing_tool_evidence(required_evidence, tools_used, commands_executed)
+    if missing_evidence:
+        stop_reason = "任务缺少真实交付证据: " + "；".join(missing_evidence)
+        needs_continue = True
+        display_text = (
+            "⚠️ 任务未完整交付，不能标记为完成。\n\n"
+            + "\n".join(f"- {item}" for item in missing_evidence)
+            + "\n\n请点击继续执行，下一轮必须优先调用缺失工具。"
+        )
+        yield _content(display_text)
     if display_text:
         ctx.add_message("assistant", display_text)
 

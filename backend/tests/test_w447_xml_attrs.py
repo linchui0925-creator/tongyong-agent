@@ -175,3 +175,94 @@ def test_backward_minimax_wrapper():
     assert calls[0].tool_name == "terminal"
     assert "ls -la" in calls[0].arguments["command"]
 
+
+def test_unclosed_tool_call_function_expression():
+    """W4-48: TongYong 实测 <tool_call>terminal(command="...") 无闭合标签。"""
+    s = (
+        "先看项目结构。"
+        "<tool_call>terminal(command=\"find . -maxdepth 3 -name 'package.json' "
+        "-not -path '*/node_modules/*' | head -5\")"
+    )
+    calls, cleaned = parse_xml_tool_calls(s)
+    assert len(calls) == 1
+    assert calls[0].tool_name == "terminal"
+    assert "find . -maxdepth 3" in calls[0].arguments["command"]
+    assert "<tool_call>" not in cleaned
+    assert "先看项目结构" in cleaned
+
+
+def test_unclosed_tool_call_arg_key_value_write_file_with_tsx():
+    """W4-48: TongYong 实测 <tool_call>write_file + arg_key/arg_value 大段 TSX。"""
+    tsx = (
+        "import React, { useRef } from 'react';" + NL + NL
+        + "export function GestureParticlesPanel() {" + NL
+        + "  return (" + NL
+        + "    <section className=\"gesture-shell\">" + NL
+        + "      <canvas ref={useRef<HTMLCanvasElement>(null)} />" + NL
+        + "      <button aria-label=\"pinch mode\">Pinch</button>" + NL
+        + "    </section>" + NL
+        + "  );" + NL
+        + "}" + NL
+    )
+    s = (
+        "我会直接写入组件文件。" + NL
+        + "<tool_call>write_file" + NL
+        + "<arg_key>path</arg_key>" + NL
+        + "<arg_value>/Users/linc/Documents/tongyong-agent/frontend/src/components/GestureParticles/GestureParticlesPanel.tsx</arg_value>" + NL
+        + "<arg_key>content</arg_key>" + NL
+        + "<arg_value>" + tsx + "</arg_value>"
+    )
+    calls, cleaned = parse_xml_tool_calls(s)
+    assert len(calls) == 1
+    assert calls[0].tool_name == "write_file"
+    assert calls[0].arguments["path"].endswith("GestureParticlesPanel.tsx")
+    assert "<canvas ref={useRef<HTMLCanvasElement>(null)} />" in calls[0].arguments["content"]
+    assert "<section className=\"gesture-shell\">" in calls[0].arguments["content"]
+    assert "<tool_call>" not in cleaned
+    assert "我会直接写入组件文件" in cleaned
+
+
+def test_tool_call_arg_key_value_with_closing_tag_and_following_text():
+    """W4-48: arg_key/arg_value 格式如果有闭合标签, 只剥离工具块并保留后续文本。"""
+    s = (
+        "执行写入:" + NL
+        + "<tool_call>write_file" + NL
+        + "<arg_key>path</arg_key><arg_value>frontend/src/demo.tsx</arg_value>" + NL
+        + "<arg_key>content</arg_key><arg_value><div data-mode=\"circle\">OK</div></arg_value>" + NL
+        + "</tool_call>" + NL
+        + "然后我会运行 npm build。"
+    )
+    calls, cleaned = parse_xml_tool_calls(s)
+    assert len(calls) == 1
+    assert calls[0].arguments == {
+        "path": "frontend/src/demo.tsx",
+        "content": '<div data-mode="circle">OK</div>',
+    }
+    assert "<tool_call>" not in cleaned
+    assert "执行写入" in cleaned
+    assert "然后我会运行 npm build" in cleaned
+
+
+def test_tool_call_arg_key_value_unclosed_final_content():
+    """W4-48: 大段 content 被截断、缺 </arg_value> 时仍保留 path+content。"""
+    s = (
+        "<tool_call>write_file" + NL
+        + "<arg_key>path</arg_key><arg_value>frontend/src/GestureParticles/gestureRecognizer.ts</arg_value>" + NL
+        + "<arg_key>content</arg_key><arg_value>export const x = '<canvas>'" + NL
+        + "export const y = 2"
+    )
+    calls, cleaned = parse_xml_tool_calls(s)
+    assert len(calls) == 1
+    assert calls[0].tool_name == "write_file"
+    assert calls[0].arguments["path"].endswith("gestureRecognizer.ts")
+    assert "export const x = '<canvas>'" in calls[0].arguments["content"]
+    assert "export const y = 2" in calls[0].arguments["content"]
+    assert cleaned == ""
+
+
+def test_tool_call_arg_key_value_write_file_missing_required_args_is_not_emitted():
+    """W4-48: 缺 path/content 的 write_file 不应变成无效工具调用。"""
+    s = "<tool_call>write_file<arg_key>content</arg_key><arg_value>only content</arg_value>"
+    calls, cleaned = parse_xml_tool_calls(s)
+    assert calls == []
+    assert "<tool_call>write_file" in cleaned

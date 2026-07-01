@@ -94,3 +94,44 @@ def test_2nd_round_fallback_message():
     assert "连续 2 轮" in src, "fallback 消息应当说明连续 2 轮"
     # 应当 break 出去不再循环
     assert "2nd round" in src or "不再无限重试" in src
+
+
+def test_required_evidence_for_frontend_build_task():
+    """W4-48: 前端长任务必须有写文件 + 构建验证证据。"""
+    from app.core.agent import _required_tool_evidence, _missing_tool_evidence
+
+    req = _required_tool_evidence(
+        "在 frontend React 项目里完成一个 UI，最后运行 npm run build 验证"
+    )
+    assert "write" in req
+    assert "build" in req
+
+    missing = _missing_tool_evidence(req, ["ls", "read_file"], [])
+    assert any("write_file" in item or "patch" in item for item in missing)
+    assert any("npm run build" in item for item in missing)
+
+
+def test_required_evidence_satisfied_by_write_and_build():
+    from app.core.agent import _required_tool_evidence, _missing_tool_evidence
+
+    req = _required_tool_evidence(
+        "修改 frontend React UI，并运行 npm run build 验证"
+    )
+    missing = _missing_tool_evidence(
+        req,
+        ["ls", "read_file", "write_file", "terminal"],
+        ["cd frontend && npm run build"],
+    )
+    assert missing == []
+
+
+def test_langchain_path_checks_required_evidence():
+    """W4-48: 默认 LangChain 流式路径也必须执行交付证据门禁。"""
+    import inspect
+    from app.core import langchain_agent
+
+    src = inspect.getsource(langchain_agent)
+    assert "_required_tool_evidence" in src
+    assert "_missing_tool_evidence" in src
+    assert "任务未完整交付" in src
+    assert "needs_continue = True" in src

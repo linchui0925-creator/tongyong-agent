@@ -192,6 +192,7 @@ with TestClient(app) as c:
 17. **minimax 闭标签写错 + 装执行幻觉** (W4-37, 现已换 deepseek 默认) — minimax 5 种工具调用失败模式, 修不完. **W4-38 决策**: 默认 LLM 换 deepseek/deepseek-v4-flash, 用户提供 sk. minimax 修复作为兜底保留 (其他用户可能还在用). — (a) `<minimax:tool_call>...</minimax:_call>` 闭标签少了 "tool" 整段匹配不到; (b) minimax 偶尔纯文本写"已写入 /path 成功"但 0 tool_call, 用户看到"已写好"但文件没真写。修法: (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时兜底任意 `</minimax:...>`; (b) `MiniMaxLLM.chat` override 检测"成功词+路径"组合触发 retry 1 次加 system reminder, 仅本类生效不污染其他 LLM。
 18. **deepseek reasoning model 解析 (跟 minimax 一样的 XML 坑)** (W4-39) — deepseek-v4-flash 是 reasoning model, 响应 (a) `content=""` + `reasoning_content="..."` 真实内容在 reasoning_content, 原 `_parse_response_with_thinking` 只读 content 拿不到; (b) 工具调用走 `<minimax:tool_call>` XML 不走 `tool_calls` 字段. 修法: 1) content 空 fallback reasoning_content; 2) 路径 B 加 XML 兜底 (跟 MiniMaxLLM 一致). 5 个新 test.
 19. **LangChain ReAct stream 丢 tool_calls + 长任务不可续跑** (W4-47) — `TongYongLLMAdapter._astream()` 旧版只读 `base_llm.stream_chat()` 文本, reasoning/XML 解析出的 `LLMResponse.tool_calls` 没传给 LangChain chunk, agent 0 工具调用；同时 LangGraph recursion limit 只报错, 前端不能继续。修法: `_astream()` 改走 `chat()` 拿完整响应并在 final chunk 带 `tool_calls`; SSE `done` 增加 `needs_continue/stop_reason/continue_prompt`; 前端显示“继续执行”。另: XML attrs 只在顶层 `<path>...</path>` 参数集合时启用, 避免把老 kv 格式里的 HTML `<h1>` 误当参数。
+20. **真实前端长任务仍会假完成/伪调用** (W4-48) — GLM-5.2 实测会输出 `<tool_call>terminal(command="...")` 无闭合、`<tool_call>write_file<arg_key>...` 伪调用, 且长任务只读文件后把大段计划/源码输出到聊天。修法: parser 支持函数式伪调用 + arg_key/arg_value + 缺闭合 final content; `write_file` 缺 path/content 不执行; agent/langchain 收尾加交付证据门禁, 前端写文件/build 缺证据时 `needs_continue=true`, 不再假装完成。
 
 ---
 
@@ -199,6 +200,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W4-48 | 真实前端长任务修复: 解析 `<tool_call>fn(...)` / `<arg_key>` 伪调用; 缺写文件/build 证据时标记未完整交付并给 continue |
 | (pending) | W4-47 | LangChain ReAct stream 保留 tool_calls; reasoning_content XML attrs 兜底; 长任务 recursion limit 返回可继续状态 + 前端继续按钮 |
 | `23a80dd` | W4-41 | edgefn.net 聚合 provider: GLM-5.2 (reasoning + 原生 function call) + DeepSeek; AddModelDialog 加 edgefn 选项 |
 | `29f44e1` | W4-40 | chat 文件路径可点击链接 (Codex/Claude 风格 pill): pathDetector + remarkFilePaths + FilePathLink, 5 种 icon + 颜色 accent |
@@ -226,6 +228,21 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-48: 真实前端长任务 function call 兼容 + 交付证据门禁
+
+- **场景**: 用户明确要求“让 TongYong 自己从前端真实测试完成一个带粒子特效、手势控制识别的 React UI, 一个轮回复内完整完成, 不能假装完成”。
+- **实测失败模式**:
+  1. `<tool_call>terminal(command="find ...")` 无 `</tool_call>` 闭合, 旧 parser 0 tool call。
+  2. `<tool_call>write_file<arg_key>path</arg_key><arg_value>...</arg_value>...` 伪调用, 旧 parser 不识别。
+  3. 大段 TSX 输出被截断时最后一个 `<arg_value>` 缺闭合, 旧 parser 只拿到 path 或只拿到 content, 造成无效 `write_file`。
+  4. LangChain 路径只读文件后输出计划/源码, 没有 `write_file/patch` 和 `npm run build`, 但前端看到 `done`。
+- **修法**:
+  - `xml_tool_call_parser.py` 增加函数式伪调用解析和 `<arg_key>/<arg_value>` 解析; final `arg_value` 缺闭合时按尾部 content 捕获。
+  - `write_file` 缺 `path` 或 `content` 时不再发无效工具调用。
+  - `agent.py` + `langchain_agent.py` 增加交付证据门禁: 前端/React/UI + build 类任务必须有 `write_file|patch` 和 `terminal npm run build` 证据; 缺证据时最终回复改为“任务未完整交付”, `done.needs_continue=true`。
+- **测试**: parser/must-use-tool 54 passed; 安全子集 173 passed。
+- **E2E 证据**: `/api/chat/stream` 真实请求 `codex-evidence-gate-test` 最终 `needs_continue=true`, `stop_reason` 明确缺 `write_file/patch` 与 `npm run build`; 不再假装完成。遗留: 模型仍倾向把源码输出到 content 而非原生 tool_calls, 下一步应继续压制 content 伪调用或强制工具优先。
 
 ### W4-47: LangChain ReAct function call 兼容 + 长任务续跑
 

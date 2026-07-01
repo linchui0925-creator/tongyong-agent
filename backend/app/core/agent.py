@@ -111,6 +111,49 @@ def _validate_execution_claim(text: str, tools_used: list, commands_executed: li
     return True, None
 
 
+def _required_tool_evidence(message: str) -> Dict[str, str]:
+    """从用户请求推断最低交付证据。
+
+    目标不是做复杂意图识别，而是拦住高风险长任务的常见假完成：
+    只读文件/输出方案，却没有实际写文件或运行验证。
+    """
+    text = (message or "").casefold()
+    requirements: Dict[str, str] = {}
+
+    write_terms = (
+        "新增", "创建", "修改", "写入", "写文件", "完成一个", "实现",
+        "build", "ui", "react", "frontend", "前端", "界面", "组件",
+    )
+    if any(term in text for term in write_terms) and (
+        "文件" in text or "frontend" in text or "react" in text or "前端" in text or "ui" in text
+    ):
+        requirements["write"] = "缺少真实写文件证据：必须调用 write_file 或 patch。"
+
+    build_terms = ("npm run build", "构建", "build", "验证", "编译")
+    if any(term in text for term in build_terms):
+        requirements["build"] = "缺少构建/验证证据：必须调用 terminal 运行 npm run build 或等价命令。"
+
+    return requirements
+
+
+def _missing_tool_evidence(requirements: Dict[str, str], tools_used: list, commands_executed: list) -> List[str]:
+    """根据本轮工具记录判断还缺哪些交付证据。"""
+    missing: List[str] = []
+    if "write" in requirements and not any(t in ("write_file", "patch") for t in tools_used):
+        missing.append(requirements["write"])
+    if "build" in requirements:
+        has_build = any(
+            "npm run build" in (cmd or "").casefold()
+            or "npm build" in (cmd or "").casefold()
+            or "pnpm build" in (cmd or "").casefold()
+            or "yarn build" in (cmd or "").casefold()
+            for cmd in commands_executed
+        )
+        if not has_build:
+            missing.append(requirements["build"])
+    return missing
+
+
 # ── must_use_tool 触发词 (W4-24 P1-3: 模块级常量, 便于测试) ──
 # casefold() 后, 中文 (no-op) + 英文 (case-fold) 都覆盖
 MUST_USE_TOOL_TRIGGERS = (
@@ -967,6 +1010,8 @@ class AgentEngine:
 
             # ── ReAct 工具调用循环（支持并行 + 预算控制） ──
             final_claim_retry_done = False  # 约束：防止声称执行但无工具证据
+            required_evidence = _required_tool_evidence(message)
+            required_evidence_retry_count = 0
             cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}  # Token 使用量追踪
             while True:
                 # 检查预算是否耗尽
@@ -1194,6 +1239,33 @@ class AgentEngine:
 
                 if not llm_response.has_tool_calls:
                     full_text = llm_response.content
+                    missing_evidence = _missing_tool_evidence(
+                        required_evidence, tools_used, commands_executed
+                    )
+                    if missing_evidence and full_text:
+                        if budget.is_exhausted or required_evidence_retry_count >= 3:
+                            fallback_msg = (
+                                "⚠️ 任务未完整交付："
+                                + "；".join(missing_evidence)
+                                + " 当前只完成了部分工具步骤，不能声称任务已完成。"
+                            )
+                            yield _content(fallback_msg)
+                            final_response_chunks.append(fallback_msg)
+                            break
+                        required_evidence_retry_count += 1
+                        self.context.add_message("assistant", f"[拦截的未交付回复]{full_text[:4000]}")
+                        self.context.add_message(
+                            "system",
+                            "当前回复没有满足用户要求的真实交付证据，不能作为最终回复。"
+                            + "；".join(missing_evidence)
+                            + " 下一轮禁止输出计划、分析或大段源码文本；必须优先返回缺失的 tool_calls。"
+                            "写前端文件时，write_file 必须同时包含 path 和完整 content；"
+                            "代码过长就写一个较小但可编译、功能完整的实现。"
+                            "写完后必须调用 terminal 在 frontend 目录运行 npm run build。"
+                        )
+                        yield _progress("[约束] 缺少真实交付证据，继续强制调用工具。")
+                        budget.advance()
+                        continue
                     if must_use_tool and not tools_used:
                         # 检查预算是否已耗尽，避免在预算耗尽后继续循环
                         if budget.is_exhausted:

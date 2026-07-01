@@ -251,6 +251,95 @@ _ARG_KV_RE = re.compile(
 )
 
 
+_TOOL_CALL_EXPR_RE = re.compile(
+    r"<tool_call>\s*(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*\((?P<args>[\s\S]*?)\)"
+)
+
+_TOOL_CALL_ARGPAIR_OPEN_RE = re.compile(
+    r"<tool_call>\s*(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*",
+    re.DOTALL,
+)
+
+_ARG_PAIR_RE = re.compile(
+    r"\s*<arg_key>(?P<key>[\s\S]*?)</arg_key>\s*"
+    r"<arg_value>(?P<value>[\s\S]*?)</arg_value>",
+    re.DOTALL,
+)
+
+_UNCLOSED_ARG_VALUE_RE = re.compile(
+    r"\s*<arg_key>(?P<key>[\s\S]*?)</arg_key>\s*"
+    r"<arg_value>(?P<value>[\s\S]*)",
+    re.DOTALL,
+)
+
+
+def _parse_call_expr_args(args_text: str) -> dict:
+    """解析 terminal(command="...") 里的 key=value 参数."""
+    args: dict = {}
+    for m in _ARG_KV_RE.finditer(args_text):
+        key = m.group("key")
+        val = m.group("dq") or m.group("sq") or m.group("bare") or ""
+        if val.lower() in ("true", "false"):
+            val = val.lower() == "true"
+        else:
+            try:
+                if "." in val:
+                    val = float(val)
+                else:
+                    val = int(val)
+            except ValueError:
+                pass
+        args[key] = val
+    return args
+
+
+def _parse_tool_call_argpairs(content: str) -> Optional[Tuple[int, int, str, dict]]:
+    """解析 TongYong 实测的 <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value> 格式.
+
+    这个格式常常没有 </tool_call> 闭合标签, 且 arg_value 里会包含大量 TSX/HTML 标签。
+    因此只按明确的 <arg_key>/<arg_value> 成对标签取参数, 不扫描 value 内部标签。
+    返回 (start, end, tool_name, args), end 指向应从 content 中剥离的位置。
+    """
+    m = _TOOL_CALL_ARGPAIR_OPEN_RE.search(content)
+    if not m:
+        return None
+    name = m.group("name")
+    if name not in _KNOWN_TOOL_NAMES:
+        return None
+
+    cursor = m.end()
+    args: dict = {}
+    last_end = cursor
+    while True:
+        pair = _ARG_PAIR_RE.match(content, cursor)
+        if not pair:
+            unclosed = _UNCLOSED_ARG_VALUE_RE.match(content, cursor)
+            if unclosed:
+                key = unclosed.group("key").strip()
+                value = unclosed.group("value").strip()
+                if key and value:
+                    args[key] = value
+                    last_end = len(content)
+            break
+        key = pair.group("key").strip()
+        value = pair.group("value").strip()
+        if key:
+            args[key] = value
+        cursor = pair.end()
+        last_end = cursor
+
+    if not args:
+        return None
+
+    if name == "write_file" and not {"path", "content"}.issubset(args):
+        return None
+
+    close = re.match(r"\s*</tool_call>", content[last_end:])
+    if close:
+        last_end += close.end()
+    return m.start(), last_end, name, args
+
+
 
 
 def _parse_kimi_open_tag(open_tag: str, inner: str) -> Optional[Tuple[str, dict]]:
@@ -477,6 +566,37 @@ def parse_xml_tool_calls(content: str) -> Tuple[List[ToolCallResult], str]:
 
     # 最多 16 次防呆, 避免病态输入死循环
     for _ in range(16):
+        # W4-48: 兼容模型输出的无闭合函数式伪调用:
+        #   <tool_call>terminal(command="find . -maxdepth 2")
+        # 旧逻辑会因找不到 </tool_call> 直接 break, 导致前端看到文本但 0 tools_used.
+        expr = _TOOL_CALL_EXPR_RE.search(remaining)
+        if expr:
+            name = expr.group("name")
+            args = _parse_call_expr_args(expr.group("args"))
+            if name in _KNOWN_TOOL_NAMES and args:
+                out.append(ToolCallResult(
+                    tool_name=name,
+                    arguments=args,
+                    tool_call_id=f"xml_expr_{len(out)}",
+                ))
+                remaining = remaining[:expr.start()] + remaining[expr.end():]
+                continue
+
+        # W4-48: 兼容 TongYong 实测的无闭合 arg_key/arg_value 伪调用:
+        #   <tool_call>write_file
+        #   <arg_key>path</arg_key><arg_value>...</arg_value>
+        #   <arg_key>content</arg_key><arg_value>大量 TSX/HTML...</arg_value>
+        argpairs = _parse_tool_call_argpairs(remaining)
+        if argpairs:
+            ap_start, ap_end, ap_name, ap_args = argpairs
+            out.append(ToolCallResult(
+                tool_name=ap_name,
+                arguments=ap_args,
+                tool_call_id=f"xml_argpair_{len(out)}",
+            ))
+            remaining = remaining[:ap_start] + remaining[ap_end:]
+            continue
+
         # W4-46: 优先识别 <tool_name>...</tool_name> 形式 (read_file / terminal / write_file)
         # 在 _find_open 之前 — 因为 <read_file> 跟已知 wrapper tag 冲突, 但内容是路径
         tool_hit = _find_tool_tag_open(remaining)

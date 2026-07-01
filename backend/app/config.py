@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     moonshot_api_key: Optional[str] = None
     stepfun_api_key: Optional[str] = None
     siliconflow_api_key: Optional[str] = None
+    edgefn_api_key: Optional[str] = None  # W4-41: edgefn.net 聚合代理 (GLM/DeepSeek)
 
     memory_top_k: int = 10
     compress_threshold: int = 5000

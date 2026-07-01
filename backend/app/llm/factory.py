@@ -21,6 +21,7 @@ AVAILABLE_PROVIDERS = [
     "moonshot",      # Moonshot / 月之暗面 (Kimi)
     "stepfun",       # 阶跃星辰
     "siliconflow",   # 硅基流动
+    "edgefn",        # W4-41 edgefn.net 聚合代理 (GLM / DeepSeek 等)
 ]
 
 _PROVIDER_REGISTRY: Dict[str, Type] = {}
@@ -93,6 +94,13 @@ def _register_default_providers():
     except ImportError:
         pass
 
+    # W4-41: edgefn.net 聚合代理
+    try:
+        from app.llm.edgefn import EdgeFnLLM
+        _PROVIDER_REGISTRY["edgefn"] = EdgeFnLLM
+    except ImportError:
+        pass
+
     try:
         from app.llm.ollama import OllamaLLM
         _PROVIDER_REGISTRY["ollama"] = OllamaLLM
@@ -126,6 +134,7 @@ def _get_default_api_key(provider: str) -> Optional[str]:
         "anthropic": settings.anthropic_api_key,
         "google": settings.google_api_key,
         "zhipu": settings.zhipu_api_key,
+        "edgefn": settings.edgefn_api_key if hasattr(settings, "edgefn_api_key") else "",
         "baichuan": settings.baichuan_api_key,
         "wenxin": settings.wenxin_api_key,
         "xfyun": settings.xfyun_api_key,
@@ -164,6 +173,7 @@ def get_provider_info(provider: str) -> Optional[Dict]:
         "anthropic": {"name": "Anthropic Claude", "icon": "🤖", "color": "#CC785C"},
         "google": {"name": "Google Gemini", "icon": "🔷", "color": "#4285F4"},
         "zhipu": {"name": "智谱AI ChatGLM", "icon": "🔵", "color": "#4A90E2"},
+        "edgefn": {"name": "EdgeFn 聚合 (GLM/DeepSeek)", "icon": "🌐", "color": "#7C3AED"},
         "baichuan": {"name": "百川智能", "icon": "🌊", "color": "#00D4AA"},
         "wenxin": {"name": "百度文心", "icon": "🟢", "color": "#3300FF"},
         "xfyun": {"name": "讯飞星火", "icon": "🔴", "color": "#FF4444"},

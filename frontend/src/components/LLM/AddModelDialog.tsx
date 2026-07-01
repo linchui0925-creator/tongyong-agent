@@ -87,6 +87,17 @@ const PROVIDERS: ProviderOption[] = [
     ],
   },
   {
+    // W4-41: edgefn.net 聚合代理 (一个 key 多模型)
+    key: 'edgefn', provider: 'edgefn', name: 'EdgeFn 聚合 (GLM/DeepSeek)',
+    apiKeyUrl: 'https://api.edgefn.net',
+    defaultEndpoint: 'https://api.edgefn.net/v1',
+    models: [
+      { id: 'GLM-5.2', name: '智谱 GLM-5.2 (reasoning + function call)' },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash (reasoning)' },
+      { id: 'deepseek-chat', name: 'DeepSeek V3 Chat (非 reasoning, 工具调用更稳)' },
+    ],
+  },
+  {
     key: 'wenxin', provider: 'wenxin', name: '百度文心',
     apiKeyUrl: 'https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application',
     defaultEndpoint: 'https://qianfan.baidubce.com/v2',

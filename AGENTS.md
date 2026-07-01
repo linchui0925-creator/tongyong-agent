@@ -21,7 +21,7 @@
 | LLM 路由 | 通过 `LLMManager` 统一, 支持运行时切换 provider |
 | Agent 协作 | `app/core/multi_agent/team.py` 593 行 — Leader + 多个角色 |
 | 持久化 | SQLite (`backend/data/agent.db`), ChromaDB 向量, langgraph checkpoint |
-| 默认 LLM | **deepseek / deepseek-v4-flash** (W4-38 切换, 用户提供 sk-d3a5fa6f...411a) — reasoning model, W4-39 加 reasoning_content + XML 兜底 |
+| 默认 LLM | **edgefn / GLM-5.2** (W4-41 切换, 用户提供 sk-HJVebvMXb0d...6217) — edgefn.net 聚合代理, 智谱 reasoning, 原生 function call |
 | 协议端口 | backend 8000, frontend 5173 (vite dev proxy /api → 8000) |
 
 ---
@@ -198,6 +198,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| `23a80dd` | W4-41 | edgefn.net 聚合 provider: GLM-5.2 (reasoning + 原生 function call) + DeepSeek; AddModelDialog 加 edgefn 选项 |
 | `29f44e1` | W4-40 | chat 文件路径可点击链接 (Codex/Claude 风格 pill): pathDetector + remarkFilePaths + FilePathLink, 5 种 icon + 颜色 accent |
 | `85c0d66` | W4-39 | deepseek reasoning model 解析: content 空 → reasoning_content fallback + XML 兜底 |
 | (W4-38) | 切 LLM | 默认从 minimax 换 deepseek/deepseek-v4-flash, 用户提供 sk-d3a5fa6f...411a. minimax 5 种工具调用幻觉修了不赢, 换原生 OpenAI 兼容 function call |
@@ -223,6 +224,26 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-41: edgefn.net 聚合 provider (GLM-5.2 + DeepSeek)
+
+- **场景**: 用户提供 edgefn.net 代理 sk-HJVebvMXb0d...6217, 一个 key 走 GLM + DeepSeek 等多模型
+- **支持模型测试** (2026-06-30):
+  - ✅ **GLM-5.2**: 200, reasoning_content + 原生 `tool_calls` 字段, finish_reason="tool_calls" (完美 function call)
+  - ❌ **deepseek-v4-pro**: 403 ModelNotAllowed (key 没权限)
+  - (待测 deepseek-v4-flash, 之前走 deepseek.com 直连 OK)
+- **修法**:
+  - 新建 `backend/app/llm/edgefn.py` EdgeFnLLM 继承 OpenAICompatibleLLM
+  - DEFAULT_API_BASE = https://api.edgefn.net/v1, DEFAULT_MODEL = GLM-5.2
+  - `_parse_response` 走 `_parse_response_with_thinking` (W4-39 兼容 reasoning model)
+  - `factory.py` 注册 + `config.py` 加 `edgefn_api_key` + AddModelDialog 加 edgefn 选项
+  - `llm_config.json` (不 in git) 切到 edgefn/GLM-5.2
+- **测试**: 7 个新 test (注册/默认/自定义 model/native tool_calls/reasoning_content fallback/XML fallback/factory 拿实例), 7/7 过
+- **回归**: 94 passed 8 skipped (含 W4-37/39/41/provider contract)
+- **E2E 证明**: 模拟 GLM-5.2 真实响应 (content 空 + tool_calls 完整) → _parse_response → AgentEngine → write_file → /tmp/hello_glm.html 字节级写成功; 真 API 调 tool_calls 原生返回
+- **前端切换**: LLM tab → AddModelDialog → 选 EdgeFn 聚合 → 填 key 即可添加; ModelSelector 切已保存模型
+
+---
 
 ### W4-39: deepseek reasoning model 解析
 

@@ -46,6 +46,90 @@ _TAG_PATTERNS: List[Tuple[str, str, str]] = [
     (r"<tool_use[^>]*>", "</tool_use>", "bedrock"),
 ]
 
+
+# W4-46: 已知工具名 (跟 app.tools.registry 一致), LLM 直接用工具名当 tag
+# 典型: <read_file>hello.html</read_file> / <terminal>pwd</terminal>
+#       <write_file>path: foo.py\ncontent: ...</write_file>
+_KNOWN_TOOL_NAMES = sorted({
+    "read_file", "write_file", "terminal", "browser", "playwright",
+    "glob", "grep", "ls", "search_files", "patch",
+    "web_search", "web_extract", "load_skill", "skill_list", "skill_view",
+    "ask", "delegate_task", "desktop", "adb",
+})
+_TOOL_TAG_RE = re.compile(
+    r"<(" + "|".join(re.escape(n) for n in _KNOWN_TOOL_NAMES) + r")[^>]*>"
+)
+
+
+def _close_tag_for(name: str) -> str:
+    return "</" + name + ">"
+
+
+def _find_tool_tag_open(content):
+    """W4-46: 找 <tool_name>...</tool_name> 形式, tool_name 是已知工具名.
+    返回 (start, after_open, open_tag, tool_name) 或 None
+    """
+    m = _TOOL_TAG_RE.search(content)
+    if not m:
+        return None
+    return m.start(), m.end(), m.group(0), m.group(1)
+
+
+def _find_tool_tag_close(content, start, tool_name):
+    """W4-46: 找 </tool_name> 起始位置, 找不到 -1"""
+    pattern = "</" + re.escape(tool_name) + ">"
+    m = re.search(pattern, content[start:])
+    return start + m.start() if m else -1
+
+
+def _parse_tool_tag_body(tool_name, body):
+    """W4-46: 解析 <tool_name>body</tool_name> 的 body.
+    启发式:
+    - JSON: {"path": "x"} → 直接用
+    - 多行 key: value:  按 _parse_kv_block 解析 (write_file 常见)
+    - 单行 → 按工具名映射成 path / command / url / query 等
+    """
+    body = body.strip()
+    if not body:
+        return None
+    # 路径 1: JSON
+    if body.startswith("{") and body.endswith("}"):
+        try:
+            obj = json.loads(body)
+            if isinstance(obj, dict) and obj.get("name"):
+                return obj["name"], obj.get("arguments", {})
+        except json.JSONDecodeError:
+            pass
+    # 路径 2: key: value 多行 (write_file 常见 path: / content:)
+    if ":" in body and "\n" in body:
+        kv = _parse_kv_block(body)
+        if kv and len(kv) >= 1:
+            return tool_name, kv
+    # 路径 3: 单行 → 按工具名映射
+    first_line = body.splitlines()[0].strip() if body.splitlines() else ""
+    if tool_name == "read_file":
+        return tool_name, {"path": first_line}
+    if tool_name == "write_file":
+        return tool_name, {"path": first_line, "content": body}
+    if tool_name == "terminal":
+        return tool_name, {"command": body}
+    if tool_name in ("glob", "grep", "ls", "search_files"):
+        return tool_name, {"pattern": first_line}
+    if tool_name in ("web_search", "web_extract"):
+        return tool_name, {"query": first_line, "url": first_line}
+    if tool_name == "load_skill":
+        return tool_name, {"name": first_line}
+    if tool_name in ("skill_list", "skill_view"):
+        return tool_name, {"name": first_line}
+    if tool_name == "ask":
+        return tool_name, {"question": body}
+    if tool_name == "delegate_task":
+        return tool_name, {"task": body}
+    if tool_name in ("browser", "playwright", "desktop", "adb"):
+        return tool_name, {"action": first_line}
+    return tool_name, {"input": body}
+
+
 _OPEN_RE = re.compile(
     "|".join(f"(?P<{kind}>{pat})" for pat, _, kind in _TAG_PATTERNS)
 )
@@ -321,6 +405,24 @@ def parse_xml_tool_calls(content: str) -> Tuple[List[ToolCallResult], str]:
 
     # 最多 16 次防呆, 避免病态输入死循环
     for _ in range(16):
+        # W4-46: 优先识别 <tool_name>...</tool_name> 形式 (read_file / terminal / write_file)
+        # 在 _find_open 之前 — 因为 <read_file> 跟已知 wrapper tag 冲突, 但内容是路径
+        tool_hit = _find_tool_tag_open(remaining)
+        if tool_hit:
+            t_start, t_after_open, t_open_tag, t_tool_name = tool_hit
+            t_close = _find_tool_tag_close(remaining, t_after_open, t_tool_name)
+            if t_close != -1:
+                t_body = remaining[t_after_open:t_close]
+                t_parsed = _parse_tool_tag_body(t_tool_name, t_body)
+                if t_parsed:
+                    t_name, t_args = t_parsed
+                    out.append(ToolCallResult(
+                        tool_name=t_name,
+                        arguments=t_args,
+                        tool_call_id=f"xml_tool_{len(out)}",
+                    ))
+                    remaining = remaining[:t_start] + remaining[t_close + len(_close_tag_for(t_tool_name)):]
+                    continue
         hit = _find_open(remaining)
         if not hit:
             break
@@ -371,9 +473,16 @@ def parse_xml_tool_calls(content: str) -> Tuple[List[ToolCallResult], str]:
 
 
 def has_xml_tool_call(content: str) -> bool:
-    """快速检测: 文本里是否含已知的工具调用 XML 标签 (用于日志/告警)"""
+    """快速检测: 文本里是否含已知的工具调用 XML 标签 (用于日志/告警)
+
+    W4-46: 同时检测 <tool_name>...</tool_name> 形式
+    """
     if not content:
         return False
     if "<" not in content and "[" not in content:
         return False
-    return _OPEN_RE.search(content) is not None
+    if _OPEN_RE.search(content) is not None:
+        return True
+    if _TOOL_TAG_RE.search(content) is not None:
+        return True
+    return False

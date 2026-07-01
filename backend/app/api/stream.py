@@ -362,6 +362,9 @@ async def generate_stream_response(
                         "commands_executed": item.get("commands_executed", []),
                         "processing_time": item.get("processing_time", 0),
                         "usage": item.get("usage", {}),
+                        "needs_continue": item.get("needs_continue", False),
+                        "stop_reason": item.get("stop_reason", ""),
+                        "continue_prompt": item.get("continue_prompt", ""),
                         "timestamp": time.time()
                     }
                     yield {

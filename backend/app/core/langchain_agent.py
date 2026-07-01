@@ -99,8 +99,18 @@ async def stream_chat_langchain(
             "commands_executed": commands_executed or [],
             "processing_time": round(_time.time() - start_time, 2),
             "usage": {},
+            "needs_continue": False,
+            "stop_reason": "",
+            "continue_prompt": "",
             "timestamp": _time.time(),
         }
+
+    def _continue_prompt(reason: str) -> str:
+        return (
+            "继续上一个任务。先基于当前会话里已经完成的工具结果判断进度，"
+            "不要重复已经成功完成的步骤；从未完成的下一步继续执行。"
+            f"\n\n中断原因：{reason}"
+        )
 
     yield _progress("正在初始化...")
 
@@ -244,6 +254,8 @@ async def stream_chat_langchain(
     commands_executed = []
     had_tool_call = False
     last_yielded_text = None
+    stop_reason = ""
+    needs_continue = False
 
     async def _yield_event(event: dict):
         """收集事件并记录内容"""
@@ -357,6 +369,12 @@ async def stream_chat_langchain(
             # 工具开始
             elif kind == "on_tool_start":
                 had_tool_call = True
+                budget = getattr(agent_engine, "budget", None)
+                if budget is not None:
+                    try:
+                        budget.advance()
+                    except Exception as budget_err:
+                        logger.warning(f"[langchain] budget advance failed: {budget_err}")
                 tool_name = event.get("name", "unknown")
                 tool_input = event.get("data", {}).get("input", {})
                 emoji = _get_emoji(tool_name)
@@ -482,8 +500,31 @@ async def stream_chat_langchain(
 
     except Exception as e:
         logger.error(f"LangChain Agent 执行失败: {e}", exc_info=True)
-        yield {"type": "error", "error": str(e), "timestamp": _time.time()}
-        yield _done(session_id or "", tools_used, commands_executed)
+        err_text = str(e)
+        if e.__class__.__name__ == "GraphRecursionError" or "recursion limit" in err_text.casefold():
+            stop_reason = f"长任务达到单次执行上限: {err_text}"
+            needs_continue = True
+            yield {
+                "type": "budget_warning",
+                "content": stop_reason,
+                "timestamp": _time.time(),
+            }
+            yield _content("本轮达到单次执行上限，已保留当前进度。可以点击“继续执行”从下一步接着跑。")
+            yield {
+                "type": "done",
+                "session_id": session_id or "",
+                "tools_used": tools_used,
+                "commands_executed": commands_executed,
+                "processing_time": round(_time.time() - start_time, 2),
+                "usage": {},
+                "needs_continue": True,
+                "stop_reason": stop_reason,
+                "continue_prompt": _continue_prompt(stop_reason),
+                "timestamp": _time.time(),
+            }
+        else:
+            yield {"type": "error", "error": err_text, "timestamp": _time.time()}
+            yield _done(session_id or "", tools_used, commands_executed)
         return
 
     # ── 5. 完成 ──────────────────────────────────────
@@ -597,6 +638,9 @@ async def stream_chat_langchain(
         "commands_executed": commands_executed,
         "processing_time": round(_time.time() - start_time, 2),
         "usage": cumulative_usage if cumulative_usage else {},
+        "needs_continue": needs_continue,
+        "stop_reason": stop_reason,
+        "continue_prompt": _continue_prompt(stop_reason) if needs_continue else "",
         "timestamp": _time.time(),
     }
 

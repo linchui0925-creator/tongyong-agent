@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.llm.base import ToolCallResult
 
@@ -83,11 +83,18 @@ def _find_tool_tag_close(content, start, tool_name):
 
 
 def _parse_tool_tag_body(tool_name, body):
-    """W4-46: 解析 <tool_name>body</tool_name> 的 body.
-    启发式:
-    - JSON: {"path": "x"} → 直接用
-    - 多行 key: value:  按 _parse_kv_block 解析 (write_file 常见)
-    - 单行 → 按工具名映射成 path / command / url / query 等
+    """解析 <tool_name>body</tool_name> 的 body.
+
+    启发式 (按优先级, 第一个匹配的胜出):
+    - 路径 1: JSON: {"path": "x"} → 直接用
+    - 路径 2 (W4-47): XML 属性风格 <key>value</key>
+              GLM-5.2 / deepseek-v4-flash 实际输出形如:
+                  <write_file>
+                  <path>hello.html</path>
+                  <content>...</content>
+                  </write_file>
+    - 路径 3: key: value 多行 (write_file 常见 path: / content:)
+    - 路径 4: 单行 → 按工具名映射成 path / command / url / query 等
     """
     body = body.strip()
     if not body:
@@ -100,7 +107,13 @@ def _parse_tool_tag_body(tool_name, body):
                 return obj["name"], obj.get("arguments", {})
         except json.JSONDecodeError:
             pass
-    # 路径 2: key: value 多行 (write_file 常见 path: / content:)
+    # 路径 2 (W4-47): XML 属性风格 <key>value</key> — GLM/deepseek 实际输出.
+    # 仅当 body 顶层看起来就是参数 XML 时使用；老式 "path: x\ncontent: <h1>..."
+    # 里也有 HTML 标签，不能被误解析成 {"h1": "..."}。
+    xml_attrs = _parse_xml_attrs(body)
+    if xml_attrs and _looks_like_xml_attr_body(body, xml_attrs):
+        return tool_name, xml_attrs
+    # 路径 3: key: value 多行 (write_file 常见 path: / content:)
     if ":" in body and "\n" in body:
         kv = _parse_kv_block(body)
         if kv and len(kv) >= 1:
@@ -128,6 +141,65 @@ def _parse_tool_tag_body(tool_name, body):
     if tool_name in ("browser", "playwright", "desktop", "adb"):
         return tool_name, {"action": first_line}
     return tool_name, {"input": body}
+
+
+# W4-47: XML 属性风格解析 — 处理 <key>value</key> 形式
+#   GLM-5.2 / deepseek-v4-flash 实际工具调用格式
+_XML_ATTR_RE = re.compile(
+    r"<([a-zA-Z_][a-zA-Z0-9_]*)>([\s\S]*?)</\1>",
+    re.DOTALL,
+)
+
+
+def _parse_xml_attrs(body: str) -> Optional[Dict[str, str]]:
+    """解析 body 里的 <key>value</key> 形式 (XML 属性风格).
+
+    body 形如:
+        <path>hello.html</path>
+        <content>...</content>
+    返回 dict (key -> value, value 已 strip), 没匹配返回 None.
+
+    注意:
+    - value 是 multiline OK (re.DOTALL)
+    - 排除空 value (避免噪声 key 干扰)
+    - 排除已知工具名 (避免误把 wrapper 当 key)
+    - 至少要有 1 个有效属性才返回
+    """
+    args: Dict[str, str] = {}
+    for m in _XML_ATTR_RE.finditer(body):
+        key = m.group(1)
+        if key in _KNOWN_TOOL_NAMES:
+            continue
+        value = m.group(2).strip()
+        if value:
+            args[key] = value
+    return args if args else None
+
+
+def _looks_like_xml_attr_body(body: str, attrs: Dict[str, str]) -> bool:
+    """判断 body 是否是顶层 <key>value</key> 参数集合，而不是 HTML/content 混合文本."""
+    if not attrs:
+        return False
+    stripped = body.strip()
+    if not stripped.startswith("<"):
+        return False
+
+    consumed_spans = []
+    for m in _XML_ATTR_RE.finditer(stripped):
+        key = m.group(1)
+        if key in attrs:
+            consumed_spans.append((m.start(), m.end()))
+    if not consumed_spans:
+        return False
+
+    cursor = 0
+    leftovers = []
+    for start, end in consumed_spans:
+        leftovers.append(stripped[cursor:start])
+        cursor = end
+    leftovers.append(stripped[cursor:])
+    remainder = "".join(leftovers).strip()
+    return not remainder
 
 
 _OPEN_RE = re.compile(

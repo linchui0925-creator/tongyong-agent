@@ -405,9 +405,9 @@ export function RoleList({
                 //   shorthand, 它跟 borderBottom* longhand 冲突, React 会算
                 //   "updating a style property during rerender"。 拆成 4 longhand
                 //   + 4 borderBottom longhand, transition 只盯 borderColor
-                borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: 'transparent',
-                borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: 'transparent',
-                borderRightWidth: 1, borderRightStyle: 'solid', borderRightColor: 'transparent',
+                borderTopWidth: 1, borderTopStyle: 'solid',
+                borderLeftWidth: 1, borderLeftStyle: 'solid',
+                borderRightWidth: 1, borderRightStyle: 'solid',
                 // active: 4 边都高亮; hover: 4 边浅色; inactive: 透明
                 borderTopColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',
                 borderLeftColor: configRole === r.name ? C.accent + '66' : hoveredRole === r.name ? C.accent + '44' : 'transparent',

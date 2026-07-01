@@ -389,10 +389,13 @@ class OpenAICompatibleLLM(BaseLLM):
                 ))
             return LLMResponse(content=content, tool_calls=tool_calls, thinking=thinking_chunks)
 
-        # W4-39 修 (b): 路径 B 兜底 — content 里的 XML 工具调用
+        # W4-39 + W4-47 修 (b): 路径 B 兜底 — content 里的 XML 工具调用
         # reasoning model 也可能输出 <minimax:tool_call> 这种 minimax 风格 XML
         # (deepseek-v4-flash 实测: 工具调用走 XML 不走 tool_calls 字段)
+        # W4-47 加: reasoning_content 也可能含 XML (GLM-5.2 实际行为:
+        #   文本说明放 content, 工具调用 XML 放 reasoning_content)
         from app.llm.xml_tool_call_parser import parse_xml_tool_calls
+        # 优先 content 找
         xml_calls, cleaned_content = parse_xml_tool_calls(content)
         if xml_calls:
             logger.warning(
@@ -401,6 +404,15 @@ class OpenAICompatibleLLM(BaseLLM):
                 len(xml_calls), [tc.tool_name for tc in xml_calls],
             )
             return LLMResponse(content=cleaned_content, tool_calls=xml_calls, thinking=thinking_chunks)
+        # W4-47: content 找不到, 退到 reasoning_content 找
+        if reasoning_content and reasoning_content != content:
+            xml_calls2, _ = parse_xml_tool_calls(reasoning_content)
+            if xml_calls2:
+                logger.warning(
+                    "[W4-47] content 没找到 XML, 从 reasoning_content 兜底解析 %d 个: %s",
+                    len(xml_calls2), [tc.tool_name for tc in xml_calls2],
+                )
+                return LLMResponse(content=content, tool_calls=xml_calls2, thinking=thinking_chunks)
 
         return LLMResponse(content=content, thinking=thinking_chunks)
 

@@ -49,6 +49,7 @@ export interface UseStreamChatReturn {
   savedFlash: string | null;
   expandedThinkingMsgId: string | null;
   waitingQuestion: { question: string; choices: string[]; id: string } | null;
+  pendingContinue: { prompt: string; reason: string } | null;
   setErrorMessage: (msg: string | null) => void;
   loadMessages: (sid: string) => Promise<void>;
   handleSend: (text: string) => Promise<void>;
@@ -57,6 +58,7 @@ export interface UseStreamChatReturn {
   handleDelete: (id: string) => void;
   handleToggleThinking: (id: string) => void;
   handleClarifyAnswer: (answer: string) => Promise<void>;
+  handleContinue: () => Promise<void>;
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
   refreshContextStats: () => Promise<void>;
 }
@@ -76,6 +78,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const [expandedThinkingMsgId, setExpandedThinkingMsgId] = useState<string | null>(null);
   const [waitingQuestion, setWaitingQuestion] = useState<{ question: string; choices: string[]; id: string } | null>(null);
+  const [pendingContinue, setPendingContinue] = useState<{ prompt: string; reason: string } | null>(null);
 
   const currentToolRef = useRef<{ name: string; emoji: string; startTime: number } | null>(null);
   useEffect(() => { currentToolRef.current = currentTool; }, [currentTool]);
@@ -279,9 +282,20 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
             status: 'completed' as const,
             toolsUsed: data.tools_used || [],
             commandsExecuted: data.commands_executed || [],
+            needsContinue: Boolean(data.needs_continue),
+            stopReason: data.stop_reason || undefined,
+            continuePrompt: data.continue_prompt || undefined,
             executionClaimMismatch: looksLikeExecutionClaim(m.content) && !((data.tools_used && data.tools_used.length > 0) || (data.commands_executed && data.commands_executed.length > 0)),
           } : m
         ));
+        if (data.needs_continue) {
+          setPendingContinue({
+            prompt: data.continue_prompt || '继续上一个任务，从未完成的下一步继续执行。',
+            reason: data.stop_reason || '长任务达到单次执行上限',
+          });
+        } else {
+          setPendingContinue(null);
+        }
         setIsStreaming(false);
         setIsLoading(false);
         abortRef.current = null;
@@ -328,6 +342,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
     ]);
     setIsLoading(true);
     setErrorMessage(null);
+    setPendingContinue(null);
     setElapsed(0);
     setToolElapsed(0);
     setCurrentTool(null);
@@ -340,6 +355,11 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
 
     startStream(trimmed, aid);
   }, [isLoading, isStreaming, startStream]);
+
+  const handleContinue = useCallback(async () => {
+    if (!pendingContinue || isLoading || isStreaming) return;
+    await handleSend(pendingContinue.prompt);
+  }, [pendingContinue, isLoading, isStreaming, handleSend]);
 
   const handleStop = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -421,6 +441,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
     savedFlash,
     expandedThinkingMsgId,
     waitingQuestion,
+    pendingContinue,
     setErrorMessage,
     loadMessages,
     handleSend,
@@ -429,6 +450,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
     handleDelete,
     handleToggleThinking,
     handleClarifyAnswer,
+    handleContinue,
     setMessages,
     refreshContextStats,
   };

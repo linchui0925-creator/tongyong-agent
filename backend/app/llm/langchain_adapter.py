@@ -197,27 +197,32 @@ class TongYongLLMAdapter(BaseChatModel):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        """异步流式生成 — 真正按 token 流到前端"""
-        internal_messages = _lc_to_internal(messages)
+        """异步流式生成 — 真正按 token 流到前端
 
-        # 收集全部 content 用于最终 usage 字段
+        W4-47 修 (CRITICAL): 旧版只走 stream_chat() yield content, **丢掉 tool_calls**.
+        后果: reasoning model (deepseek-v4-flash / GLM-5.2) 把工具调用放 reasoning_content,
+        XML 解析后 LLMResponse.tool_calls 非空, 但 _astream 不传 tool_calls 给 chunk,
+        LangChain 累积 chunk 时丢 tool_calls → 整轮 agent 0 tool call → "任务中断".
+
+        修法: 改走 chat() 拿完整 LLMResponse (含 content + tool_calls), 然后:
+        1. yield content 字符 (逐字, 模拟流式)
+        2. 最后 yield 一个 chunk 带 tool_calls (langchain AIMessageChunk.__add__ 累积)
+        3. reasoning / thinking 走 _base_llm.chat() 已经提取到 LLMResponse.thinking
+        """
+        internal_messages = _lc_to_internal(messages)
         full_text_parts: List[str] = []
         tool_calls_data: List[Dict] = []
 
+        # 1. 调 chat() 拿完整响应 (含 content + tool_calls + thinking + usage)
+        #    _agenerate_with_cache 仍会先尝试 stream, 走这条路才能拿到 tool_calls
         try:
-            async for delta_text in self._base_llm.stream_chat(messages=internal_messages):
-                if not delta_text:
-                    continue
-                full_text_parts.append(delta_text)
-                # 包装成 LangChain chunk
-                chunk_msg = AIMessageChunk(content=delta_text)
-                chunk = ChatGenerationChunk(message=chunk_msg)
-                if run_manager:
-                    await run_manager.on_llm_new_token(delta_text, chunk=chunk)
-                yield chunk
-        except NotImplementedError:
-            # base_llm 不支持流式, fallback 到 _agenerate + 一次性 yield
-            logger.warning(f"{self._base_llm.__class__.__name__} 不支持流式, fallback 到一次性生成")
+            llm_response: LLMResponse = await self._base_llm.chat(
+                messages=internal_messages,
+                tools=self._tools_schema,
+            )
+        except Exception as e:
+            logger.warning(f"[W4-47] _astream chat() 失败, 降级: {e}")
+            # 降级: 走 _agenerate
             result = await self._agenerate(messages, stop, run_manager, **kwargs)
             ai_msg = result.generations[0].message
             yield ChatGenerationChunk(message=AIMessageChunk(
@@ -225,6 +230,39 @@ class TongYongLLMAdapter(BaseChatModel):
                 tool_calls=ai_msg.tool_calls,
             ))
             return
+
+        # 2. yield content 字符 (流式体验)
+        if llm_response.content:
+            for ch in llm_response.content:
+                full_text_parts.append(ch)
+                chunk_msg = AIMessageChunk(content=ch)
+                chunk = ChatGenerationChunk(message=chunk_msg)
+                if run_manager:
+                    await run_manager.on_llm_new_token(ch, chunk=chunk)
+                yield chunk
+        elif llm_response.has_tool_calls:
+            # 兜底: reasoning model 可能 content="" 全部在 reasoning_content,
+            # 必须 yield 至少 1 个 chunk 让 langchain 不抛 "No generations found in stream"
+            # 内容是空的, 但 tool_calls 必须传播
+            pass
+
+        # 3. yield final chunk 带 tool_calls (langchain 通过 AIMessageChunk.__add__ 累积)
+        if llm_response.has_tool_calls:
+            for tc in llm_response.tool_calls:
+                tool_calls_data.append({
+                    "name": tc.tool_name,
+                    "args": tc.arguments,
+                    "id": tc.tool_call_id or f"call_{tc.tool_name}",
+                    "type": "tool_call",
+                })
+            final_chunk = ChatGenerationChunk(message=AIMessageChunk(
+                content="",
+                tool_calls=tool_calls_data,
+            ))
+            yield final_chunk
+
+        # 4. usage 走 response_metadata (on_chat_model_end 时 langchain 读)
+        #    实际处理在 _agenerate 的 llm_output 路径, 这里只是占位
 
         # 注意：完整 usage 在 _agenerate 的 llm_output 里有, 但 _astream 不返回 ChatResult。
         # usage 走两条路兜底:

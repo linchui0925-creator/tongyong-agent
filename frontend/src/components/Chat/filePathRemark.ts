@@ -44,7 +44,8 @@ function walk(node: Parent | PhrasingContent | Root): void {
     } else if ('children' in child) {
       // 不递归进 code 元素 — 里面的 text 留给 MarkdownContent 的 code 组件处理
       // 否则 code 组件会看到 children 是 filePath 元素, String(children) 变 '[object Object]'
-      if (child.type === 'code' || child.type === 'inlineCode') {
+      const childType = (child as { type: string }).type;
+      if (childType === 'code' || childType === 'inlineCode') {
         newChildren.push(child);
       } else {
         walk(child as Parent);

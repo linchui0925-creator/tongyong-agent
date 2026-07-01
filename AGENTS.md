@@ -191,6 +191,7 @@ with TestClient(app) as c:
 16. **minimax 嵌套 XML tool_call 解析 (W4-32 只覆盖平展)** (W4-36) — minimax 实际输出是**嵌套**: `<minimax:tool_call>` 包多个 `<write_file>` / `<terminal>` 子块, 闭标签错配 (`<write_file>...</invoke>`), content 多行含 HTML 标签。W4-32 parser 3 处 fail: 整段当单条 / 把 HTML 标签当 tool_name / content 截到首行。修法: 3 路 fallback (平展 JSON / 平展 bash / 嵌套子块) + `_KNOWN_TOOLS` 白名单定位 + `_parse_kv_block` value 跨行。
 17. **minimax 闭标签写错 + 装执行幻觉** (W4-37, 现已换 deepseek 默认) — minimax 5 种工具调用失败模式, 修不完. **W4-38 决策**: 默认 LLM 换 deepseek/deepseek-v4-flash, 用户提供 sk. minimax 修复作为兜底保留 (其他用户可能还在用). — (a) `<minimax:tool_call>...</minimax:_call>` 闭标签少了 "tool" 整段匹配不到; (b) minimax 偶尔纯文本写"已写入 /path 成功"但 0 tool_call, 用户看到"已写好"但文件没真写。修法: (a) `_find_close` 找不到精确 `</minimax:tool_call>` 时兜底任意 `</minimax:...>`; (b) `MiniMaxLLM.chat` override 检测"成功词+路径"组合触发 retry 1 次加 system reminder, 仅本类生效不污染其他 LLM。
 18. **deepseek reasoning model 解析 (跟 minimax 一样的 XML 坑)** (W4-39) — deepseek-v4-flash 是 reasoning model, 响应 (a) `content=""` + `reasoning_content="..."` 真实内容在 reasoning_content, 原 `_parse_response_with_thinking` 只读 content 拿不到; (b) 工具调用走 `<minimax:tool_call>` XML 不走 `tool_calls` 字段. 修法: 1) content 空 fallback reasoning_content; 2) 路径 B 加 XML 兜底 (跟 MiniMaxLLM 一致). 5 个新 test.
+19. **LangChain ReAct stream 丢 tool_calls + 长任务不可续跑** (W4-47) — `TongYongLLMAdapter._astream()` 旧版只读 `base_llm.stream_chat()` 文本, reasoning/XML 解析出的 `LLMResponse.tool_calls` 没传给 LangChain chunk, agent 0 工具调用；同时 LangGraph recursion limit 只报错, 前端不能继续。修法: `_astream()` 改走 `chat()` 拿完整响应并在 final chunk 带 `tool_calls`; SSE `done` 增加 `needs_continue/stop_reason/continue_prompt`; 前端显示“继续执行”。另: XML attrs 只在顶层 `<path>...</path>` 参数集合时启用, 避免把老 kv 格式里的 HTML `<h1>` 误当参数。
 
 ---
 
@@ -198,6 +199,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W4-47 | LangChain ReAct stream 保留 tool_calls; reasoning_content XML attrs 兜底; 长任务 recursion limit 返回可继续状态 + 前端继续按钮 |
 | `23a80dd` | W4-41 | edgefn.net 聚合 provider: GLM-5.2 (reasoning + 原生 function call) + DeepSeek; AddModelDialog 加 edgefn 选项 |
 | `29f44e1` | W4-40 | chat 文件路径可点击链接 (Codex/Claude 风格 pill): pathDetector + remarkFilePaths + FilePathLink, 5 种 icon + 颜色 accent |
 | `85c0d66` | W4-39 | deepseek reasoning model 解析: content 空 → reasoning_content fallback + XML 兜底 |
@@ -224,6 +226,23 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-47: LangChain ReAct function call 兼容 + 长任务续跑
+
+- **现象**: 用户反馈 ReAct/function call 格式跟大模型不兼容, 长任务无法一次完成。已有未提交修复显示 GLM/deepseek 会输出 `<write_file><path>...</path><content>...</content></write_file>` 或把 XML 放在 `reasoning_content`。
+- **根因**:
+  1. `TongYongLLMAdapter._astream()` 旧版走 `base_llm.stream_chat()` 只流文本, 丢掉 `LLMResponse.tool_calls`, LangChain 累积后 0 tool call。
+  2. XML attrs parser 太宽会把老 kv 格式 `content: <h1>...</h1>` 里的 HTML 标签误当参数。
+  3. LangGraph recursion limit 对前端只是 error/done, 没有可续跑协议。
+- **修法**:
+  - `_astream()` 改走 `chat()` 拿完整 `LLMResponse`, 文本逐字 yield, 最后一个 `AIMessageChunk` 带 `tool_calls`。
+  - `_parse_response_with_thinking` 从 `reasoning_content` 再兜底解析 XML; XML attrs 只接受顶层 `<key>...</key>` 参数集合。
+  - `stream.py` 的 done 透传 `needs_continue / stop_reason / continue_prompt`; `ModernChatPanel` 增加“继续执行”状态栏按钮。
+  - 修前端 build 阻塞: `filePathRemark.ts` mdast 类型收窄误报; `RoleList.tsx` style 重复 key。
+- **测试**: `tests/test_w2_event_alignment.py` 增加 done 续跑字段测试; `tests/test_w447_xml_attrs.py` 增加 HTML kv 回归。
+- **回归**: 38 passed (W2/W439/W447/langchain adapters); 安全子集 170 passed; frontend `npm run build` passed; in-process TestClient 5 个端点 200 (LLM 外网验证因 sandbox DNS 失败, 预期)。
+
+---
 
 ### W4-41: edgefn.net 聚合 provider (GLM-5.2 + DeepSeek)
 

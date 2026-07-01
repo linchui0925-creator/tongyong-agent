@@ -66,3 +66,39 @@ async def test_sse_vs_stream_py_11():
     extra = produced - STREAM_PY_EVENTS
     print(f"\n[对齐 SSE] produced={len(produced)}, missing={missing}, extra={extra}")
     assert {"start", "done"}.issubset(produced)
+
+
+@pytest.mark.asyncio
+async def test_done_event_preserves_continue_fields(monkeypatch):
+    """长任务续跑字段必须穿过 stream.py → SSE data，前端才能显示继续按钮。"""
+    from app.api.stream import generate_stream_response
+    import app.main as main_mod
+
+    class FakeAgent:
+        async def stream_chat(self, **kwargs):
+            yield {
+                "type": "done",
+                "session_id": "sid-continue",
+                "tools_used": ["terminal"],
+                "commands_executed": ["pytest"],
+                "needs_continue": True,
+                "stop_reason": "长任务达到单次执行上限",
+                "continue_prompt": "继续上一个任务",
+            }
+
+    monkeypatch.setattr(main_mod, "agent_engine", FakeAgent())
+
+    events = []
+    async for item in generate_stream_response(
+        message="继续测试",
+        session_id="sid-continue",
+        use_langchain=False,
+    ):
+        if item.get("event") == "done":
+            events.append(json.loads(item["data"]))
+
+    assert len(events) == 1
+    done = events[0]
+    assert done["needs_continue"] is True
+    assert done["stop_reason"] == "长任务达到单次执行上限"
+    assert done["continue_prompt"] == "继续上一个任务"

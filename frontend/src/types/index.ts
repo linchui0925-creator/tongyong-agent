@@ -22,6 +22,9 @@ export interface Message {
     toolsUsed?: string[];
     commandsExecuted?: string[];
     executionClaimMismatch?: boolean;
+    needsContinue?: boolean;
+    stopReason?: string;
+    continuePrompt?: string;
     /** 流式输出过程中后端推送的阶段描述（如 "正在思考..."），渲染在气泡里 */
     progressLabel?: string;
 }
@@ -106,6 +109,10 @@ export interface StreamEvent {
     };
     /** 上下文容量快照（context 事件专属）— 前端 TokenUsageBar 用 */
     context?: ContextInfo;
+    /** 长任务达到单次执行上限时，后端提示前端可继续 */
+    needs_continue?: boolean;
+    stop_reason?: string;
+    continue_prompt?: string;
 }
 
 /** 上下文容量信息 — 后端 _context() 事件载荷，驱动 TokenUsageBar */

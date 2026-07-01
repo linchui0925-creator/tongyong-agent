@@ -39,6 +39,9 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             round: data.round,
             cumulative: data.cumulative,
             context: data.context,
+            needs_continue: data.needs_continue,
+            stop_reason: data.stop_reason,
+            continue_prompt: data.continue_prompt,
         };
     } catch (error) {
         console.error('解析SSE事件数据失败:', error);

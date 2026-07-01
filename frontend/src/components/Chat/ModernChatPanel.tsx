@@ -189,6 +189,11 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
           {msg.status === 'streaming' && !msg.content && !msg.progressLabel && (
             <span className="chat-bubble-cursor" />
           )}
+          {!isUser && msg.needsContinue && (
+            <div className="chat-bubble-progress">
+              {msg.stopReason || '长任务达到单次执行上限，可继续执行。'}
+            </div>
+          )}
         </div>
         {isLastInGroup && (
           <div className="chat-row-meta">
@@ -263,9 +268,9 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const {
     messages, isStreaming, isLoading, errorMessage, progressText, elapsed,
     currentTool, toolElapsed, tokenUsage, contextInfo, isCompressing, savedFlash,
-    expandedThinkingMsgId, waitingQuestion,
+    expandedThinkingMsgId, waitingQuestion, pendingContinue,
     setErrorMessage, handleSend, handleStop, handleCompress, handleDelete,
-    handleToggleThinking, handleClarifyAnswer,
+    handleToggleThinking, handleClarifyAnswer, handleContinue,
   } = useStreamChat({ sessionId: currentSessionId });
 
   // Tab title
@@ -441,6 +446,15 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
           <span className="chat-statusbar-text">{progressText || '执行中...'}</span>
           <span className="chat-statusbar-token">⏱ {tokenUsage.total}</span>
           <span className="chat-statusbar-elapsed">{(elapsed / 1000).toFixed(1)}s</span>
+        </div>
+      )}
+      {!isStreaming && pendingContinue && (
+        <div className="chat-statusbar chat-statusbar--continue">
+          <span className="chat-statusbar-dot" />
+          <span className="chat-statusbar-text">{pendingContinue.reason}</span>
+          <button className="btn btn-ghost" onClick={handleContinue} disabled={isLoading}>
+            继续执行
+          </button>
         </div>
       )}
 

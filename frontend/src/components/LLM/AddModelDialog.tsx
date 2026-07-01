@@ -92,9 +92,11 @@ const PROVIDERS: ProviderOption[] = [
     apiKeyUrl: 'https://api.edgefn.net',
     defaultEndpoint: 'https://api.edgefn.net/v1',
     models: [
-      { id: 'GLM-5.2', name: '智谱 GLM-5.2 (reasoning + function call)' },
+      { id: 'GLM-5.2', name: '智谱 GLM-5.2 (reasoning + function call, 推荐)' },
+      { id: 'GLM-4-flash', name: '智谱 GLM-4 Flash (非 reasoning, 工具调用稳定)' },
+      { id: 'deepseek-chat', name: 'DeepSeek V3 Chat (非 reasoning, 工具调用稳定)' },
       { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash (reasoning)' },
-      { id: 'deepseek-chat', name: 'DeepSeek V3 Chat (非 reasoning, 工具调用更稳)' },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro (此 key 403, 仅展示)' },
     ],
   },
   {

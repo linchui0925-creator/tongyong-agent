@@ -127,6 +127,19 @@ PROVIDER_MODELS = {
         "meta-llama/Llama-3.3-70B-Instruct",
         "THUDM/glm-4-9b-chat",
     ],
+    # W4-41 (2026-06-30): edgefn.net 聚合代理, 一个 key 走多模型
+    # - GLM-5.2: 验证 OK (reasoning model, 原生 tool_calls)
+    # - GLM-4-flash: 非 reasoning 备选, tool call 更稳
+    # - deepseek-chat (V3): 非 reasoning, OpenAI 兼容, tool call 稳
+    # - deepseek-v4-flash: reasoning, 走 reasoning_content 解析
+    # - deepseek-v4-pro: 403 ModelNotAllowed (key 没权限, 选项保留)
+    "edgefn": [
+        "GLM-5.2",
+        "GLM-4-flash",
+        "deepseek-chat",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+    ],
 }
 
 

@@ -281,6 +281,32 @@ class LLMManager:
 
     def list_custom_providers(self) -> List[Dict[str, Any]]:
         import os
+        import json
+        from pathlib import Path
+        # 从config目录读取自定义供应商配置
+        custom_config_dir = Path('config/providers')
+        custom_config_dir.mkdir(parents=True, exist_ok=True)
+        # 读取所有json配置文件
+        for config_file in custom_config_dir.glob('*.json'):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    provider_config = json.load(f)
+                    if all(k in provider_config for k in ['id', 'name', 'endpoint', 'model']):
+                        builtin_providers.append({
+                            'id': provider_config['id'],
+                            'name': provider_config.get('name', provider_config['id']),
+                            'protocol': provider_config.get('protocol', 'openai_compatible'),
+                            'base_url': provider_config['endpoint'],
+                            'default_model': provider_config['model'],
+                            'models': provider_config.get('models', [provider_config['model']]),
+                            'icon': provider_config.get('icon', '⚙️'),
+                            'color': provider_config.get('color', '#7C3AED'),
+                            'enabled': provider_config.get('enabled', True),
+                            'has_api_key': bool(provider_config.get('api_key') or os.getenv(f'{provider_config[id].upper()}_API_KEY')),
+                            'api_key': provider_config.get('api_key') or os.getenv(f'{provider_config[id].upper()}_API_KEY'),
+                        })
+            except Exception as e:
+                logger.warning(f'加载自定义供应商配置{config_file}失败: {e}')
         builtin_providers = []
         # EdgeFn GLM
         if os.getenv('EDGEFN_API_KEY'):

@@ -1,3 +1,4 @@
+from fastapi import FastAPI, Request, HTTPException
 """
 TongYong Agent 主应用模块 (P2-1 W4-22 拆分后)
 
@@ -164,3 +165,31 @@ def get_agent_engine():
 # delegate_task.py / memory.py / evaluation.py 等). P2-1 重构后, 内部全部走 get_agent_engine(),
 # 这里保留 module-level alias 避免批量改 call sites.
 agent_engine = app.extra.get("agent_engine")
+
+# 全局异常处理，所有错误都返回标准JSON格式，避免前端解析失败
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    logger.error(f'全局异常: {exc}
+{traceback.format_exc()}')
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={
+            'success': False,
+            'message': str(exc),
+            'code': 500
+        }
+    )
+# 处理HTTP异常
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            'success': False,
+            'message': exc.detail,
+            'code': exc.status_code
+        }
+    )

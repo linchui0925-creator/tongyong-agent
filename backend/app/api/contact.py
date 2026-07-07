@@ -255,11 +255,10 @@ async def _send_email_background(
         )
         await _update_email_status(submission_id, "sent")
         logger.info("contact submission %s email sent successfully", submission_id)
-    n    # 发送飞书通知
-    await _send_feishu_notification(payload, submission_id, received_at, ip, user_agent)
     except Exception as e:
         logger.exception("contact email delivery failed for submission %s: %s", submission_id, e)
         await _update_email_status(submission_id, "failed", error=str(e))
+n    # 发送飞书通知（不管邮件是否发送成功都发）n    await _send_feishu_notification(payload, submission_id, received_at, ip, user_agent)
 
 
 @router.post("", response_model=ContactSubmissionAck)

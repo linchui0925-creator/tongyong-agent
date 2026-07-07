@@ -17,13 +17,21 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.api import chat, memory, chart, llm, evaluation
+from app.api import proxy
 from app.api import dreaming as dreaming_api
+from app.api import proxy
 from app.api import skills as skills_api
+from app.api import proxy
 from app.api import marketplace as marketplace_api
+from app.api import proxy
 from app.api import tool_harness as tool_harness_api
+from app.api import proxy
 from app.api import files as files_api
+from app.api import proxy
 from app.api import attachments as attachments_api
+from app.api import proxy
 from app.api import contact as contact_api
+from app.api import proxy
 from app.api.stream import router as stream_router
 from app.core.multi_agent.api import router as team_router
 from app.hermes.routes import router as hermes_router
@@ -86,30 +94,51 @@ def create_app() -> FastAPI:
 
     # ── 路由注册 ──
     app.include_router(health_router)
+app.include_router(proxy.router)
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(proxy.router)
     app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
+app.include_router(proxy.router)
     app.include_router(chart.router, prefix="/api/chart", tags=["chart"])
+app.include_router(proxy.router)
     app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
+app.include_router(proxy.router)
     app.include_router(hermes_router)
+app.include_router(proxy.router)
     app.include_router(dreaming_api.router)
+app.include_router(proxy.router)
     app.include_router(skills_api.router)
+app.include_router(proxy.router)
     app.include_router(marketplace_api.router)
+app.include_router(proxy.router)
     app.include_router(tool_harness_api.router)
+app.include_router(proxy.router)
     app.include_router(files_api.router)
+app.include_router(proxy.router)
     app.include_router(attachments_api.router)
+app.include_router(proxy.router)
     app.include_router(contact_api.router)
+app.include_router(proxy.router)
     app.include_router(stream_router, prefix="/api/chat")
+app.include_router(proxy.router)
     try:
         from app.api.im_gateway import router as im_gateway_router
         app.include_router(im_gateway_router)
+app.include_router(proxy.router)
     except ImportError:
         pass
     app.include_router(openai_router, prefix="/v1")
+app.include_router(proxy.router)
     app.include_router(desktop_bridge_router)
+app.include_router(proxy.router)
     app.include_router(profile_router)
+app.include_router(proxy.router)
     app.include_router(profile_gateway_router)
+app.include_router(proxy.router)
     app.include_router(evaluation.router)
+app.include_router(proxy.router)
     app.include_router(team_router, tags=["team"])
+app.include_router(proxy.router)
 
     # ── Gateway + Hermes 初始化 ──
     _init_gateway_and_hermes()

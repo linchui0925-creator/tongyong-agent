@@ -28,6 +28,8 @@ AgentEngine - 单 agent 推理循环主引擎。
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import asyncio
+from pathlib import Path
+from urllib.parse import quote
 from app.core.base import Message, Session, Memory
 from app.core.context import ContextManager
 from app.core.context_compressor import ContextCompressor
@@ -127,11 +129,11 @@ def _required_tool_evidence(message: str) -> Dict[str, str]:
     if any(term in text for term in write_terms) and (
         "文件" in text or "frontend" in text or "react" in text or "前端" in text or "ui" in text
     ):
-        requirements["write"] = "缺少真实写文件证据：必须调用 write_file 或 patch。"
+        requirements["write"] = "缺少真实写文件证据：必须调用 workspace_write、write_file 或 patch。"
 
     build_terms = ("npm run build", "构建", "build", "验证", "编译")
     if any(term in text for term in build_terms):
-        requirements["build"] = "缺少构建/验证证据：必须调用 terminal 运行 npm run build 或等价命令。"
+        requirements["build"] = "缺少构建/验证证据：必须调用 workspace_terminal 或 terminal 运行 npm run build 或等价命令。"
 
     return requirements
 
@@ -139,7 +141,7 @@ def _required_tool_evidence(message: str) -> Dict[str, str]:
 def _missing_tool_evidence(requirements: Dict[str, str], tools_used: list, commands_executed: list) -> List[str]:
     """根据本轮工具记录判断还缺哪些交付证据。"""
     missing: List[str] = []
-    if "write" in requirements and not any(t in ("write_file", "patch") for t in tools_used):
+    if "write" in requirements and not any(t in ("workspace_write", "write_file", "patch") for t in tools_used):
         missing.append(requirements["write"])
     if "build" in requirements:
         has_build = any(
@@ -152,6 +154,50 @@ def _missing_tool_evidence(requirements: Dict[str, str], tools_used: list, comma
         if not has_build:
             missing.append(requirements["build"])
     return missing
+
+
+def _artifact_preview_from_write_result(result: str) -> Optional[Dict[str, str]]:
+    """从工具返回文本里提取可预览产物。"""
+    if not result:
+        return None
+    match = re.search(r"已写入\s+(.+?)（", result)
+    if match:
+        path = match.group(1).strip()
+    else:
+        label_match = re.search(
+            r"(?:截图|文件)?已保存(?:到)?[：:]\s*(.+)$|saved(?:\s+to)?[：:]\s*(.+)$",
+            result,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        if label_match:
+            path = (label_match.group(1) or label_match.group(2) or "").strip()
+        else:
+            fallback = re.search(
+                r"(/[^ \t\r\n)）\]]+\.(?:html?|svg|png|jpe?g|gif|webp))",
+                result,
+                flags=re.IGNORECASE,
+            )
+            if not fallback:
+                return None
+            path = fallback.group(1).strip()
+    path = path.strip().strip("'\"`")
+    absolute_match = re.search(r"^absolute_path=(.+)$", result, flags=re.MULTILINE)
+    serve_path = absolute_match.group(1).strip() if absolute_match else path
+    suffix = Path(path).suffix.lower()
+    if suffix in {".html", ".htm"}:
+        kind = "web"
+    elif suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}:
+        kind = "image"
+    else:
+        return None
+    encoded = quote(serve_path, safe="")
+    return {
+        "path": serve_path,
+        "name": Path(path).name,
+        "kind": kind,
+        "preview_url": f"/api/files/serve?path={encoded}" if kind == "image" else f"/api/files/preview?path={encoded}",
+        "open_url": f"/api/files/serve?path={encoded}",
+    }
 
 
 # ── must_use_tool 触发词 (W4-24 P1-3: 模块级常量, 便于测试) ──
@@ -325,30 +371,22 @@ class AgentEngine:
             logger.debug(f"平文件记忆注入跳过: {e}")
 
     async def _get_or_create_session(self) -> str:
-        sessions = await self.memory_storage.get_sessions()
-        if sessions:
-            session_id = sessions[0].id
-            await self._load_operation_habits(session_id)
-            return session_id
-        
-        session = await self.memory_storage.create_session("默认会话")
-        session_id = session.id
-        
-        await self._load_operation_habits(session_id)
-        
-        return session_id
+        """Create a fresh session when the caller did not provide session_id.
+
+        Reusing the latest session made "new chat" accidentally inherit another
+        conversation whenever the frontend failed to pass an id. Session history
+        is only loaded for an explicit session_id.
+        """
+        session = await self.memory_storage.create_session("新会话")
+        return session.id
 
     async def _load_operation_habits(self, session_id: str):
-        if not self.llm:
-            return
-        
-        try:
-            shared_memories = await self.vector_store.get_shared()
-            for habit in shared_memories[:3]:
-                self.context.add_message("system", f"记住：{habit.content}")
-                logger.info(f"加载操作习惯: {habit.content[:30]}...")
-        except Exception as e:
-            logger.warning(f"加载操作习惯失败: {e}")
+        """Deprecated: shared memories are no longer auto-injected.
+
+        Cross-session/shared memory must be retrieved explicitly through
+        memory_search / memory_list tools so a new session starts isolated.
+        """
+        return
 
     async def chat(
         self,
@@ -356,6 +394,10 @@ class AgentEngine:
         message: str,
         use_memory: bool = True
     ) -> Dict[str, Any]:
+        # AgentEngine 是进程级单例，context 是每轮请求的临时工作区。
+        # 无论上一轮是否正常收尾，进入新请求前都必须先清空，避免跨会话串话。
+        self.context.clear()
+
         if not session_id:
             session_id = await self._get_or_create_session()
             logger.info(f"创建新会话: {session_id}")
@@ -401,19 +443,8 @@ class AgentEngine:
         self.context.add_message("user", message)
         logger.warning(f"[CHAT] before_llm_call | count={len(self.context.messages)}, last3_roles={[m.role for m in self.context.messages[-3:]]}")
 
-        memories = []
-        if use_memory and self.llm:
-            try:
-                embedding = await self.llm.get_embedding(message)
-                memories = await self.vector_store.search(
-                    message, embedding, k=5, session_id=session_id
-                )
-                if memories:
-                    context = "\n".join([m.content for m in memories])
-                    self.context.add_message("system", f"相关记忆：\n{context}")
-                    logger.info(f"检索到 {len(memories)} 条记忆")
-            except Exception as e:
-                logger.error(f"记忆检索失败: {e}")
+        # 记忆检索不再自动注入；需要历史/跨会话信息时由模型显式调用
+        # memory_search / memory_list 工具获取，避免新会话被其它会话内容污染。
 
         response = "智能体已收到消息"
         tools_used = []
@@ -606,6 +637,10 @@ class AgentEngine:
         import time as _time
         import re as _re
         start_time = _time.time()
+
+        # AgentEngine 是进程级单例，context 只允许保存当前 stream 请求的临时上下文。
+        # LangChain 路径曾经收尾不清空，导致新会话读到上一轮任务；这里入口兜底清空。
+        self.context.clear()
 
         def _progress(text: str):
             return {"type": "progress", "content": text, "timestamp": _time.time()}
@@ -803,8 +838,20 @@ class AgentEngine:
             return {"type": "done", "session_id": session_id or "",
                     "tools_used": list(dict.fromkeys(tools_used)),
                     "commands_executed": commands_executed,
+                    "artifact_previews": artifact_previews,
                     "processing_time": round(_time.time() - start_time, 2),
-                    "usage": cumulative_usage}
+                    "usage": cumulative_usage,
+                    "needs_continue": needs_continue,
+                    "stop_reason": stop_reason,
+                    "continue_prompt": _continue_prompt(stop_reason) if needs_continue else ""}
+
+        def _continue_prompt(reason: str) -> str:
+            return (
+                "继续上一个长任务。不要重新规划，不要重复已经成功完成的步骤；"
+                "先根据当前会话中的工具结果判断进度，然后从未完成的下一步继续实际执行。"
+                "如果还缺写文件、构建、测试或预览证据，优先调用对应工具完成。"
+                f"\n\n中断原因：{reason}"
+            )
 
         def _tool_feedback(text: str):
             return {"type": "tool_feedback", "content": text, "timestamp": _time.time()}
@@ -836,12 +883,16 @@ class AgentEngine:
 
         tools_used = []
         commands_executed = []
+        artifact_previews: List[Dict[str, str]] = []
         ask_triggered = False  # 标记是否触发了 ask 交互
         final_response_chunks: List[str] = []
         budget = IterationBudget()
+        cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}  # Token 使用量追踪
         must_use_tool = _message_requires_tool_call(message)
         forced_tool_retry_done = False
         final_claim_retry_done = False
+        needs_continue = False
+        stop_reason = ""
         tool_results_for_hermes: List[Tuple[str, str]] = []  # Hermes 循环控制用
 
         def _classify_and_group_tools(tool_calls: list) -> Dict[str, list]:
@@ -966,33 +1017,10 @@ class AgentEngine:
             self.context.clear()
             return
 
-        # ── 阶段 2: 检索记忆 + memory_manager 跨 session 记忆注入 ──
-        if use_memory and self.llm:
-            yield _progress("检索相关记忆...")
-            try:
-                embedding = await self.llm.get_embedding(message)
-                memories = await self.vector_store.search(
-                    message, embedding, k=5, session_id=session_id
-                )
-                if memories:
-                    context = "\n".join([m.content for m in memories])
-                    self.context.add_message("system", f"相关记忆：\n{context}")
-                    yield _progress(f"已检索 {len(memories)} 条相关记忆")
-            except Exception:
-                pass
-
-        # ── memory_manager: 跨 session 记忆注入 ──
-        if memory_manager:
-            try:
-                relevant_memories = await memory_manager.get_relevant_memories(
-                    message, session_id=session_id, max_count=3
-                )
-                for mem in relevant_memories:
-                    self.context.add_message("system", f"[跨会话记忆] {mem.content}")
-                if relevant_memories:
-                    yield _progress(f"跨 session 注入 {len(relevant_memories)} 条记忆")
-            except Exception as e:
-                logger.warning(f"memory_manager 跨 session 记忆注入失败: {e}")
+        # ── 阶段 2: 记忆检索改为显式工具 ──
+        # 默认只注入身份、MEMORY.md / USER.md、base system prompt、env prompt、domain prompts。
+        # 任何会话记忆、共享记忆、跨会话记忆都不自动注入；需要时模型必须调用
+        # memory_search / memory_list 工具，工具结果才会进入当前轮上下文。
 
         # ── 阶段 3: LLM 对话（支持工具调用） ──
         if not self.llm:
@@ -1004,6 +1032,8 @@ class AgentEngine:
         try:
             import json as _json
             from app.tools.manager import get_tool_manager
+            from app.tools.runtime_context import set_tool_session_id, reset_tool_session_id
+            _tool_session_token = set_tool_session_id(session_id)
             tool_mgr = get_tool_manager()
             tool_schemas = tool_mgr.get_schemas()
             logger.info(f"Agent stream_chat 可用工具: {tool_mgr.list_tools()}")
@@ -1012,10 +1042,11 @@ class AgentEngine:
             final_claim_retry_done = False  # 约束：防止声称执行但无工具证据
             required_evidence = _required_tool_evidence(message)
             required_evidence_retry_count = 0
-            cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}  # Token 使用量追踪
             while True:
                 # 检查预算是否耗尽
                 if budget.is_exhausted:
+                    needs_continue = True
+                    stop_reason = budget.get_exhausted_message()
                     final_text = None
                     async for _ev in _summarize_from_existing_context(budget.get_exhausted_message()):
                         if isinstance(_ev, tuple) and _ev[0] == "result":
@@ -1244,6 +1275,8 @@ class AgentEngine:
                     )
                     if missing_evidence and full_text:
                         if budget.is_exhausted or required_evidence_retry_count >= 3:
+                            needs_continue = True
+                            stop_reason = "任务缺少真实交付证据: " + "；".join(missing_evidence)
                             fallback_msg = (
                                 "⚠️ 任务未完整交付："
                                 + "；".join(missing_evidence)
@@ -1269,6 +1302,8 @@ class AgentEngine:
                     if must_use_tool and not tools_used:
                         # 检查预算是否已耗尽，避免在预算耗尽后继续循环
                         if budget.is_exhausted:
+                            needs_continue = True
+                            stop_reason = budget.get_exhausted_message()
                             yield _content(budget.get_exhausted_message())
                             break
                         if not forced_tool_retry_done:
@@ -1444,6 +1479,10 @@ class AgentEngine:
                         _elapsed = _time.time() - _tool_t0
                         is_error = _is_error_result(tool_result)
                         yield _tool_complete(tool_name, tool_result, _elapsed, error=is_error)
+                        if not is_error:
+                            preview = _artifact_preview_from_write_result(tool_result)
+                            if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
+                                artifact_previews.append(preview)
                         result_structured = _tool_result_structured(tool_name, tc["id"], not is_error, result=tool_result if not is_error else "",
                             error_msg=tool_result if is_error else "", error_type=_classify_error_type(tool_result) if is_error else "")
                         # 检测 ask 交互
@@ -1518,6 +1557,10 @@ class AgentEngine:
                         yield _tool_start(tool_name, args)
                         is_error = _is_error_result(tool_result)
                         yield _tool_complete(tool_name, tool_result, _elapsed, error=is_error)
+                        if not is_error:
+                            preview = _artifact_preview_from_write_result(tool_result)
+                            if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
+                                artifact_previews.append(preview)
                         result_structured = _tool_result_structured(
                             tool_name, tc["id"], not is_error, result=tool_result if not is_error else "",
                             error_msg=tool_result if is_error else "", error_type=_classify_error_type(tool_result) if is_error else ""
@@ -1593,6 +1636,10 @@ class AgentEngine:
                         _elapsed = _time.time() - _tool_t0
                         is_error = _is_error_result(tool_result)
                         yield _tool_complete(tool_name, tool_result, _elapsed, error=is_error)
+                        if not is_error:
+                            preview = _artifact_preview_from_write_result(tool_result)
+                            if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
+                                artifact_previews.append(preview)
                         result_structured = _tool_result_structured(tool_name, tc["id"], not is_error, result=tool_result if not is_error else "",
                             error_msg=tool_result if is_error else "", error_type=_classify_error_type(tool_result) if is_error else "")
                         # 检测 ask 交互
@@ -1705,6 +1752,9 @@ class AgentEngine:
         except Exception as e:
             logger.error(f"LLM调用失败: {e}", exc_info=True)
             yield _content(f"智能体已收到消息（发生错误: {str(e)}）")
+        finally:
+            if "_tool_session_token" in locals():
+                reset_tool_session_id(_tool_session_token)
 
         # ── 附加工具反馈 ──
         if tools_used:

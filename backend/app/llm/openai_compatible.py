@@ -15,6 +15,7 @@ import httpx
 
 from app.llm.base import BaseLLM, LLMError, LLMResponse, ToolCallResult
 from app.core.base import Message
+from app.llm.model_metadata import get_model_info
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,20 @@ class OpenAICompatibleLLM(BaseLLM):
     DEFAULT_MODEL = "gpt-3.5-turbo"
     REQUEST_TIMEOUT = 120
     MAX_RETRIES = 3
+    DEFAULT_MAX_TOKENS = 8192
 
     def __init__(self, api_key: str, model: str = None):
         super().__init__(api_key, model or self.DEFAULT_MODEL)
         self.api_base = self.DEFAULT_API_BASE
+
+    def _request_max_tokens(self) -> int:
+        configured = getattr(self, "max_tokens", None)
+        if configured:
+            return int(configured)
+        info = get_model_info(self.model)
+        if info and info.max_output:
+            return min(int(info.max_output), 131072)
+        return self.DEFAULT_MAX_TOKENS
 
     @staticmethod
     def _merge_system_messages(messages: List[Dict]) -> List[Dict]:
@@ -159,7 +170,7 @@ class OpenAICompatibleLLM(BaseLLM):
             "model": self.model,
             "messages": openai_messages,
             "temperature": getattr(self, "temperature", 0.7),
-            "max_tokens": getattr(self, "max_tokens", 2000),
+            "max_tokens": self._request_max_tokens(),
         }
         if tools:
             body["tools"] = tools
@@ -223,7 +234,7 @@ class OpenAICompatibleLLM(BaseLLM):
                     "model": self.model,
                     "messages": openai_messages,
                     "temperature": getattr(self, "temperature", 0.7),
-                    "max_tokens": getattr(self, "max_tokens", 2000),
+                    "max_tokens": self._request_max_tokens(),
                     "stream": True,
                 },
             ) as resp:

@@ -21,6 +21,8 @@ export interface Message {
     thinking?: string;
     toolsUsed?: string[];
     commandsExecuted?: string[];
+    artifactPreviews?: ArtifactPreview[];
+    attachments?: Attachment[];
     executionClaimMismatch?: boolean;
     needsContinue?: boolean;
     stopReason?: string;
@@ -81,6 +83,7 @@ export interface StreamEvent {
     memory_added?: any[];
     tools_used?: string[];
     commands_executed?: string[];
+    artifact_previews?: ArtifactPreview[];
     processing_time?: number;
     timestamp: number;
     error?: string;
@@ -113,6 +116,33 @@ export interface StreamEvent {
     needs_continue?: boolean;
     stop_reason?: string;
     continue_prompt?: string;
+}
+
+export interface ArtifactPreview {
+    path: string;
+    name: string;
+    kind: 'web' | 'image';
+    preview_url: string;
+    open_url: string;
+}
+
+export interface Attachment {
+    id: string;
+    session_id?: string | null;
+    filename: string;
+    name: string;
+    mime_type: string;
+    size: number;
+    sha256?: string;
+    kind: 'image' | 'file' | 'pdf' | 'text' | 'table' | 'document';
+    url: string;
+    preview_url?: string;
+    open_url?: string;
+    created_at?: number;
+    extraction_status?: string;
+    extraction_summary?: string;
+    extraction_error?: string | null;
+    extraction_meta?: Record<string, any>;
 }
 
 /** 上下文容量信息 — 后端 _context() 事件载荷，驱动 TokenUsageBar */

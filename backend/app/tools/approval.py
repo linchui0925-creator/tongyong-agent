@@ -41,6 +41,14 @@ class ApprovalResult:
     approval_id: Optional[str] = None
     reason: Optional[str] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "approved": self.approved,
+            "status": self.status,
+            "approval_id": self.approval_id,
+            "reason": self.reason,
+        }
+
 
 class ApprovalManager:
     """审批管理器"""
@@ -54,8 +62,34 @@ class ApprovalManager:
         """
         self.db_path = db_path
         self.default_approval_timeout = 300
+        self._ensure_tables()
         
         logger.info("ApprovalManager 初始化完成")
+
+    def _ensure_tables(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tool_approvals (
+                id TEXT PRIMARY KEY,
+                tool_id TEXT NOT NULL,
+                session_id TEXT,
+                user_id TEXT,
+                parameters TEXT,
+                risk_assessment TEXT,
+                status TEXT DEFAULT 'pending',
+                approval_mode TEXT DEFAULT 'manual',
+                expires_at TEXT,
+                approved_by TEXT,
+                approved_at TEXT,
+                rejection_reason TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tool_approvals_session ON tool_approvals(session_id)")
+        conn.commit()
+        conn.close()
     
     async def create_request(
         self,
@@ -381,6 +415,19 @@ class ApprovalManager:
         except Exception as e:
             logger.error(f"获取审批请求失败: {e}")
             return None
+
+    async def get_request(self, approval_id: str) -> Optional[ApprovalRequest]:
+        return await self._get_request(approval_id)
+
+    async def update_risk_assessment(self, approval_id: str, risk_assessment: Dict[str, Any]) -> None:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE tool_approvals SET risk_assessment = ? WHERE id = ?",
+            (json.dumps(risk_assessment), approval_id),
+        )
+        conn.commit()
+        conn.close()
     
     async def _update_status(
         self,

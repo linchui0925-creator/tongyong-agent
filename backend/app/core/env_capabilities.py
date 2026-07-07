@@ -88,6 +88,10 @@ _TOOLSET_LABELS = {
     "android": "📱 Android",
     "interactive": "❓ 交互",
     "skill": "🎯 Skill",
+    "workspace": "🧰 工作区",
+    "planning": "✅ 计划",
+    "memory": "🧠 记忆",
+    "attachment": "📎 附件",
 }
 
 

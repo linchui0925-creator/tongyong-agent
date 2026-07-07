@@ -39,9 +39,43 @@ class ApiKeyUpdate(BaseModel):
 class SavedModelEntry(BaseModel):
     provider: str = Field(..., description="提供商标识")
     model: str = Field(..., description="模型名称")
-    api_key: str = Field(..., description="API 密钥")
+    api_key: Optional[str] = Field(None, description="API 密钥，为空则使用 provider/profile 已保存密钥")
     api_endpoint: Optional[str] = Field(None, description="API 端点")
     name: Optional[str] = Field(None, description="显示名称")
+
+
+class CustomProviderModel(BaseModel):
+    id: str = Field(..., description="模型 ID / API model name")
+    name: Optional[str] = Field(None, description="显示名")
+    enabled: bool = True
+    supports_tools: Optional[bool] = None
+    supports_vision: Optional[bool] = None
+    supports_reasoning: Optional[bool] = None
+    overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CustomProviderConfig(BaseModel):
+    id: Optional[str] = None
+    name: str
+    protocol: str = "openai_compatible"
+    base_url: str
+    api_key: Optional[str] = None
+    default_model: Optional[str] = None
+    enabled: bool = True
+    website: Optional[str] = None
+    notes: Optional[str] = None
+    icon: str = "⚙"
+    color: str = "#7C3AED"
+    request_config: Dict[str, Any] = Field(default_factory=dict)
+    models: List[CustomProviderModel] = Field(default_factory=list)
+    model_overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CustomProviderTestConfig(BaseModel):
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    request_config: Optional[Dict[str, Any]] = None
 
 
 class ProviderInfo(BaseModel):
@@ -128,12 +162,14 @@ PROVIDER_MODELS = {
         "THUDM/glm-4-9b-chat",
     ],
     # W4-41 (2026-06-30): edgefn.net 聚合代理, 一个 key 走多模型
+    # - GLM-4.5V: 当前 EdgeFn 控制台推荐示例模型
     # - GLM-5.2: 验证 OK (reasoning model, 原生 tool_calls)
     # - GLM-4-flash: 非 reasoning 备选, tool call 更稳
     # - deepseek-chat (V3): 非 reasoning, OpenAI 兼容, tool call 稳
     # - deepseek-v4-flash: reasoning, 走 reasoning_content 解析
     # - deepseek-v4-pro: 403 ModelNotAllowed (key 没权限, 选项保留)
     "edgefn": [
+        "GLM-4.5V",
         "GLM-5.2",
         "GLM-4-flash",
         "deepseek-chat",
@@ -173,6 +209,131 @@ async def get_providers():
         known_models = PROVIDER_MODELS.get(p_id, [])
         p["models"] = known_models
     return {"providers": providers_data}
+
+
+@router.get("/provider-profiles")
+async def list_provider_profiles():
+    """获取用户自定义供应商配置（API Key 脱敏）"""
+    return {"providers": llm_manager.list_custom_providers()}
+
+
+@router.post("/provider-profiles")
+async def create_provider_profile(config: CustomProviderConfig):
+    """创建或更新自定义供应商。"""
+    try:
+        item = llm_manager.upsert_custom_provider(config.model_dump())
+        return {"success": True, "provider": item, "message": "供应商配置已保存"}
+    except Exception as e:
+        logger.error("保存自定义供应商失败: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/provider-profiles/{provider_id}")
+async def update_provider_profile(provider_id: str, config: CustomProviderConfig):
+    data = config.model_dump()
+    data["id"] = provider_id
+    try:
+        item = llm_manager.upsert_custom_provider(data)
+        return {"success": True, "provider": item, "message": "供应商配置已更新"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/provider-profiles/{provider_id}")
+async def delete_provider_profile(provider_id: str):
+    ok = llm_manager.delete_custom_provider(provider_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="供应商配置未找到")
+    return {"success": True, "message": "供应商配置已删除"}
+
+
+@router.post("/provider-profiles/{provider_id}/models/fetch")
+async def fetch_provider_profile_models(provider_id: str, config: CustomProviderTestConfig = CustomProviderTestConfig()):
+    """从 OpenAI-compatible /models 拉取模型列表。失败不代表 chat 不可用。"""
+    provider = llm_manager.get_custom_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="供应商配置未找到")
+    try:
+        if config.request_config is not None:
+            provider["request_config"] = config.request_config
+        if config.base_url:
+            provider["base_url"] = config.base_url
+        llm = llm_manager._custom_provider_to_llm(
+            provider,
+            api_key=config.api_key,
+            model=config.model,
+            api_endpoint=config.base_url,
+        )
+        models = await llm.fetch_models()
+        return {"success": True, "models": models, "message": f"获取到 {len(models)} 个模型"}
+    except Exception as e:
+        return {"success": False, "models": [], "message": f"获取模型列表失败: {e}"}
+
+
+@router.post("/provider-profiles/{provider_id}/test")
+async def test_provider_profile(provider_id: str, config: CustomProviderTestConfig = CustomProviderTestConfig()):
+    """测试自定义供应商 chat 可用性。"""
+    provider = llm_manager.get_custom_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="供应商配置未找到")
+    if config.request_config is not None:
+        provider["request_config"] = config.request_config
+    if config.base_url:
+        provider["base_url"] = config.base_url
+    result = await llm_manager.test_connection(
+        provider=provider_id,
+        api_key=config.api_key,
+        model=config.model,
+        api_endpoint=config.base_url,
+    )
+    return result
+
+
+@router.post("/provider-profiles/{provider_id}/test-tools")
+async def test_provider_profile_tools(provider_id: str, config: CustomProviderTestConfig = CustomProviderTestConfig()):
+    """测试自定义供应商是否能返回原生或 XML fallback 工具调用。"""
+    provider = llm_manager.get_custom_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="供应商配置未找到")
+    try:
+        if config.request_config is not None:
+            provider["request_config"] = config.request_config
+        if config.base_url:
+            provider["base_url"] = config.base_url
+        llm = llm_manager._custom_provider_to_llm(
+            provider,
+            api_key=config.api_key,
+            model=config.model,
+            api_endpoint=config.base_url,
+        )
+        from app.core.base import Message
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "diagnostic_echo",
+                "description": "Echo a short diagnostic string.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            },
+        }]
+        response = await llm.chat([
+            Message(role="user", content="Call diagnostic_echo with text set to ok. Do not answer in prose.")
+        ], tools=tools)
+        mode = "native_or_fallback" if response.has_tool_calls else "none"
+        return {
+            "success": response.has_tool_calls,
+            "message": "工具调用测试成功" if response.has_tool_calls else "未返回工具调用",
+            "tool_call_mode": mode,
+            "tool_calls": [
+                {"name": tc.tool_name, "arguments": tc.arguments}
+                for tc in response.tool_calls
+            ],
+        }
+    except Exception as e:
+        return {"success": False, "message": f"工具调用测试失败: {e}", "tool_call_mode": "error"}
 
 
 @router.get("/status")
@@ -285,14 +446,16 @@ async def switch_model(config: ModelConfig):
 async def get_current_model():
     """获取当前模型信息"""
     config = llm_manager.get_current_config()
-    info = get_provider_info(llm_manager.get_current_provider()) or {}
+    custom_provider = llm_manager.get_custom_provider(llm_manager.get_current_provider())
+    info = custom_provider or get_provider_info(llm_manager.get_current_provider()) or {}
     return {
         "provider": config["provider"],
         "name": info.get("name", config["provider"]),
-        "icon": info.get("icon", ""),
-        "color": info.get("color", ""),
+        "icon": info.get("icon", "⚙" if custom_provider else ""),
+        "color": info.get("color", "#7C3AED" if custom_provider else ""),
         "model": llm_manager.get_current_model(),
         "api_key_configured": config.get("api_key_configured", False),
+        "provider_profile_id": config.get("provider_profile_id"),
     }
 
 
@@ -339,7 +502,7 @@ async def switch_to_saved_model(model_id: str):
     try:
         ok = llm_manager.switch_model(
             provider=entry["provider"],
-            api_key=entry.get("api_key"),
+            api_key=entry.get("api_key") if llm_manager.is_real_api_key(entry.get("api_key")) else None,
             model=entry.get("model"),
             api_endpoint=entry.get("api_endpoint"),
         )

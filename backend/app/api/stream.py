@@ -139,6 +139,7 @@ class StreamChatRequest(BaseModel):
     # clarify 恢复参数
     clarify_question_id: Optional[str] = Field(None)
     clarify_answer: Optional[str] = Field(None)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("message")
     @classmethod
@@ -146,6 +147,39 @@ class StreamChatRequest(BaseModel):
         if not v or not v.strip():
             raise ValueError('消息内容不能为空')
         return v.strip()
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def validate_attachment_ids(cls, v: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v or []:
+            attachment_id = str(item).strip()
+            if not attachment_id or attachment_id in seen:
+                continue
+            if len(attachment_id) > 80:
+                raise ValueError("附件 ID 过长")
+            cleaned.append(attachment_id)
+            seen.add(attachment_id)
+        return cleaned
+
+
+def _message_with_attachment_context(message: str, attachment_ids: list[str]) -> str:
+    if not attachment_ids:
+        return message
+    try:
+        from app.api.attachments import get_attachments_metadata
+        from app.api.attachment_processor import format_attachment_context
+        attachments = get_attachments_metadata(attachment_ids)
+    except Exception as exc:
+        logger.warning("[attachments] 读取附件元数据失败: %s", exc)
+        attachments = []
+    if not attachments:
+        return message
+
+    lines = ["", "", "[用户上传附件]", format_attachment_context(attachments)]
+    lines.append("需要更多附件正文时调用 attachment_read；没有 extracted_text 时不要假装读过内容。")
+    return message + "\n".join(lines)
 
 
 async def generate_stream_response(
@@ -156,6 +190,7 @@ async def generate_stream_response(
     clarify_answer: Optional[str] = None,
     use_langchain: bool = False,
     langchain_rollout_override: Optional[bool] = None,
+    attachment_ids: Optional[list[str]] = None,
 ):
     """
     生成流式响应
@@ -207,13 +242,15 @@ async def generate_stream_response(
             "data": json.dumps({"type": "start", "timestamp": time.time()})
         }
 
+        effective_message = _message_with_attachment_context(message, attachment_ids or [])
+
         # 选择 agent 实现
         if effective_use_langchain:
             from app.core.langchain_agent import stream_chat_langchain
             agent_stream = stream_chat_langchain(
                 agent_engine=agent_engine,
                 session_id=session_id,
-                message=message,
+                message=effective_message,
                 use_memory=use_memory,
                 clarify_question_id=clarify_question_id,
                 clarify_answer=clarify_answer,
@@ -221,7 +258,7 @@ async def generate_stream_response(
         else:
             agent_stream = agent_engine.stream_chat(
                 session_id=session_id,
-                message=message,
+                message=effective_message,
                 use_memory=use_memory,
                 clarify_question_id=clarify_question_id,
                 clarify_answer=clarify_answer,
@@ -353,6 +390,21 @@ async def generate_stream_response(
                         })
                     }
 
+                elif event_type == "error":
+                    # 透传 agent 内部捕获的错误事件给客户端
+                    # (例: stream_chat_langchain 的 except 分支会 yield {type: error, error: ...})
+                    err_msg = item.get("error") or item.get("message") or "未知错误"
+                    err_code = item.get("code") or "AGENT_ERROR"
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({
+                            "type": "error",
+                            "message": err_msg,
+                            "code": err_code,
+                            "timestamp": time.time()
+                        })
+                    }
+
                 elif event_type == "done":
                     # Include usage if present
                     done_data = {
@@ -360,6 +412,7 @@ async def generate_stream_response(
                         "session_id": item.get("session_id", session_id or ""),
                         "tools_used": item.get("tools_used", []),
                         "commands_executed": item.get("commands_executed", []),
+                        "artifact_previews": item.get("artifact_previews", []),
                         "processing_time": item.get("processing_time", 0),
                         "usage": item.get("usage", {}),
                         "needs_continue": item.get("needs_continue", False),
@@ -426,6 +479,7 @@ async def stream_chat(request: StreamChatRequest):
             langchain_rollout_override=request.langchain_rollout_override,
             clarify_question_id=request.clarify_question_id,
             clarify_answer=request.clarify_answer,
+            attachment_ids=request.attachment_ids,
         )
     )
 

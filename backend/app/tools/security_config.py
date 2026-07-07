@@ -66,7 +66,7 @@ _DEFAULT_ALLOWED_COMMANDS = [
 ]
 
 _DEFAULT_FORBIDDEN_PATTERNS = [
-    r"rm\s+-rf\s+/",
+    r"rm\s+-rf\s+/(?:\s|$)",
     r"sudo\s+",
     r"curl.*\|.*sh",
     r"wget.*\|.*sh",

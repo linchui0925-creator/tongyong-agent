@@ -121,9 +121,44 @@ export interface SavedModel {
     id: string;
     provider: string;
     model: string;
-    api_key: string;
+    api_key?: string;
     api_endpoint?: string;
     name?: string;
+}
+
+export interface ProviderModelEntry {
+    id: string;
+    name?: string;
+    enabled?: boolean;
+    supports_tools?: boolean | null;
+    supports_vision?: boolean | null;
+    supports_reasoning?: boolean | null;
+    overrides?: Record<string, unknown>;
+}
+
+export interface CustomProviderProfile {
+    id?: string;
+    name: string;
+    protocol: string;
+    base_url: string;
+    api_key?: string;
+    api_key_masked?: string;
+    has_api_key?: boolean;
+    default_model?: string;
+    enabled?: boolean;
+    website?: string;
+    notes?: string;
+    icon?: string;
+    color?: string;
+    request_config: Record<string, unknown>;
+    models: ProviderModelEntry[];
+    model_overrides?: Record<string, unknown>;
+}
+
+export interface ProviderProfileResult {
+    success: boolean;
+    provider: CustomProviderProfile;
+    message: string;
 }
 
 export async function getSavedModels(): Promise<{models: SavedModel[]}> {
@@ -135,7 +170,7 @@ export async function getSavedModels(): Promise<{models: SavedModel[]}> {
 export async function saveModelConfig(entry: {
     provider: string;
     model: string;
-    api_key: string;
+    api_key?: string;
     api_endpoint?: string;
     name?: string;
 }): Promise<{success: boolean; id: string; message: string}> {
@@ -161,6 +196,75 @@ export async function deleteSavedModel(modelId: string): Promise<void> {
 export async function switchToSavedModel(modelId: string): Promise<{success: boolean; message: string}> {
     const response = await fetch(`${API_BASE}/saved-models/${modelId}/switch`, {
         method: 'POST',
+    });
+    return response.json();
+}
+
+export async function getProviderProfiles(): Promise<{providers: CustomProviderProfile[]}> {
+    const response = await fetch(`${API_BASE}/provider-profiles`);
+    if (!response.ok) throw new Error('获取自定义供应商失败');
+    return response.json();
+}
+
+export async function saveProviderProfile(profile: CustomProviderProfile): Promise<ProviderProfileResult> {
+    const method = profile.id ? 'PUT' : 'POST';
+    const path = profile.id ? `${API_BASE}/provider-profiles/${profile.id}` : `${API_BASE}/provider-profiles`;
+    const response = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+    });
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || '保存供应商失败');
+    }
+    return response.json();
+}
+
+export async function deleteProviderProfile(providerId: string): Promise<{success: boolean; message: string}> {
+    const response = await fetch(`${API_BASE}/provider-profiles/${providerId}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('删除供应商失败');
+    return response.json();
+}
+
+export async function fetchProviderModels(providerId: string, body: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+    request_config?: Record<string, unknown>;
+}): Promise<{success: boolean; models: string[]; message: string}> {
+    const response = await fetch(`${API_BASE}/provider-profiles/${providerId}/models/fetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    return response.json();
+}
+
+export async function testProviderProfile(providerId: string, body: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+    request_config?: Record<string, unknown>;
+}): Promise<TestResult> {
+    const response = await fetch(`${API_BASE}/provider-profiles/${providerId}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    return response.json();
+}
+
+export async function testProviderTools(providerId: string, body: {
+    api_key?: string;
+    model?: string;
+    base_url?: string;
+    request_config?: Record<string, unknown>;
+}): Promise<{success: boolean; message: string; tool_call_mode?: string; tool_calls?: unknown[]}> {
+    const response = await fetch(`${API_BASE}/provider-profiles/${providerId}/test-tools`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
     });
     return response.json();
 }

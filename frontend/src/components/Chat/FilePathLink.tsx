@@ -61,6 +61,10 @@ function buildHref(path: string): string {
   return backend + '/api/files/serve?path=' + encodeURIComponent(path);
 }
 
+function isImagePath(path: string): boolean {
+  return /\.(?:png|jpe?g|gif|webp|svg|ico|bmp)(?:$|[?#])/i.test(path);
+}
+
 function getBasename(p: string): string {
   return p.split('/').pop() || p;
 }
@@ -107,6 +111,17 @@ export function FilePathLink({ path }: FilePathLinkProps) {
 
   return (
     <span className="file-link-wrap" data-file-path={path}>
+      {kind === 'image' && (
+        <a
+          className="file-link-preview"
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`点击打开: ${path}`}
+        >
+          <img src={href} alt={basename} />
+        </a>
+      )}
       <a
         className={`file-link file-link--${kind} ${copied ? 'file-link--copied' : ''}`}
         href={href}
@@ -136,6 +151,41 @@ export function FilePathLink({ path }: FilePathLinkProps) {
           已复制 <code>{basename}</code>
         </span>
       )}
+    </span>
+  );
+}
+
+export function MarkdownImageLink({ href, children }: { href?: string; children: React.ReactNode }) {
+  if (!href) return <>{children}</>;
+
+  const decodedPath = (() => {
+    try {
+      const url = new URL(href, window.location.origin);
+      if (url.pathname.endsWith('/api/files/serve')) return url.searchParams.get('path') || href;
+      return href;
+    } catch {
+      return href;
+    }
+  })();
+
+  if (!isImagePath(decodedPath)) {
+    return (
+      <a className="md-link" href={href} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  }
+
+  const imageHref = /^(?:https?|file|ftp):\/\//.test(href) ? href : buildHref(decodedPath);
+  const basename = getBasename(decodedPath);
+  return (
+    <span className="md-image-link-wrap">
+      <a className="md-image-link-preview" href={imageHref} target="_blank" rel="noopener noreferrer">
+        <img src={imageHref} alt={basename} />
+      </a>
+      <a className="md-link" href={imageHref} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
     </span>
   );
 }

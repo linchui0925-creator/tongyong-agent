@@ -6,6 +6,7 @@ terminal - 命令行执行工具
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -20,6 +21,14 @@ logger = logging.getLogger(__name__)
 _MAX_OUTPUT_CHARS = 100_000
 _DEFAULT_TIMEOUT = 60
 _MAX_FOREGROUND_TIMEOUT = 600
+
+_APPROVAL_PATTERNS = [
+    (re.compile(r"\brm\s+-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)\b"), "recursive_force_delete", "critical"),
+    (re.compile(r"\bgit\s+reset\s+--hard\b"), "git_reset_hard", "high"),
+    (re.compile(r"\bgit\s+clean\s+-[^\n]*f"), "git_clean_force", "high"),
+    (re.compile(r"\bchmod\s+-R\b"), "recursive_chmod", "high"),
+    (re.compile(r"\bchown\s+-R\b"), "recursive_chown", "high"),
+]
 
 
 def _validate_command(command: str) -> Optional[str]:
@@ -45,6 +54,76 @@ def _validate_command(command: str) -> Optional[str]:
         return "浏览器操作请使用 browser 工具，不要通过终端调用 playwright"
 
     return None
+
+
+def _approval_risk(command: str) -> Optional[dict]:
+    matched = []
+    highest = None
+    rank = {"medium": 1, "high": 2, "critical": 3}
+    for pattern, description, level in _APPROVAL_PATTERNS:
+        if pattern.search(command):
+            matched.append({"description": description, "risk_level": level})
+            if highest is None or rank[level] > rank[highest]:
+                highest = level
+    if not matched:
+        return None
+    return {"risk_level": highest or "high", "matched_patterns": matched}
+
+
+async def _approval_allows_execution(
+    approval_id: Optional[str],
+    command: str,
+    session_id: Optional[str],
+) -> tuple[bool, str]:
+    risk = _approval_risk(command)
+    if not risk:
+        return True, ""
+
+    from app.tools.approval import ApprovalManager
+
+    manager = ApprovalManager()
+    if approval_id:
+        request = await manager.get_request(approval_id)
+        if not request:
+            return False, json.dumps({
+                "approval_required": True,
+                "status": "not_found",
+                "approval_id": approval_id,
+                "reason": "审批记录不存在",
+            }, ensure_ascii=False)
+        approved_command = str((request.parameters or {}).get("command", ""))
+        if approved_command != command:
+            return False, json.dumps({
+                "approval_required": True,
+                "status": "command_mismatch",
+                "approval_id": approval_id,
+                "reason": "审批 ID 对应的命令与本次命令不一致，不能复用审批。",
+                "approved_command": approved_command,
+            }, ensure_ascii=False)
+        if request.status == "approved":
+            return True, ""
+        return False, json.dumps({
+            "approval_required": True,
+            "status": request.status,
+            "approval_id": approval_id,
+            "reason": "高风险命令尚未批准",
+        }, ensure_ascii=False)
+
+    request = await manager.create_request(
+        tool_name="terminal",
+        parameters={"command": command},
+        session_id=session_id or "default",
+        user_id="agent",
+        risk_level=risk["risk_level"],
+    )
+    await manager.update_risk_assessment(request.id, risk)
+    return False, json.dumps({
+        "approval_required": True,
+        "status": "pending",
+        "approval_id": request.id,
+        "risk_assessment": risk,
+        "message": "高风险命令已拦截，请在审批队列批准后携带 approval_id 重新调用 terminal。",
+    }, ensure_ascii=False)
 
 
 def _check_terminal() -> bool:
@@ -73,16 +152,35 @@ TERMINAL_SCHEMA = {
             "description": "后台执行（适用于长时间运行的任务，默认 false）",
             "default": False,
         },
+        "session_id": {
+            "type": "string",
+            "description": "当前会话 ID，用于高风险命令审批队列归属。",
+        },
+        "approval_id": {
+            "type": "string",
+            "description": "审批通过后的 ID。高风险命令必须携带已批准的 approval_id 才会执行。",
+        },
     },
     "required": ["command"],
 }
 
 
-async def terminal_tool(command: str, timeout: int = _DEFAULT_TIMEOUT, workdir: str = "", background: bool = False) -> str:
+async def terminal_tool(
+    command: str,
+    timeout: int = _DEFAULT_TIMEOUT,
+    workdir: str = "",
+    background: bool = False,
+    session_id: Optional[str] = None,
+    approval_id: Optional[str] = None,
+) -> str:
     # 安全校验
     err = _validate_command(command)
     if err:
         return f"⛔ {err}"
+
+    approved, approval_message = await _approval_allows_execution(approval_id, command, session_id)
+    if not approved:
+        return approval_message
 
     cwd = workdir if workdir else None
     if cwd and not os.path.isdir(cwd):

@@ -34,6 +34,7 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             question: data.question,
             question_id: data.question_id,
             commands_executed: data.commands_executed,
+            artifact_previews: data.artifact_previews,
             processing_time: data.processing_time,
             usage: data.usage,
             round: data.round,
@@ -78,7 +79,8 @@ export function streamChat(
     useMemory: boolean = true,
     callbacks: SSECallbacks = {},
     clarifyQuestionId?: string,
-    clarifyAnswer?: string
+    clarifyAnswer?: string,
+    attachmentIds?: string[]
 ): AbortController {
     const controller = new AbortController();
 
@@ -99,7 +101,8 @@ export function streamChat(
         session_id: sessionId || undefined,
         use_memory: useMemory,
         clarify_question_id: clarifyQuestionId || undefined,
-        clarify_answer: clarifyAnswer || undefined
+        clarify_answer: clarifyAnswer || undefined,
+        attachment_ids: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined
     };
 
     console.log('[流式聊天请求]', requestData);

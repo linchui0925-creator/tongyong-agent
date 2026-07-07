@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react'
 import ModernChatPanel from './components/Chat/ModernChatPanel'
 import MemoryPanel from './components/Memory/MemoryPanel'
 import SessionSidebar from './components/Session/SessionSidebar'
+import ModelBadge from './components/LLM/ModelBadge'
 import ModelSelector from './components/LLM/ModelSelector'
 import ProfileSelector from './components/LLM/ProfileSelector'
 import DreamingPanel from './components/Dreaming/DreamingPanel'
@@ -46,6 +47,15 @@ function App() {
     loadSessions()
   }, [loadSessions])
 
+  useEffect(() => {
+    const onNav = (e: Event) => {
+      const detail = (e as CustomEvent<typeof activeTab>).detail
+      if (detail) setActiveTab(detail)
+    }
+    window.addEventListener('navigate:tab', onNav as EventListener)
+    return () => window.removeEventListener('navigate:tab', onNav as EventListener)
+  }, [])
+
   const handleSessionSelect = (sessionId: string) => {
     setCurrentSessionId(sessionId)
   }
@@ -65,6 +75,9 @@ function App() {
             </button>
           ))}
         </nav>
+        <div className="app-header-actions">
+          <ModelBadge />
+        </div>
       </header>
 
       <div className="app-container">
@@ -74,9 +87,6 @@ function App() {
               currentSessionId={currentSessionId}
               onSessionSelect={handleSessionSelect}
             />
-          </div>
-          <div className="sidebar-section">
-            <ModelSelector />
           </div>
         </aside>
 
@@ -104,6 +114,8 @@ function App() {
           </ErrorBoundary>
         </main>
       </div>
+      {/* ModelSelector 默认不渲染内联 hub，仅作为事件 listener + 渲染 manager overlay 的载体 */}
+      <ModelSelector defaultHubVisible={false} />
     </div>
   )
 }

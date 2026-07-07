@@ -63,7 +63,11 @@
 
 /* ========== Reset ========== */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-html, body, #root { height: 100%; overflow: hidden; }
+html, body, #root { min-height: 100%; }
+/* App 组件本身靠 .app { height:100vh; display:flex } 锁视口高度；
+   其它页（比如首页 HomePage）需要自然滚动，所以这里只设 min-height，
+   不强制 overflow: hidden */
+
 
 body {
   font-family: var(--font);
@@ -94,6 +98,14 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   gap: var(--sp-6);
+  justify-content: space-between;
+}
+
+.app-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-left: auto;
 }
 
 .app-header h1 {
@@ -151,6 +163,14 @@ body {
 .sidebar-section {
   padding: var(--sp-3);
   border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.sidebar-section:last-child {
+  border-bottom: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .app-main {

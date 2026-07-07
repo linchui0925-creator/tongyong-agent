@@ -15,7 +15,7 @@ import mimetypes
 import os
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ def _resolve_path(path_str: str) -> Path:
     return p
 
 
+
 @router.get("/serve")
 async def serve_file(path: str = Query(..., description="本地文件路径")):
     """serve 本地文件, 让前端 FilePathLink 可以直接打开.
@@ -141,6 +142,40 @@ async def serve_file(path: str = Query(..., description="本地文件路径")):
             "X-Served-From": str(p),
         },
     )
+
+
+@router.get("/preview", response_class=HTMLResponse)
+async def preview_file(path: str = Query(..., description="本地 HTML/图片/SVG 文件路径")):
+    """把本地网页/图片包装成安全预览页, 供聊天窗口 iframe 内嵌渲染。"""
+    p = _resolve_path(path)
+    ext = p.suffix.lower()
+    if ext not in {".html", ".htm", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+        raise HTTPException(400, f"不支持预览该类型: {ext or 'unknown'}")
+
+    import html
+    from urllib.parse import quote
+
+    src = "/api/files/serve?path=" + quote(str(p), safe="")
+    title = html.escape(p.name)
+    if ext in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}:
+        body = f'<img src="{src}" alt="{title}" />'
+    else:
+        body = f'<iframe src="{src}" sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals"></iframe>'
+
+    return HTMLResponse(f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <style>
+    html, body {{ margin: 0; width: 100%; height: 100%; background: #0f1115; overflow: hidden; }}
+    iframe {{ width: 100%; height: 100%; border: 0; background: white; }}
+    img {{ width: 100%; height: 100%; object-fit: contain; display: block; }}
+  </style>
+</head>
+<body>{body}</body>
+</html>""")
 
 
 @router.get("/info")

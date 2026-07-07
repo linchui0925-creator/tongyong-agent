@@ -193,6 +193,10 @@ with TestClient(app) as c:
 18. **deepseek reasoning model 解析 (跟 minimax 一样的 XML 坑)** (W4-39) — deepseek-v4-flash 是 reasoning model, 响应 (a) `content=""` + `reasoning_content="..."` 真实内容在 reasoning_content, 原 `_parse_response_with_thinking` 只读 content 拿不到; (b) 工具调用走 `<minimax:tool_call>` XML 不走 `tool_calls` 字段. 修法: 1) content 空 fallback reasoning_content; 2) 路径 B 加 XML 兜底 (跟 MiniMaxLLM 一致). 5 个新 test.
 19. **LangChain ReAct stream 丢 tool_calls + 长任务不可续跑** (W4-47) — `TongYongLLMAdapter._astream()` 旧版只读 `base_llm.stream_chat()` 文本, reasoning/XML 解析出的 `LLMResponse.tool_calls` 没传给 LangChain chunk, agent 0 工具调用；同时 LangGraph recursion limit 只报错, 前端不能继续。修法: `_astream()` 改走 `chat()` 拿完整响应并在 final chunk 带 `tool_calls`; SSE `done` 增加 `needs_continue/stop_reason/continue_prompt`; 前端显示“继续执行”。另: XML attrs 只在顶层 `<path>...</path>` 参数集合时启用, 避免把老 kv 格式里的 HTML `<h1>` 误当参数。
 20. **真实前端长任务仍会假完成/伪调用** (W4-48) — GLM-5.2 实测会输出 `<tool_call>terminal(command="...")` 无闭合、`<tool_call>write_file<arg_key>...` 伪调用, 且长任务只读文件后把大段计划/源码输出到聊天。修法: parser 支持函数式伪调用 + arg_key/arg_value + 缺闭合 final content; `write_file` 缺 path/content 不执行; agent/langchain 收尾加交付证据门禁, 前端写文件/build 缺证据时 `needs_continue=true`, 不再假装完成。
+21. **新会话隔离 + 跨会话检索工具化** (W4-49) — `_get_or_create_session()` 旧版在无 `session_id` 时复用最近会话, 且 `_load_operation_habits()` 自动注入 shared vector memory, 新会话可能串入其它会话内容。修法: 无 `session_id` 永远创建新会话；shared/session/cross memory 只允许通过 `memory_search` / `memory_list` 显式工具检索。
+22. **长任务 checklist + 高风险 terminal 审批门禁** (W4-49) — 新增 `todo_write` / `todo_read` planning 工具供模型维护长任务进度；`terminal` 对 `rm -rf`、`git reset --hard`、`git clean -f`、递归 `chmod/chown` 先创建审批, 未携带匹配命令的 approved `approval_id` 不执行；补 `/api/tools/approvals/pending` 和 `/api/tools/approvals` 后端闭环。
+23. **单 agent workspace + LangChain 压缩对齐** (W4-50) — 代码/网页/数据任务新增 `workspace_*` 隔离工作区工具, `workspace_terminal` 使用 async subprocess 并 `await communicate()` 等完整输出；self-built 和 LangChain 路径都设置 tool runtime session, 避免不同会话落到 default workspace；LangChain 路径补真实 summarization 压缩和前端 `context` schema。
+24. **会话内附件渲染层 MVP** (W4-51) — 新增 `/api/chat/attachments/upload` 上传与 opaque id serve, 前端支持点击/拖拽/粘贴上传图片/PDF/文本等, 用户消息内直接渲染图片/文件卡片；`/api/chat/stream` 接收 `attachment_ids` 并把附件元数据注入本轮消息上下文。
 
 ---
 
@@ -200,6 +204,9 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W4-51 | 会话附件渲染层 MVP: 上传/安全 serve/图片直显/文件卡片/拖拽粘贴/stream attachment_ids |
+| (pending) | W4-50 | 单 agent 隔离 workspace 工具; workspace_terminal 等完整输出; LangChain tool session 上下文 + 自动压缩/context 事件对齐 |
+| (pending) | W4-49 | 新会话隔离: 无 session_id 创建新会话; 跨会话记忆改 memory_search/list 工具; 新增 todo_write/read; terminal 高风险命令审批门禁 |
 | (pending) | W4-48 | 真实前端长任务修复: 解析 `<tool_call>fn(...)` / `<arg_key>` 伪调用; 缺写文件/build 证据时标记未完整交付并给 continue |
 | (pending) | W4-47 | LangChain ReAct stream 保留 tool_calls; reasoning_content XML attrs 兜底; 长任务 recursion limit 返回可继续状态 + 前端继续按钮 |
 | `23a80dd` | W4-41 | edgefn.net 聚合 provider: GLM-5.2 (reasoning + 原生 function call) + DeepSeek; AddModelDialog 加 edgefn 选项 |
@@ -228,6 +235,48 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W4-51: 会话内附件渲染层 MVP
+
+- **场景**: 用户要求 TongYong 会话页支持模型/后端结构化输出经 Markdown/安全组件树渲染, 图片/截图等直接显示在会话窗口, 用户也能上传/拖拽图片等文件到会话里。
+- **修法**:
+  - 后端新增 `app/api/attachments.py`: `POST /api/chat/attachments/upload`, `GET /api/chat/attachments/{id}/content`, `GET /api/chat/attachments/{id}/meta`；文件落 `data/attachments/`, 元数据进 SQLite `data/attachments.db`, 只按 opaque attachment id serve, 不暴露用户原始路径。
+  - 前端新增 `Attachment` 类型和 `api/attachments.ts`, `ModernChatPanel` 支持点击加号上传、拖拽上传、粘贴上传；用户消息气泡里图片直接 `<img>` 预览, PDF/文本/其他允许类型用文件卡片打开。
+  - `/api/chat/stream` 请求新增 `attachment_ids`, 后端把附件名/mime/size/id/url 注入本轮消息上下文；MVP 先让模型看附件元数据, 不假装读取图片像素内容。
+- **安全边界**: 允许 image/png/jpeg/gif/webp/svg、PDF、txt/markdown/csv/json；默认 25MB 上限；文件名 sanitize；serve 设置 `X-Content-Type-Options: nosniff`。
+- **测试**: `tests/test_w451_attachments.py` 覆盖上传+serve、文件名清洗、拒绝不支持 MIME；前端 `npm run build` 通过。
+
+### W4-50: 单 agent workspace 隔离 + LangChain 压缩对齐
+
+- **场景**: 用户要求“代码等任务用单独 workspace，不污染主进程 agent 会话；主进程异步等到子进程输出结果后继续输出；确认自动压缩是否存在、是否激活、前端是否实时展示压缩进度。”
+- **修法**:
+  - 新增 `workspace_info` / `workspace_list` / `workspace_read` / `workspace_write` / `workspace_terminal` 工具，默认按当前 stream session 建 `data/workspaces/t_<session_id>/` 隔离目录，显式 `session_id` / `task_id` 可覆盖。
+  - `workspace_terminal` 在 workspace 根目录运行命令，使用 `asyncio.create_subprocess_shell()` + `await process.communicate()` + `wait_for(timeout)`，所以工具结果返回前主流程不会提前 `done`。
+  - `AgentEngine.stream_chat()` 与 `stream_chat_langchain()` 都设置 `runtime_context.tool_session_id`，让 workspace 工具在 self-built / LangChain 两条路径都拿到当前会话，而不是落到 `"default"`。
+  - 系统提示增加 workspace 隔离规则：代码、网页、脚本、数据处理、构建/测试默认用 `workspace_*`；只有明确要改 repo 或绝对路径时才用 direct `write_file` / `patch` / `terminal`。
+  - LangChain 路径补真实 `ContextCompressor.compress()` summarization 自动压缩，并把 `context` 事件改成前端 `TokenUsageBar` 需要的 `chars / estimated_tokens / threshold_tokens / percent / approaching` schema；self-built 路径原本已有压缩进度 SSE。
+  - 交付证据门禁接受 `workspace_write` / `workspace_terminal`；workspace 写出的 HTML/SVG/图片也会进入 `artifact_previews`，前端可在会话窗口 iframe 预览并点击打开。
+- **压缩状态确认**:
+  - 自动压缩存在于 `ContextCompressor`：默认达到模型 context window 50% 触发，且不足 30000 字符不会压；保护前 3 条和后 20 条消息，中间消息由 LLM summarization 压成摘要。
+  - self-built stream 路径已激活，并通过 `progress` 推 “📦 上下文过长，正在压缩...” / “📦 压缩完成...” 和 `context` 事件；前端 `useStreamChat` / `TypingIndicator` / `TokenUsageBar` 会实时展示。
+  - LangChain 路径本次补齐自动压缩和正确 `context` 事件；此前只做滑动窗口截断，不能算真正自动压缩。
+- **测试**: `tests/test_w450_workspace_and_compression.py` 6 passed；连同 W4-49 回归共 15 passed；`py_compile` 覆盖 `agent.py` / `langchain_agent.py` / `agent_hooks.py` / `workspace_tools.py` / `runtime_context.py`。
+
+### W4-49: 新会话隔离 / memory tools / todo_write / terminal 审批门禁
+
+- **场景**: 用户要求“跨会话检索改造成 tools 能力；特定场景才检索；其它时候只注入身份 MEMORY.md / USER.md / base system prompt / env prompt / domain prompts，其它内容都不注入。”
+- **根因**:
+  1. `_get_or_create_session()` 在调用方不传 `session_id` 时复用最近会话，导致“新会话”可能加载旧 session history。
+  2. `_load_operation_habits()` 自动读取 shared vector memory 并注入 system，上下文隔离不彻底。
+  3. 长任务没有结构化 checklist 工具，模型容易输出计划后中断或截断后不知道进度。
+  4. `ApprovalManager` / `PermissionManager` 有数据层和前端队列雏形，但单 agent `terminal` 工具执行链没有真实审批门禁。
+- **修法**:
+  - `_get_or_create_session()` 改为无 `session_id` 必定创建“新会话”，只有显式 session_id 才加载历史。
+  - `_load_operation_habits()` 停止自动注入 shared memory；跨会话/共享记忆只通过 `memory_search` / `memory_list` 工具进入当前轮上下文。
+  - 新增 `todo_write` / `todo_read` 工具，session-scoped in-memory checklist，限制同一时间最多一个 `in_progress`。
+  - `terminal` 对高风险命令创建 `tool_approvals` pending 记录；审批 API 补齐 `GET /api/tools/approvals/pending` 与 `POST /api/tools/approvals`；approved `approval_id` 必须匹配原始命令，禁止复用到其它命令。
+- **测试**: `tests/test_w449_planning_and_session_isolation.py` + `tests/test_w449_terminal_approval_gate.py` 共 9 passed；`py_compile` 覆盖 `agent.py` / `todo_tools.py` / `terminal.py` / `approval.py` / `tool_harness.py` / `security_config.py`。
+- **遗留**: 已在 W4-50 为单 agent 接入 per-session workspace；后续可继续做真实 git worktree 级隔离和 workspace 文件浏览 UI。
 
 ### W4-48: 真实前端长任务 function call 兼容 + 交付证据门禁
 

@@ -18,7 +18,7 @@ import {
 import { getSessionMessages } from '../api/memory';
 import { submitClarifyAnswer } from '../api/chat';
 import { createEvaluation } from '../api/evaluation';
-import { Message, ContextInfo } from '../types';
+import { Attachment, Message, ContextInfo } from '../types';
 
 const EXECUTION_CLAIM_PATTERNS = [
   '已调用', '已执行', '已打开', '已访问', '已搜索', '已截图', '已导航', '我已经调用', '我已调用',
@@ -52,7 +52,7 @@ export interface UseStreamChatReturn {
   pendingContinue: { prompt: string; reason: string } | null;
   setErrorMessage: (msg: string | null) => void;
   loadMessages: (sid: string) => Promise<void>;
-  handleSend: (text: string) => Promise<void>;
+  handleSend: (text: string, attachments?: Attachment[]) => Promise<void>;
   handleStop: () => void;
   handleCompress: (force?: boolean) => Promise<void>;
   handleDelete: (id: string) => void;
@@ -195,7 +195,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
   };
   const markActive = () => { lastEventTimeRef.current = Date.now(); };
 
-  const startStream = useCallback((text: string, msgId: string, clarifyQId?: string, clarifyAns?: string) => {
+  const startStream = useCallback((text: string, msgId: string, clarifyQId?: string, clarifyAns?: string, attachmentIds?: string[]) => {
     abortRef.current?.abort();
     abortRef.current = streamChat(text, sessionId || undefined, true, {
       onStart: () => {
@@ -282,6 +282,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
             status: 'completed' as const,
             toolsUsed: data.tools_used || [],
             commandsExecuted: data.commands_executed || [],
+            artifactPreviews: data.artifact_previews || [],
             needsContinue: Boolean(data.needs_continue),
             stopReason: data.stop_reason || undefined,
             continuePrompt: data.continue_prompt || undefined,
@@ -326,18 +327,20 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
         abortRef.current = null;
         onError?.(err);
       },
-    }, clarifyQId, clarifyAns);
+    }, clarifyQId, clarifyAns, attachmentIds);
   }, [sessionId, onError]);
 
-  const handleSend = useCallback(async (text: string) => {
+  const handleSend = useCallback(async (text: string, attachments: Attachment[] = []) => {
     const trimmed = text.trim();
-    if (!trimmed || isLoading || isStreaming) return;
+    if ((!trimmed && attachments.length === 0) || isLoading || isStreaming) return;
 
     const uid = generateMessageId();
     const aid = generateMessageId();
+    const displayText = trimmed || `上传了 ${attachments.length} 个附件`;
+    const attachmentIds = attachments.map((item) => item.id);
 
     setMessages((prev) => [...prev,
-      { id: uid, role: 'user', content: trimmed, timestamp: Date.now(), status: 'completed' },
+      { id: uid, role: 'user', content: displayText, timestamp: Date.now(), status: 'completed', attachments },
       { id: aid, role: 'assistant', content: '', timestamp: Date.now(), status: 'streaming' },
     ]);
     setIsLoading(true);
@@ -353,7 +356,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
       setToolElapsed((p) => p + 100);
     }, 100);
 
-    startStream(trimmed, aid);
+    startStream(displayText, aid, undefined, undefined, attachmentIds);
   }, [isLoading, isStreaming, startStream]);
 
   const handleContinue = useCallback(async () => {

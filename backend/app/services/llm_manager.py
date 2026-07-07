@@ -17,6 +17,8 @@ from typing import Dict, Optional, Any, List
 
 from app.llm.base import BaseLLM
 from app.llm.factory import get_llm, get_available_providers, get_provider_info
+from app.llm.model_metadata import get_model_info
+from app.llm.configurable_openai import ConfigurableOpenAICompatibleLLM
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,8 @@ class LLMManager:
         self._agent_engine_ref = None
         self._api_keys: Dict[str, str] = {}
         self._saved_models: List[Dict[str, Any]] = []
+        self._custom_providers: List[Dict[str, Any]] = []
+        self._active_provider_profile_id: Optional[str] = None
         self._initialized = True
         self._load_config()
 
@@ -72,6 +76,21 @@ class LLMManager:
         self._current_llm = llm
         self._current_provider = provider
         logger.info(f"LLMManager[{self.profile_id}] 已接收初始 LLM: {provider}")
+
+    @staticmethod
+    def is_real_api_key(key: Optional[str]) -> bool:
+        """Return False for UI masks and local placeholders that must not be used."""
+        if not key:
+            return False
+        stripped = str(key).strip()
+        if not stripped:
+            return False
+        invalid_values = {"****", "local-placeholder", "placeholder", "undefined", "null"}
+        if stripped in invalid_values:
+            return False
+        if stripped.startswith("YOUR_") or "****" in stripped:
+            return False
+        return True
 
     def try_restore_saved_provider(self) -> bool:
         """尝试从已保存的配置中恢复上次使用的 provider"""
@@ -100,14 +119,34 @@ class LLMManager:
             logger.info(f"保存的 provider 与当前相同且 LLM 已存在")
             return True
 
-        api_key = self.get_api_key(saved_provider)
+        custom_provider = self.get_custom_provider(saved_provider)
+        saved_entry = None
+        try:
+            if self._config_file.exists():
+                data = json.loads(self._config_file.read_text(encoding="utf-8"))
+                for entry in data.get("saved_models", []):
+                    if entry.get("provider") == saved_provider and entry.get("model") == saved_model:
+                        saved_entry = entry
+                        break
+        except Exception:
+            saved_entry = None
+
+        entry_key = (saved_entry or {}).get("api_key")
+        api_key = (
+            entry_key if self.is_real_api_key(entry_key)
+            else (custom_provider or {}).get("api_key")
+            or self.get_api_key(saved_provider)
+        )
         if not api_key:
             logger.warning(f"已保存的 provider {saved_provider} 无 API key")
             return False
 
         try:
-            from app.llm.factory import get_llm
-            llm = get_llm(saved_provider, api_key)
+            if custom_provider:
+                llm = self._custom_provider_to_llm(custom_provider, api_key, saved_model, saved_endpoint)
+            else:
+                from app.llm.factory import get_llm
+                llm = get_llm(saved_provider, api_key, saved_model)
             if saved_model:
                 llm.model = saved_model
             if saved_endpoint and hasattr(llm, 'api_base'):
@@ -115,6 +154,7 @@ class LLMManager:
             self._current_llm = llm
             self._current_provider = saved_provider
             self._current_model = saved_model
+            self._active_provider_profile_id = saved_provider if custom_provider else None
             self._sync_to_agent()
             logger.info(f"已从保存的配置恢复 LLM: {saved_provider} / {saved_model}")
             return True
@@ -126,6 +166,13 @@ class LLMManager:
         """将当前 LLM 同步到 AgentEngine"""
         if self._agent_engine_ref is not None:
             self._agent_engine_ref.llm = self._current_llm
+            if self._current_llm is not None and hasattr(self._agent_engine_ref, "context_compressor"):
+                info = get_model_info(getattr(self._current_llm, "model", "") or "")
+                if info and info.context_window:
+                    self._agent_engine_ref.context_compressor.context_length = info.context_window
+                    self._agent_engine_ref.context_compressor.threshold_tokens = int(
+                        info.context_window * self._agent_engine_ref.context_compressor.threshold_percent
+                    )
             logger.debug(f"LLMManager[{self.profile_id}] 同步到 AgentEngine")
 
     # ── 配置持久化 ────────────────────────────────────────
@@ -137,8 +184,10 @@ class LLMManager:
                 data = json.loads(self._config_file.read_text(encoding="utf-8"))
                 self._api_keys = data.get("api_keys", {})
                 self._saved_models = data.get("saved_models", [])
+                self._custom_providers = data.get("custom_providers", [])
+                self._active_provider_profile_id = data.get("active_provider_profile_id")
                 saved_provider = data.get("provider")
-                if saved_provider and saved_provider in get_available_providers():
+                if saved_provider and (saved_provider in get_available_providers() or self.get_custom_provider(saved_provider)):
                     self._current_provider = saved_provider
                     self._current_model = data.get("model") or self._current_model
                 logger.info(f"LLMManager[{self.profile_id}] 已加载配置")
@@ -154,6 +203,8 @@ class LLMManager:
                 "model": self._current_model,
                 "api_keys": self._api_keys,
                 "saved_models": self._saved_models,
+                "custom_providers": self._custom_providers,
+                "active_provider_profile_id": self._active_provider_profile_id,
             }
             self._config_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
@@ -166,7 +217,7 @@ class LLMManager:
         if provider in self._api_keys:
             key = self._api_keys[provider]
             # 占位符视为无效，回退到环境变量
-            if key and not key.startswith("YOUR_"):
+            if self.is_real_api_key(key):
                 return key
         from app.llm.factory import _get_default_api_key
         key = _get_default_api_key(provider)
@@ -176,7 +227,7 @@ class LLMManager:
 
     def set_api_key(self, provider: str, api_key: str) -> None:
         """设置并持久化指定 provider 的 API 密钥"""
-        if api_key:
+        if self.is_real_api_key(api_key):
             self._api_keys[provider] = api_key
             self._save_config()
 
@@ -203,11 +254,99 @@ class LLMManager:
         return self._current_model
 
     def get_current_config(self) -> Dict[str, Any]:
+        custom_provider = self.get_custom_provider(self._current_provider)
         return {
             "provider": self._current_provider,
             "model": self._current_model,
-            "api_key_configured": bool(self.get_api_key(self._current_provider)),
+            "api_key_configured": bool((custom_provider or {}).get("api_key") or self.get_api_key(self._current_provider)),
+            "provider_profile_id": self._active_provider_profile_id,
         }
+
+    # ── 自定义供应商管理 ──────────────────────────────────
+
+    @staticmethod
+    def _mask_key(key: Optional[str]) -> str:
+        if not key:
+            return ""
+        if len(key) <= 8:
+            return "****"
+        return f"{key[:4]}****{key[-4:]}"
+
+    def _public_custom_provider(self, provider: Dict[str, Any]) -> Dict[str, Any]:
+        item = dict(provider)
+        key = item.pop("api_key", "")
+        item["has_api_key"] = bool(key)
+        item["api_key_masked"] = self._mask_key(key)
+        return item
+
+    def list_custom_providers(self) -> List[Dict[str, Any]]:
+        return [self._public_custom_provider(p) for p in self._custom_providers]
+
+    def get_custom_provider(self, provider_id: str) -> Optional[Dict[str, Any]]:
+        for provider in self._custom_providers:
+            if provider.get("id") == provider_id:
+                return dict(provider)
+        return None
+
+    def upsert_custom_provider(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        provider = dict(data)
+        provider_id = provider.get("id") or f"custom_{uuid.uuid4().hex[:10]}"
+        provider["id"] = provider_id
+        provider.setdefault("protocol", "openai_compatible")
+        provider.setdefault("enabled", True)
+        provider.setdefault("models", [])
+        provider.setdefault("request_config", {})
+        provider.setdefault("icon", "⚙")
+        provider.setdefault("color", "#7C3AED")
+        if not self.is_real_api_key(provider.get("api_key")):
+            provider.pop("api_key", None)
+            old = self.get_custom_provider(provider_id)
+            if old and old.get("api_key"):
+                provider["api_key"] = old["api_key"]
+
+        replaced = False
+        for idx, existing in enumerate(self._custom_providers):
+            if existing.get("id") == provider_id:
+                self._custom_providers[idx] = provider
+                replaced = True
+                break
+        if not replaced:
+            self._custom_providers.append(provider)
+        self._save_config()
+        return self._public_custom_provider(provider)
+
+    def delete_custom_provider(self, provider_id: str) -> bool:
+        before = len(self._custom_providers)
+        self._custom_providers = [p for p in self._custom_providers if p.get("id") != provider_id]
+        if len(self._custom_providers) < before:
+            if self._active_provider_profile_id == provider_id:
+                self._active_provider_profile_id = None
+            if self._current_provider == provider_id:
+                self._current_provider = "tongyi"
+                self._current_model = None
+                self._current_llm = None
+            self._save_config()
+            return True
+        return False
+
+    def _custom_provider_to_llm(
+        self,
+        provider: Dict[str, Any],
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        api_endpoint: Optional[str] = None,
+    ) -> BaseLLM:
+        chosen_model = model or provider.get("default_model") or (provider.get("models") or [{}])[0].get("id")
+        resolved_key = api_key if self.is_real_api_key(api_key) else provider.get("api_key")
+        llm = ConfigurableOpenAICompatibleLLM(
+            api_key=resolved_key or "",
+            model=chosen_model,
+            provider_id=provider["id"],
+            base_url=api_endpoint or provider.get("base_url") or "https://api.openai.com/v1",
+            request_config=provider.get("request_config") or {},
+            model_overrides=provider.get("model_overrides") or {},
+        )
+        return llm
 
     # ── 模型切换 ──────────────────────────────────────────
 
@@ -222,15 +361,20 @@ class LLMManager:
         """切换模型"""
         try:
             available = get_available_providers()
-            if provider not in available:
+            custom_provider = self.get_custom_provider(provider)
+            if provider not in available and not custom_provider:
                 logger.error(f"提供商 {provider} 不可用，可用: {available}")
                 return False
 
-            resolved_key = api_key or self.get_api_key(provider)
+            resolved_key = (
+                api_key if self.is_real_api_key(api_key)
+                else (custom_provider or {}).get("api_key")
+                or self.get_api_key(provider)
+            )
             if not resolved_key:
                 logger.warning(f"{provider} 未配置 API 密钥")
 
-            llm = get_llm(provider, resolved_key)
+            llm = self._custom_provider_to_llm(custom_provider, resolved_key, model, api_endpoint) if custom_provider else get_llm(provider, resolved_key)
             if not llm:
                 logger.error(f"无法创建 LLM 实例: {provider}")
                 return False
@@ -246,10 +390,15 @@ class LLMManager:
 
             self._current_llm = llm
             self._current_provider = provider
-            self._current_model = model
+            self._current_model = model or llm.model
+            self._active_provider_profile_id = provider if custom_provider else None
 
-            if api_key:
-                self._api_keys[provider] = api_key
+            if self.is_real_api_key(api_key):
+                if custom_provider:
+                    custom_provider["api_key"] = api_key
+                    self.upsert_custom_provider(custom_provider)
+                else:
+                    self._api_keys[provider] = api_key
 
             self._sync_to_agent()
             self._save_config()
@@ -271,8 +420,13 @@ class LLMManager:
         """测试模型连接"""
         result = {"success": False, "message": "", "model": ""}
         try:
-            resolved_key = api_key or self.get_api_key(provider)
-            llm = get_llm(provider, resolved_key)
+            custom_provider = self.get_custom_provider(provider)
+            resolved_key = (
+                api_key if self.is_real_api_key(api_key)
+                else (custom_provider or {}).get("api_key")
+                or self.get_api_key(provider)
+            )
+            llm = self._custom_provider_to_llm(custom_provider, resolved_key, model, api_endpoint) if custom_provider else get_llm(provider, resolved_key)
             if api_endpoint and hasattr(llm, 'api_base'):
                 llm.api_base = api_endpoint
             if model:
@@ -315,7 +469,17 @@ class LLMManager:
 
     def add_saved_model(self, entry: Dict[str, Any]) -> str:
         """添加一个已保存的模型配置，返回 id"""
+        if not self.is_real_api_key(entry.get("api_key")):
+            entry.pop("api_key", None)
         entry["id"] = uuid.uuid4().hex[:12]
+        self._saved_models = [
+            m for m in self._saved_models
+            if not (
+                m.get("provider") == entry.get("provider")
+                and m.get("model") == entry.get("model")
+                and (m.get("api_endpoint") or "") == (entry.get("api_endpoint") or "")
+            )
+        ]
         self._saved_models.append(entry)
         self._save_config()
         logger.info(f"已保存模型配置: {entry.get('provider')} / {entry.get('model')}")
@@ -355,6 +519,19 @@ class LLMManager:
                 "is_current": is_current,
                 "has_api_key": has_key,
                 "model": self._current_model if is_current else None,
+            })
+        for provider in self._custom_providers:
+            p = provider.get("id")
+            is_current = p == self._current_provider
+            statuses.append({
+                "id": p,
+                "name": provider.get("name", p),
+                "icon": provider.get("icon", "⚙"),
+                "color": provider.get("color", "#7C3AED"),
+                "is_current": is_current,
+                "has_api_key": bool(provider.get("api_key")),
+                "model": self._current_model if is_current else provider.get("default_model"),
+                "custom": True,
             })
         return statuses
 

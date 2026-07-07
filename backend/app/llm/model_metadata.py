@@ -123,6 +123,7 @@ DEFAULT_CONTEXT_LENGTHS: Dict[str, int] = {
     "MiniMax-M2.1": 204800,
     "MiniMax-M2": 204800,
     # GLM / Z-ai (2025年)
+    "glm-5.2": 1000000,
     "glm-5.1": 202752,
     "glm-5": 202752,
     "glm-5v-turbo": 202752,
@@ -191,6 +192,9 @@ DEFAULT_MAX_OUTPUTS: Dict[str, int] = {
     "gpt-5.4": 128000,
     "gpt-5": 64000,
     "gemini": 8192,
+    "glm-5.2": 131072,
+    "glm-5.1": 131072,
+    "glm-5": 131072,
     "minimax": 131072,
 }
 

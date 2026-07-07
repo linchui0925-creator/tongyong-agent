@@ -10,26 +10,41 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-three/drei": "^9.79.0",
+    "@react-three/fiber": "^8.15.0",
+    "@react-three/postprocessing": "^2.16.2",
+    "@types/react-router-dom": "^5.3.3",
     "ag-grid-community": "^31.1.0",
     "ag-grid-react": "^31.1.0",
     "axios": "^1.6.7",
     "echarts": "^5.5.0",
     "echarts-for-react": "^3.0.2",
+    "glsl-shader-loader": "^0.1.6",
+    "glslify": "^7.1.1",
+    "gsap": "^3.15.0",
+    "motion": "^12.42.2",
+    "ogl": "^1.0.11",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.1",
     "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "three": "^0.153.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.56",
     "@types/react-dom": "^18.2.19",
+    "@types/three": "^0.185.0",
     "@typescript-eslint/eslint-plugin": "^7.0.2",
     "@typescript-eslint/parser": "^7.0.2",
     "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.5.2",
     "eslint": "^8.56.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^4.3.2",
     "typescript": "^5.2.2",
     "vite": "^6.0.0"
   }

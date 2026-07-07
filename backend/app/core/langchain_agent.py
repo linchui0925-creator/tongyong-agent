@@ -29,11 +29,16 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 from app.core.agent_hooks import trigger_hooks, trigger_hooks_async
-from app.core.agent import _missing_tool_evidence, _required_tool_evidence
+from app.core.agent import (
+    _artifact_preview_from_write_result,
+    _missing_tool_evidence,
+    _required_tool_evidence,
+)
 
 from app.core.base import Message
 from app.core.langchain_callbacks import SSEStreamCallback
 from app.llm.langchain_adapter import TongYongLLMAdapter
+from app.tools.runtime_context import set_tool_session_id, reset_tool_session_id
 from app.tools.langchain_adapter import registry_to_langchain_tools
 from app.tools.registry import registry as _tool_registry
 
@@ -86,6 +91,13 @@ async def stream_chat_langchain(
     import time as _time
     start_time = _time.time()
 
+    # AgentEngine.context 是进程级单例上的临时请求上下文。
+    # LangChain 路径必须和自研 stream 一样在入口/出口清理，否则会把上一轮任务带到新会话。
+    try:
+        agent_engine.context.clear()
+    except Exception as exc:
+        logger.warning(f"[langchain] 清理入口 context 失败: {exc}")
+
     def _progress(text: str):
         return {"type": "progress", "content": text, "timestamp": _time.time()}
 
@@ -112,6 +124,32 @@ async def stream_chat_langchain(
             "不要重复已经成功完成的步骤；从未完成的下一步继续执行。"
             f"\n\n中断原因：{reason}"
         )
+
+    def _context_event(messages: List[Message]):
+        threshold_tokens = getattr(
+            getattr(agent_engine, "context_compressor", None),
+            "threshold_tokens",
+            0,
+        ) or 0
+        chars = sum(len(m.content or "") for m in messages)
+        estimated_tokens = int(chars * 0.25)
+        percent = (
+            round(estimated_tokens / threshold_tokens * 100, 1)
+            if threshold_tokens
+            else 0.0
+        )
+        return {
+            "type": "context",
+            "context": {
+                "message_count": len(messages),
+                "chars": chars,
+                "estimated_tokens": estimated_tokens,
+                "threshold_tokens": threshold_tokens,
+                "percent": percent,
+                "approaching": percent >= 80,
+            },
+            "timestamp": _time.time(),
+        }
 
     yield _progress("正在初始化...")
 
@@ -144,6 +182,22 @@ async def stream_chat_langchain(
 
     # 添加用户消息
     ctx.add_message("user", message)
+
+    # LangChain 路径也执行真实 summarization 压缩，而不是只做滑动窗口截断。
+    compressor = getattr(agent_engine, "context_compressor", None)
+    llm = getattr(agent_engine, "llm", None)
+    if compressor and llm and compressor.should_compress(ctx.get_messages()):
+        yield _progress("📦 上下文过长，正在压缩...")
+        try:
+            compressed, summary_text = await compressor.compress(ctx.get_messages(), llm)
+            ctx.messages = compressed
+            if hasattr(ctx, "_token_estimate"):
+                ctx._token_estimate = None
+            yield _progress(f"📦 压缩完成: {summary_text[:80]}...")
+            yield _context_event(ctx.get_messages())
+        except Exception as exc:
+            logger.warning(f"[langchain] 上下文压缩失败，继续原始上下文: {exc}", exc_info=True)
+            yield _progress(f"📦 压缩失败，继续执行: {exc}")
 
     # ── 2. 构建 LangChain 组件 ─────────────────────────
     yield _progress("正在思考...")
@@ -253,6 +307,7 @@ async def stream_chat_langchain(
     collected_content = []
     tools_used = []
     commands_executed = []
+    artifact_previews: List[Dict[str, str]] = []
     had_tool_call = False
     last_yielded_text = None
     stop_reason = ""
@@ -276,7 +331,7 @@ async def stream_chat_langchain(
                 "tools_used": tools_used,
                 "session_id": session_id,
             })
-            if tool_name == "terminal":
+            if tool_name in ("terminal", "workspace_terminal"):
                 cmd = tool_args.get("command", "")
                 if cmd:
                     commands_executed.append(cmd)
@@ -284,6 +339,7 @@ async def stream_chat_langchain(
     callback = SSEStreamCallback(yield_fn=_yield_event)
 
     # 执行 agent
+    _tool_session_token = set_tool_session_id(session_id or thread_id)
     try:
         # 构建输入
         input_messages = chat_history + [HumanMessage(content=message)]
@@ -388,7 +444,7 @@ async def stream_chat_langchain(
                     "tools_used": tools_used,
                     "session_id": session_id,
                 })
-                if tool_name == "terminal":
+                if tool_name in ("terminal", "workspace_terminal"):
                     cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
                     if cmd:
                         commands_executed.append(cmd)
@@ -485,6 +541,9 @@ async def stream_chat_langchain(
                         "timestamp": _time.time(),
                     }
                 else:
+                    artifact = _artifact_preview_from_write_result(str(output))
+                    if artifact and not any(a["path"] == artifact["path"] for a in artifact_previews):
+                        artifact_previews.append(artifact)
                     yield {
                         "type": "tool_complete",
                         "tool_name": tool_name,
@@ -516,6 +575,7 @@ async def stream_chat_langchain(
                 "session_id": session_id or "",
                 "tools_used": tools_used,
                 "commands_executed": commands_executed,
+                "artifact_previews": artifact_previews,
                 "processing_time": round(_time.time() - start_time, 2),
                 "usage": {},
                 "needs_continue": True,
@@ -526,7 +586,13 @@ async def stream_chat_langchain(
         else:
             yield {"type": "error", "error": err_text, "timestamp": _time.time()}
             yield _done(session_id or "", tools_used, commands_executed)
+        try:
+            agent_engine.context.clear()
+        except Exception as exc:
+            logger.warning(f"[langchain] 清理异常 context 失败: {exc}")
         return
+    finally:
+        reset_tool_session_id(_tool_session_token)
 
     # ── 5. 完成 ──────────────────────────────────────
     # 记录到 context
@@ -583,16 +649,7 @@ async def stream_chat_langchain(
             logger.error(f"[langchain] 持久化消息失败: {_persist_err}", exc_info=True)
 
     # W2-3: 推 context 事件 (上下文容量 — stream.py 收 "context" 事件)
-    #   schema: {"context": {"message_count": N, "threshold": T, ...}}
-    msg_count = len(ctx.messages) if hasattr(ctx, "messages") else 0
-    yield {
-        "type": "context",
-        "context": {
-            "message_count": msg_count,
-            "threshold": 10,
-        },
-        "timestamp": _time.time(),
-    }
+    yield _context_event(ctx.get_messages() if hasattr(ctx, "get_messages") else [])
 
     # W2-3: 推 budget_warning 事件 (IterationBudget 共享)
     #   schema: {"content": "已用 N/50 轮"} (stream.py 收的是 content 字符串)
@@ -648,6 +705,7 @@ async def stream_chat_langchain(
         "session_id": session_id or "",
         "tools_used": tools_used,
         "commands_executed": commands_executed,
+        "artifact_previews": artifact_previews,
         "processing_time": round(_time.time() - start_time, 2),
         "usage": cumulative_usage if cumulative_usage else {},
         "needs_continue": needs_continue,
@@ -655,6 +713,11 @@ async def stream_chat_langchain(
         "continue_prompt": _continue_prompt(stop_reason) if needs_continue else "",
         "timestamp": _time.time(),
     }
+
+    try:
+        agent_engine.context.clear()
+    except Exception as exc:
+        logger.warning(f"[langchain] 清理完成 context 失败: {exc}")
 
 
 def _get_emoji(tool_name: str) -> str:

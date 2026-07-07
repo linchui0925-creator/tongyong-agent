@@ -13,9 +13,11 @@
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useStreamChat } from '../../hooks/useStreamChat';
-import { Message, ContextInfo } from '../../types';
+import { Message, ContextInfo, ArtifactPreview, Attachment } from '../../types';
+import { uploadAttachments } from '../../api/attachments';
 import { MarkdownContent } from './MarkdownContent';
 import { ThemeSwitcher } from '../Theme/ThemeSwitcher';
+import { detectFilePaths, getFileIcon } from './pathDetector';
 import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
@@ -73,6 +75,116 @@ function CodeBlock({ code }: { code: string }) {
         {copied ? '✓ 已复制' : '复制'}
       </button>
       <pre><code>{code}</code></pre>
+    </div>
+  );
+}
+
+function ArtifactPreviewCard({ artifact }: { artifact: ArtifactPreview }) {
+  const backend = (typeof window !== 'undefined' && (window as any).__BACKEND_URL__) || 'http://127.0.0.1:8000';
+  const previewUrl = artifact.preview_url.startsWith('http') ? artifact.preview_url : backend + artifact.preview_url;
+  const openUrl = artifact.open_url.startsWith('http') ? artifact.open_url : backend + artifact.open_url;
+  if (artifact.kind === 'image') {
+    return (
+      <div className="chat-artifact chat-artifact--image">
+        <div className="chat-artifact-header">
+          <span className="chat-artifact-title">{artifact.name}</span>
+          <a className="chat-artifact-open" href={openUrl} target="_blank" rel="noopener noreferrer">打开</a>
+        </div>
+        <a href={openUrl} target="_blank" rel="noopener noreferrer">
+          <img className="chat-artifact-image" src={openUrl} alt={artifact.name} />
+        </a>
+      </div>
+    );
+  }
+  return (
+    <div className="chat-artifact">
+      <div className="chat-artifact-header">
+        <span className="chat-artifact-title">{artifact.name}</span>
+        <a className="chat-artifact-open" href={openUrl} target="_blank" rel="noopener noreferrer">打开</a>
+      </div>
+      <iframe
+        className="chat-artifact-frame"
+        src={previewUrl}
+        title={artifact.name}
+        sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals"
+      />
+    </div>
+  );
+}
+
+function toBackendUrl(url: string): string {
+  const backend = (typeof window !== 'undefined' && (window as any).__BACKEND_URL__) || 'http://127.0.0.1:8000';
+  return url.startsWith('http') ? url : backend + url;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function AttachmentView({ attachment, onRemove }: { attachment: Attachment; onRemove?: () => void }) {
+  const src = toBackendUrl(attachment.preview_url || attachment.url);
+  const openUrl = toBackendUrl(attachment.open_url || attachment.url);
+  if (attachment.kind === 'image') {
+    return (
+      <div className="chat-attachment chat-attachment--image">
+        <a href={openUrl} target="_blank" rel="noopener noreferrer">
+          <img src={src} alt={attachment.name || attachment.filename} />
+        </a>
+        <div className="chat-attachment-meta">
+          <span>{attachment.name || attachment.filename}</span>
+          <span>{formatFileSize(attachment.size)}</span>
+          {onRemove && <button onClick={onRemove} aria-label="移除附件">×</button>}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="chat-attachment chat-attachment--file">
+      <a href={openUrl} target="_blank" rel="noopener noreferrer">
+        <span className="chat-attachment-icon">
+          {attachment.kind === 'pdf' ? 'PDF' : attachment.kind === 'table' ? 'XLS' : attachment.kind === 'document' ? 'DOC' : 'FILE'}
+        </span>
+        <span className="chat-attachment-name">{attachment.name || attachment.filename}</span>
+        <span className="chat-attachment-size">{formatFileSize(attachment.size)}</span>
+      </a>
+      {onRemove && <button onClick={onRemove} aria-label="移除附件">×</button>}
+    </div>
+  );
+}
+
+function buildLocalFileHref(path: string): string {
+  if (/^(?:https?|file|ftp):\/\//.test(path)) return path;
+  const backend = (typeof window !== 'undefined' && (window as any).__BACKEND_URL__) || 'http://127.0.0.1:8000';
+  return backend + '/api/files/serve?path=' + encodeURIComponent(path);
+}
+
+function InlineImagePreviews({ text }: { text: string }) {
+  const images = useMemo(() => {
+    const seen = new Set<string>();
+    return detectFilePaths(text)
+      .map((item) => item.path)
+      .filter((path) => getFileIcon(path) === 'image')
+      .filter((path) => path.includes('/') || path.startsWith('~') || path.startsWith('.'))
+      .filter((path) => {
+        if (seen.has(path)) return false;
+        seen.add(path);
+        return true;
+      });
+  }, [text]);
+
+  if (images.length === 0) return null;
+  return (
+    <div className="chat-inline-images">
+      {images.map((path) => {
+        const href = buildLocalFileHref(path);
+        return (
+          <a key={path} className="chat-inline-image" href={href} target="_blank" rel="noopener noreferrer">
+            <img src={href} alt={path.split('/').pop() || path} />
+          </a>
+        );
+      })}
     </div>
   );
 }
@@ -180,6 +292,17 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
             ? <CodeBlock key={i} code={p.content} />
             : <MarkdownContent key={i} text={p.content} variant={isUser ? 'user' : 'agent'} />
           )}
+          <InlineImagePreviews text={msg.content || ''} />
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="chat-attachments">
+              {msg.attachments.map((attachment) => (
+                <AttachmentView key={attachment.id} attachment={attachment} />
+              ))}
+            </div>
+          )}
+          {!isUser && msg.artifactPreviews?.map((artifact) => (
+            <ArtifactPreviewCard key={artifact.path} artifact={artifact} />
+          ))}
           {msg.progressLabel && msg.status === 'streaming' && (
             <div className="chat-bubble-progress">{msg.progressLabel}</div>
           )}
@@ -258,6 +381,9 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const [inputValue, setInputValue] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [waitingAnswer, setWaitingAnswer] = useState('');
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
 
   // Sync session from parent
   useEffect(() => {
@@ -292,6 +418,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const messagesRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleScroll = useCallback(() => {
     const el = messagesRef.current;
@@ -307,6 +434,33 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
     }
   }, [messages, isStreaming]);
 
+  const addFiles = useCallback(async (files: File[]) => {
+    if (!files.length || isUploading) return;
+    setIsUploading(true);
+    setErrorMessage(null);
+    try {
+      const uploaded = await uploadAttachments(files, currentSessionId || undefined);
+      setPendingAttachments((prev) => [...prev, ...uploaded]);
+    } catch (err: any) {
+      setErrorMessage(err?.message || String(err));
+    } finally {
+      setIsUploading(false);
+    }
+  }, [currentSessionId, isUploading, setErrorMessage]);
+
+  const clearComposer = useCallback(() => {
+    setInputValue('');
+    setPendingAttachments([]);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+  }, []);
+
+  const sendComposer = useCallback(() => {
+    if ((inputValue.trim() || pendingAttachments.length > 0) && !isLoading && !isStreaming) {
+      handleSend(inputValue, pendingAttachments);
+      clearComposer();
+    }
+  }, [inputValue, pendingAttachments, isLoading, isStreaming, handleSend, clearComposer]);
+
   // Input handling
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputValue(e.target.value);
@@ -319,21 +473,30 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const handleKey = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (inputValue.trim() && !isLoading && !isStreaming) {
-        handleSend(inputValue);
-        setInputValue('');
-        if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      }
+      sendComposer();
     }
-  }, [inputValue, isLoading, isStreaming, handleSend]);
+  }, [sendComposer]);
 
   const handleSendClick = useCallback(() => {
-    if (inputValue.trim() && !isLoading && !isStreaming) {
-      handleSend(inputValue);
-      setInputValue('');
-      if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    }
-  }, [inputValue, isLoading, isStreaming, handleSend]);
+    sendComposer();
+  }, [sendComposer]);
+
+  const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    void addFiles(files);
+  }, [addFiles]);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDraggingFile(false);
+    void addFiles(Array.from(e.dataTransfer.files || []));
+  }, [addFiles]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files || []);
+    if (files.length > 0) void addFiles(files);
+  }, [addFiles]);
 
   // 工具 step history (group consecutive same-role msgs)
   const visibleMessages = useMemo(() => {
@@ -349,7 +512,12 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   }, [messages]);
 
   return (
-    <div className="chat-panel">
+    <div
+      className={`chat-panel ${isDraggingFile ? 'is-dragging-file' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); setIsDraggingFile(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setIsDraggingFile(false); }}
+      onDrop={handleDrop}
+    >
       <ChatHeader
         isStreaming={isStreaming}
         messageCount={messages.length}
@@ -506,12 +674,42 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       />
 
       <div className="chat-input">
+        {isDraggingFile && <div className="chat-drop-overlay">松开以上传附件</div>}
+        {pendingAttachments.length > 0 && (
+          <div className="chat-pending-attachments">
+            {pendingAttachments.map((attachment) => (
+              <AttachmentView
+                key={attachment.id}
+                attachment={attachment}
+                onRemove={() => setPendingAttachments((prev) => prev.filter((item) => item.id !== attachment.id))}
+              />
+            ))}
+          </div>
+        )}
         <div className="chat-input-box">
+          <button
+            className="chat-attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading || isLoading}
+            title="上传附件"
+            aria-label="上传附件"
+          >
+            {isUploading ? '…' : '+'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="chat-file-input"
+            onChange={handleFileInput}
+            accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.tsv,.xlsx,.xls,.docx,.pptx"
+          />
           <textarea
             ref={textareaRef}
             value={inputValue}
             onChange={handleInput}
             onKeyDown={handleKey}
+            onPaste={handlePaste}
             placeholder={`给 ${AGENT_NAME} 发消息…`}
             disabled={isLoading && !isStreaming}
             rows={1}
@@ -520,7 +718,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
             {isStreaming ? (
               <button className="chat-stop-btn" onClick={handleStop} title="停止" aria-label="停止生成">■</button>
             ) : (
-              <button className="chat-send-btn" onClick={handleSendClick} disabled={!inputValue.trim() || isLoading} title="发送" aria-label="发送">→</button>
+              <button className="chat-send-btn" onClick={handleSendClick} disabled={(!inputValue.trim() && pendingAttachments.length === 0) || isLoading} title="发送" aria-label="发送">→</button>
             )}
           </div>
         </div>

@@ -299,6 +299,30 @@
 .md-content .file-link--code   { border-left: 2px solid #3b82f6; padding-left: 5px; }
 .md-content .file-link--text   { border-left: 2px solid #6b7280; padding-left: 5px; }
 .md-content .file-link--image  { border-left: 2px solid #a855f7; padding-left: 5px; }
+
+.file-link-preview,
+.md-image-link-preview {
+  display: block;
+  margin: 8px 0;
+  overflow: hidden;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.file-link-preview img,
+.md-image-link-preview img {
+  display: block;
+  max-width: min(360px, 100%);
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.md-image-link-wrap {
+  display: block;
+}
 .md-content .file-link--doc    { border-left: 2px solid #f59e0b; padding-left: 5px; }
 .md-content .file-link--generic{ border-left: 2px solid #9ca3af; padding-left: 5px; }
 /* user 气泡里 (深底) 调高对比 */

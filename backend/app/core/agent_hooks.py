@@ -179,7 +179,7 @@ def setup_default_hooks(get_time: Callable[[], float] = None) -> None:
         tool_result = ctx.get("result", "")
         is_error = ctx.get("is_error", False)
         commands_executed = ctx.get("commands_executed")
-        if tool_name == "terminal" and commands_executed is not None:
+        if tool_name in ("terminal", "workspace_terminal") and commands_executed is not None:
             commands_executed.append(args.get("command", ""))
 
         constraint_engine = ctx.get("constraint_engine")

@@ -13,7 +13,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { remarkFilePaths } from './filePathRemark';
 import { detectFilePaths } from './pathDetector';
-import { FilePathLink } from './FilePathLink';
+import { FilePathLink, MarkdownImageLink } from './FilePathLink';
 import './MarkdownContent.css';
 
 function CopyButton({ text }: { text: string }) {
@@ -62,17 +62,7 @@ export function MarkdownContent({ text, variant = 'agent' }: MarkdownContentProp
           em: ({ children, ...props }) => <em className="md-em" {...props}>{children}</em>,
           del: ({ children, ...props }) => <del className="md-del" {...props}>{children}</del>,
           // 链接 — 新窗口打开, 防钓鱼
-          a: ({ children, href, ...props }) => (
-            <a
-              className="md-link"
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              {...props}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ children, href }) => <MarkdownImageLink href={href}>{children}</MarkdownImageLink>,
           // 引用
           blockquote: ({ children, ...props }) => (
             <blockquote className="md-blockquote" {...props}>{children}</blockquote>

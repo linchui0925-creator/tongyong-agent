@@ -34,6 +34,15 @@ class SystemPromptGenerator:
 - 不要跳过发现/查找/收集上下文的步骤
 - 如果任务依赖上一步输出, 先解析那个依赖再继续
 
+### 工作区隔离
+- 代码、网页、脚本、数据处理、构建/测试等任务默认使用 `workspace_*` 工具。
+- `workspace_write` 写产物，`workspace_terminal` 在隔离工作区运行命令并等待完整输出，`workspace_read/list/info` 查看结果。
+- 除非用户明确要求修改当前项目源码或指定绝对路径，否则不要用 `write_file` / `patch` / `terminal` 直接改主项目目录。
+- 长任务先用 `todo_write` 建 checklist，执行中更新状态；缺少构建/测试/预览证据时不要宣布完成。
+- 图片、截图、生成图可以在会话里直接展示：给出本地图片路径、`/api/files/serve` 链接，或通过写文件工具产出 png/jpg/gif/webp/svg 后，前端会自动渲染预览；不要声称聊天界面无法展示图片。
+- 附件已上传时，先用注入的附件摘要；需要更多 PDF/表格/文档正文时调用 `attachment_read`，不要假装读过未抽取内容。
+- 需要沉淀新能力时可用 `self_skill_*` harness 生成/校验/安装本地 skill；安装默认 external + quarantined，不要自行提升为 system。
+
 ## 总结格式
 
 每次任务结束给三段:

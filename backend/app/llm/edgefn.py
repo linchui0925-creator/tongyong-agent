@@ -1,11 +1,12 @@
 """EdgeFn.net 代理 provider (智谱 GLM / DeepSeek 等多模型聚合)
 
 W4-41 (2026-06-30): 用户提供 edgefn.net 代理 sk-HJVebvMXb0dEQc2RAe92EeAc2fAc4aF89910D38871016217
-- 支持 GLM-5.2 (reasoning model, 原生 function call, 跟 deepseek-v4-flash 类似需要 reasoning_content 兜底)
+- 支持 GLM-4.5V / GLM-5.2 (reasoning model, 原生 function call, 跟 deepseek-v4-flash 类似需要 reasoning_content 兜底)
 - 也支持 deepseek 系列 (按 model 字段切)
 - 一个 key 多模型, model 由调用方传
 
 测试过的模型 (2026-06-30):
+- GLM-4.5V: EdgeFn 控制台当前示例模型
 - GLM-5.2: ✅ 200, reasoning_content, 原生 tool_calls
 - deepseek-v4-pro: ❌ 403 ModelNotAllowed (key 没权限)
 - deepseek-v4-flash: (待测, 之前走 deepseek.com 直连)
@@ -26,12 +27,13 @@ class EdgeFnLLM(OpenAICompatibleLLM):
     """edgefn.net 通用 provider — 同一 key 走 GLM / DeepSeek 等多模型
 
     通过 DEFAULT_MODEL 切, 用户调用时传 model 参数覆盖:
+        EdgeFnLLM(api_key="sk-...", model="GLM-4.5V")
         EdgeFnLLM(api_key="sk-...", model="GLM-5.2")
         EdgeFnLLM(api_key="sk-...", model="deepseek-v4-flash")
     """
 
     DEFAULT_API_BASE = "https://api.edgefn.net/v1"
-    DEFAULT_MODEL = "GLM-5.2"  # 智谱 reasoning, 原生 function call
+    DEFAULT_MODEL = "GLM-4.5V"  # EdgeFn 当前控制台示例模型
 
     def __init__(self, api_key: str, model: str = None):
         super().__init__(api_key, model)

@@ -5,6 +5,7 @@ submission to the configured notification inbox.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -80,12 +81,31 @@ def _ensure_schema() -> None:
                 message     TEXT NOT NULL,
                 ip          TEXT,
                 user_agent  TEXT,
-                received_at REAL NOT NULL
+                received_at REAL NOT NULL,
+                email_status TEXT NOT NULL DEFAULT 'pending',
+                email_error TEXT,
+                emailed_at REAL
             )
             """
         )
+        # 兼容旧表，新增字段
+        try:
+            conn.execute("ALTER TABLE contact_submissions ADD COLUMN email_status TEXT NOT NULL DEFAULT 'pending'")
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+        try:
+            conn.execute("ALTER TABLE contact_submissions ADD COLUMN email_error TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE contact_submissions ADD COLUMN emailed_at REAL")
+        except sqlite3.OperationalError:
+            pass
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_contact_received_at ON contact_submissions(received_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contact_email_status ON contact_submissions(email_status)"
         )
         conn.commit()
 
@@ -188,6 +208,58 @@ def _send_submission_email(
         smtp.send_message(message)
 
 
+async def _update_email_status(submission_id: str, status: str, error: str | None = None) -> None:
+    """更新邮件发送状态"""
+    try:
+        with sqlite3.connect(str(_DB_PATH)) as conn:
+            if status == "sent":
+                conn.execute(
+                    """
+                    UPDATE contact_submissions
+                    SET email_status = ?, emailed_at = ?, email_error = NULL
+                    WHERE id = ?
+                    """,
+                    (status, time.time(), submission_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE contact_submissions
+                    SET email_status = ?, email_error = ?, emailed_at = NULL
+                    WHERE id = ?
+                    """,
+                    (status, str(error)[:500] if error else None, submission_id),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.exception("failed to update email status for submission %s: %s", submission_id, e)
+
+
+async def _send_email_background(
+    payload: ContactSubmission,
+    submission_id: str,
+    received_at: float,
+    ip: str | None,
+    user_agent: str | None,
+) -> None:
+    """后台异步发送邮件，失败只记录日志和状态，不影响用户"""
+    try:
+        # 同步SMTP调用放到线程池，不阻塞事件循环
+        await asyncio.to_thread(
+            _send_submission_email,
+            payload,
+            submission_id=submission_id,
+            received_at=received_at,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        await _update_email_status(submission_id, "sent")
+        logger.info("contact submission %s email sent successfully", submission_id)
+    except Exception as e:
+        logger.exception("contact email delivery failed for submission %s: %s", submission_id, e)
+        await _update_email_status(submission_id, "failed", error=str(e))
+
+
 @router.post("", response_model=ContactSubmissionAck)
 async def submit_contact(payload: ContactSubmission, request: Request) -> ContactSubmissionAck:
     if payload.topic not in ALLOWED_TOPICS:
@@ -202,8 +274,8 @@ async def submit_contact(payload: ContactSubmission, request: Request) -> Contac
             conn.execute(
                 """
                 INSERT INTO contact_submissions
-                    (id, name, email, topic, message, ip, user_agent, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, name, email, topic, message, ip, user_agent, received_at, email_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (sid, payload.name, payload.email, payload.topic, payload.message, ip, user_agent, now),
             )
@@ -211,20 +283,21 @@ async def submit_contact(payload: ContactSubmission, request: Request) -> Contac
     except sqlite3.Error as e:
         logger.exception("contact submit failed: %s", e)
         raise HTTPException(status_code=500, detail="提交失败，请稍后再试") from e
-    try:
-        _send_submission_email(
+    
+    # 后台异步发送邮件，立刻返回成功给用户
+    asyncio.create_task(
+        _send_email_background(
             payload,
             submission_id=sid,
             received_at=now,
             ip=ip,
             user_agent=user_agent,
         )
-    except Exception as e:
-        logger.exception("contact email delivery failed: %s", e)
-        raise HTTPException(status_code=500, detail="提交已保存，但邮件发送失败，请检查邮件服务配置") from e
+    )
+    
     logger.info(
-        "contact submission id=%s topic=%s email=%s name=%s notified=%s",
-        sid, payload.topic, payload.email, payload.name, os.getenv("CONTACT_EMAIL_TO", _DEFAULT_EMAIL_TO),
+        "contact submission id=%s topic=%s email=%s name=%s received, email queued",
+        sid, payload.topic, payload.email, payload.name,
     )
     return ContactSubmissionAck(id=sid, received_at=now, topic=payload.topic)
 

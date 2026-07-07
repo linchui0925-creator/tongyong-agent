@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: tongyong-agent-backend
+    runtime: python
+    plan: free
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    rootDir: .
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SKIP_LLM_VALIDATION
+        value: "1"
+      - key: CHROMA_PERSIST_DIRECTORY
+        value: /tmp/chroma
+      - key: CONTACT_DB
+        value: /tmp/contact.db
+      # 可选配置：部署时填写
+      # - key: SMTP_HOST
+      #   value: your-smtp-host
+      # - key: SMTP_PORT
+      #   value: 587
+      # - key: SMTP_USERNAME
+      #   value: your-email
+      # - key: SMTP_PASSWORD
+      #   value: your-app-password
+      # - key: EDGEFN_API_KEY
+      #   value: your-edgefn-api-key
+      # - key: OPENAI_API_KEY
+      #   value: your-openai-key
+    healthCheckPath: /health
+    autoDeploy: true

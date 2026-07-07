@@ -255,6 +255,8 @@ async def _send_email_background(
         )
         await _update_email_status(submission_id, "sent")
         logger.info("contact submission %s email sent successfully", submission_id)
+    n    # 发送飞书通知
+    await _send_feishu_notification(payload, submission_id, received_at, ip, user_agent)
     except Exception as e:
         logger.exception("contact email delivery failed for submission %s: %s", submission_id, e)
         await _update_email_status(submission_id, "failed", error=str(e))
@@ -314,3 +316,94 @@ async def submissions_count() -> dict:
             return {"count": int(row[0]) if row else 0}
     except sqlite3.Error:
         return {"count": 0}
+async def _send_feishu_notification(
+    payload: ContactSubmission,
+    submission_id: str,
+    received_at: float,
+    ip: str | None,
+    user_agent: str | None,
+):
+    """
+    发送表单提交通知到飞书群
+    """
+    import os
+    feishu_webhook = os.getenv("FEISHU_WEBHOOK_URL")
+    if not feishu_webhook:
+        return
+
+    try:
+        import httpx
+        from datetime import datetime
+
+        topic_label = TOPIC_LABELS.get(payload.topic, payload.topic)
+        received_time = datetime.fromtimestamp(received_at).strftime("%Y-%m-%d %H:%M:%S")
+
+        # 飞书消息卡片
+        message = {
+            "msg_type": "interactive",
+            "card": {
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": f"📩 新的联系表单提交：{topic_label}"
+                    },
+                    "template": "blue"
+                },
+                "elements": [
+                    {
+                        "tag": "div",
+                        "fields": [
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**姓名：**\n{payload.name}"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**邮箱：**\n{payload.email}"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**主题：**\n{topic_label}"
+                                }
+                            },
+                            {
+                                "is_short": True,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**提交时间：**\n{received_time}"
+                                }
+                            },
+                            {
+                                "is_short": False,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**IP地址：** {ip or '未知'} | **User-Agent：** {user_agent or '未知'}"
+                                }
+                            },
+                            {
+                                "is_short": False,
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"**留言内容：**\n{payload.message}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(feishu_webhook, json=message)
+        logger.info(f"飞书通知发送成功，提交ID：{submission_id}")
+
+    except Exception as e:
+        logger.exception(f"飞书通知发送失败，提交ID：{submission_id}，错误：{str(e)}")

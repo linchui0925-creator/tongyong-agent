@@ -18,24 +18,9 @@ interface AddModelDialogProps {
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail';
 
-const OPENAI_COMPATIBLE_DEFAULTS = {
-  chat_path: '/chat/completions',
-  models_path: '/models',
-  tool_call_mode: 'auto',
-  headers: {},
-  body_defaults: {},
-  body_overrides: {},
-  field_mapping: {},
-  response_mapping: {
-    content: 'choices.0.message.content',
-    reasoning_content: 'choices.0.message.reasoning_content',
-    tool_calls: 'choices.0.message.tool_calls',
-    finish_reason: 'choices.0.finish_reason',
-  },
-};
-
+// 完全对齐cc源码的预设供应商配置，所有地址/名称/说明100%对应
 const TEMPLATE_OPTIONS = [
-  // 星标推荐源
+  // 🔥 星标推荐源，和截图顺序完全一致
   {
     id: 'openai',
     name: '🟢 OpenAI Official',
@@ -47,7 +32,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'sheng_suan_yun',
     name: '🟣 胜算云',
-    endpoint: 'https://api.shengyun.com/v1',
+    endpoint: 'https://api.shengsuanyun.com/v1',
     model: 'sheng-suan-7b',
     notes: '胜算云模型接口。',
     star: true,
@@ -166,7 +151,7 @@ const TEMPLATE_OPTIONS = [
   },
   {
     id: 'claude_cn',
-    name: '🧩 ClaudeCN',
+    name: '🍀 ClaudeCN',
     endpoint: 'https://claude.volcengineapi.com/v1',
     model: 'claude-3-5-sonnet',
     notes: '火山方舟Claude国内节点接口。',
@@ -268,7 +253,8 @@ const TEMPLATE_OPTIONS = [
     notes: 'CTok.ai模型接口。',
     star: true,
   },
-  // 普通源
+
+  // 📦 普通源，和cc顺序完全一致
   {
     id: 'azure_openai',
     name: '🔵 Azure OpenAI',
@@ -418,7 +404,7 @@ const TEMPLATE_OPTIONS = [
     name: '🟢 Nvidia',
     endpoint: 'https://api.nvcf.nvidia.com/v2',
     model: 'nvidia-llama-3',
-    notes: '英伟达NIM模型接口。',
+    notes: 'Nvidia NIM模型接口。',
     star: false,
   },
   {
@@ -477,7 +463,7 @@ const TEMPLATE_OPTIONS = [
     notes: '本地模型，通常不需要 API Key，可填任意占位值。',
     star: false,
   },
-];
+]
 
 function prettyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
@@ -513,7 +499,21 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   const [modelsText, setModelsText] = useState(selectedTemplate.model);
   const [website, setWebsite] = useState('');
   const [notes, setNotes] = useState(selectedTemplate.notes);
-  const [requestJson, setRequestJson] = useState(prettyJson(OPENAI_COMPATIBLE_DEFAULTS));
+  const [requestJson, setRequestJson] = useState(prettyJson({
+    chat_path: '/chat/completions',
+    models_path: '/models',
+    tool_call_mode: 'auto',
+    headers: {},
+    body_defaults: {},
+    body_overrides: {},
+    field_mapping: {},
+    response_mapping: {
+      content: 'choices.0.message.content',
+      reasoning_content: 'choices.0.message.reasoning_content',
+      tool_calls: 'choices.0.message.tool_calls',
+      finish_reason: 'choices.0.finish_reason',
+    },
+  }));
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [testStatus, setTestStatus] = useState<TestStatus>('idle');
   const [statusMessage, setStatusMessage] = useState('');
@@ -529,16 +529,30 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
       setModelsText((initialProfile.models || []).map(m => m.id).join('\n') || initialProfile.default_model || '');
       setWebsite(initialProfile.website || '');
       setNotes(initialProfile.notes || '');
-      setRequestJson(prettyJson(initialProfile.request_config || OPENAI_COMPATIBLE_DEFAULTS));
+      setRequestJson(prettyJson(initialProfile.request_config || {}));
       setSavedProviderId(initialProfile.id || null);
     } else {
-      setProviderName(template === 'relay' ? 'EdgeFn GLM-4.5V' : '自定义供应商');
+      setProviderName(selectedTemplate.name);
       setBaseUrl(selectedTemplate.endpoint);
       setDefaultModel(selectedTemplate.model);
       setModelsText(selectedTemplate.model);
       setWebsite('');
       setNotes(selectedTemplate.notes);
-      setRequestJson(prettyJson(OPENAI_COMPATIBLE_DEFAULTS));
+      setRequestJson(prettyJson({
+        chat_path: '/chat/completions',
+        models_path: '/models',
+        tool_call_mode: 'auto',
+        headers: {},
+        body_defaults: {},
+        body_overrides: {},
+        field_mapping: {},
+        response_mapping: {
+          content: 'choices.0.message.content',
+          reasoning_content: 'choices.0.message.reasoning_content',
+          tool_calls: 'choices.0.message.tool_calls',
+          finish_reason: 'choices.0.finish_reason',
+        },
+      }));
       setSavedProviderId(null);
     }
     setStatusMessage('');
@@ -557,88 +571,72 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
       base_url: baseUrl.trim().replace(/\/$/, ''),
       api_key: apiKey.trim() || undefined,
       default_model: defaultModel.trim(),
-      enabled: true,
+      models,
       website: website.trim() || undefined,
       notes: notes.trim() || undefined,
-      icon: template === 'ollama' ? '🦙' : '⚙',
-      color: template === 'relay' ? '#7C3AED' : '#2563EB',
       request_config,
-      models: models.length ? models : [{ id: defaultModel.trim(), name: defaultModel.trim(), enabled: true }],
-      model_overrides: {},
+      enabled: true,
     };
-  };
-
-  const ensureSavedProvider = async () => {
-    const result = await saveProviderProfile(buildProfile(savedProviderId || undefined));
-    setSavedProviderId(result.provider.id || null);
-    return result.provider;
   };
 
   const handleFetchModels = async () => {
     if (!isValid) return;
     setTestStatus('testing');
-    setStatusMessage('正在保存供应商并拉取模型列表...');
+    setStatusMessage('正在获取模型列表...');
     try {
-      const provider = await ensureSavedProvider();
-      const request_config = parseJsonObject(requestJson, '高级配置');
-      const result = await fetchProviderModels(provider.id!, {
-        api_key: apiKey.trim() || undefined,
-        model: defaultModel.trim(),
-        base_url: baseUrl.trim(),
-        request_config,
-      });
-      if (result.success && result.models.length) {
-        setModelsText(result.models.join('\n'));
-        if (!result.models.includes(defaultModel)) setDefaultModel(result.models[0]);
+      const profile = buildProfile();
+      const res = await fetchProviderModels(profile.id || 'temp', profile);
+      if (res.success) {
         setTestStatus('success');
-        setStatusMessage(`已获取 ${result.models.length} 个模型`);
+        setStatusMessage(`获取成功，共 ${res.models?.length || 0} 个模型，已自动填充到模型列表`);
+        setModelsText(res.models?.map(m => m.id).join('\n') || modelsText);
       } else {
         setTestStatus('fail');
-        setStatusMessage(result.message || '模型列表为空，可手动填写模型 ID');
+        setStatusMessage(`获取失败: ${res.message}`);
       }
     } catch (err: any) {
       setTestStatus('fail');
-      setStatusMessage(`获取模型失败: ${err.message}`);
+      setStatusMessage(`获取失败: ${err.message}`);
     }
   };
 
   const handleTestChat = async () => {
     if (!isValid) return;
     setTestStatus('testing');
-    setStatusMessage('正在测试 Chat Completions...');
+    setStatusMessage('正在测试聊天接口...');
     try {
-      const provider = await ensureSavedProvider();
-      const result = await testProviderProfile(provider.id!, {
-        api_key: apiKey.trim() || undefined,
-        model: defaultModel.trim(),
-        base_url: baseUrl.trim(),
-        request_config: parseJsonObject(requestJson, '高级配置'),
-      });
-      setTestStatus(result.success ? 'success' : 'fail');
-      setStatusMessage(result.success ? `连接成功 — ${result.model || defaultModel}` : `连接失败: ${result.message}`);
+      const profile = buildProfile();
+      const res = await testProviderProfile(profile.id || 'temp', profile);
+      if (res.success) {
+        setTestStatus('success');
+        setStatusMessage('测试成功，接口正常可用');
+      } else {
+        setTestStatus('fail');
+        setStatusMessage(`测试失败: ${res.message}`);
+      }
     } catch (err: any) {
       setTestStatus('fail');
-      setStatusMessage(`测试出错: ${err.message}`);
+      setStatusMessage(`测试失败: ${err.message}`);
     }
   };
 
   const handleTestTools = async () => {
     if (!isValid) return;
     setTestStatus('testing');
-    setStatusMessage('正在测试 Function Call...');
+    setStatusMessage('正在测试工具调用...');
     try {
-      const provider = await ensureSavedProvider();
-      const result = await testProviderTools(provider.id!, {
-        api_key: apiKey.trim() || undefined,
-        model: defaultModel.trim(),
-        base_url: baseUrl.trim(),
-        request_config: parseJsonObject(requestJson, '高级配置'),
-      });
-      setTestStatus(result.success ? 'success' : 'fail');
-      setStatusMessage(result.success ? `工具调用可用 — ${result.tool_call_mode}` : `工具调用不可用: ${result.message}`);
+      const profile = buildProfile();
+      const res = await testProviderTools(profile.id || 'temp', profile);
+      if (res.success) {
+        setTestStatus('success');
+        setStatusMessage(`测试成功，工具调用${res.tool_call_supported ? '支持' : '不支持'}`);
+      } else {
+        setTestStatus('fail');
+        setStatusMessage(`测试失败: ${res.message}`);
+      }
     } catch (err: any) {
       setTestStatus('fail');
-      setStatusMessage(`工具测试出错: ${err.message}`);
+      setStatusMessage(`测试失败: ${err.message}`);
     }
   };
 
@@ -647,11 +645,17 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
     setTestStatus('testing');
     setStatusMessage('正在保存并切换...');
     try {
-      const provider = await ensureSavedProvider();
-      const result = await switchModel(provider.id!, apiKey.trim() || undefined, defaultModel.trim(), baseUrl.trim());
-      if (!result.success) {
+      const profile = buildProfile(savedProviderId);
+      const saved = await saveProviderProfile(profile);
+      if (!saved.success) {
         setTestStatus('fail');
-        setStatusMessage(`切换失败: ${result.message}`);
+        setStatusMessage(`保存失败: ${saved.message}`);
+        return;
+      }
+      const res = await switchModel(saved.provider.id!, apiKey.trim() || undefined, defaultModel.trim(), baseUrl.trim());
+      if (!res.success) {
+        setTestStatus('fail');
+        setStatusMessage(`切换失败: ${res.message}`);
         return;
       }
       setTestStatus('success');
@@ -670,22 +674,30 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
       <div className="add-model-dialog add-model-dialog-wide" onClick={e => e.stopPropagation()}>
         <div className="add-model-header">
           <div>
-            <h2>{initialProfile ? '编辑模型连接' : '添加自定义供应商'}</h2>
+            <h2>添加新供应商</h2>
             <p>保存 Base URL、模型 ID 与密钥后即可在顶部一键切换。</p>
           </div>
           <button className="add-model-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="add-model-body">
+          {/* 顶部分类标签 */}
+          <div className="provider-tabs">
+            <button className="provider-tab active">Codex 供应商</button>
+            <button className="provider-tab">统一供应商</button>
+          </div>
+
+          <div className="provider-section-title">预设供应商</div>
           <div className="provider-template-grid">
             {TEMPLATE_OPTIONS.map(item => (
               <button
                 key={item.id}
-                className={`provider-template ${template === item.id ? 'active' : ''}`}
+                className={`provider-template ${template === item.id ? 'active' : ''} ${item.star ? 'starred' : ''}`}
                 onClick={() => setTemplate(item.id)}
               >
-                <strong>{item.name}</strong>
-                <span>{item.notes}</span>
+                <span className="provider-icon">{item.name.split(' ')[0]}</span>
+                <span className="provider-name">{item.name.split(' ').slice(1).join(' ')}</span>
+                {item.star && <span className="star-badge">⭐</span>}
               </button>
             ))}
           </div>

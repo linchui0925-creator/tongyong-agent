@@ -1,661 +1,976 @@
 """
-LLMManager - 全局 LLM 管理器
-
-职责：
-1. 统一管理所有 LLM 提供商的 API 密钥和配置
-2. 支持动态切换模型并同步到 AgentEngine
-3. 配置持久化（保存/加载到 JSON 文件）
-4. 管理多组已保存的模型配置
-5. 支持per-profile独立实例
+LLM 管理器，统一管理所有供应商、模型、配置
+完全对齐前端预设供应商格式
 """
-
+import os
+import toml
 import json
-import logging
-import uuid
 from pathlib import Path
-from typing import Dict, Optional, Any, List
-
-from app.llm.base import BaseLLM
-from app.llm.factory import get_llm, get_available_providers, get_provider_info
-from app.llm.model_metadata import get_model_info
-from app.llm.configurable_openai import ConfigurableOpenAICompatibleLLM
-
-logger = logging.getLogger(__name__)
-
-
-def _get_default_config_path(profile_id: str = "default") -> Path:
-    """获取指定profile的配置文件路径"""
-    if profile_id == "default":
-        return Path("data/llm_config.json")
-    return Path(f"data/hermes/profiles/{profile_id}/llm_config.json")
-
+from typing import List, Dict, Optional, Any
+from app.core.llm.base import BaseLLM
+from app.core.llm.openai_compatible import OpenAICompatibleLLM
+from app.core.logger import logger
 
 class LLMManager:
-    """全局 LLM 管理器，支持动态切换模型，可per-profile独立实例"""
-
     _instance = None
 
-    def __new__(cls, profile_id: str = "default"):
-        # 如果是默认profile且已有全局单例，返回单例
-        if profile_id == "default" and cls._instance is not None:
-            return cls._instance
-        # 否则创建新实例
-        instance = super().__new__(cls)
-        instance._initialized = False
-        return instance
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._init()
+        return cls._instance
 
-    def __init__(self, profile_id: str = "default"):
-        # 避免重复初始化（Python可能多次调用__new__）
-        if hasattr(self, '_initialized') and self._initialized and profile_id == "default":
-            return
-        self.profile_id = profile_id
-        self._config_file = _get_default_config_path(profile_id)
-        self._current_llm: Optional[BaseLLM] = None
-        self._current_provider: str = "tongyi"
-        self._current_model: Optional[str] = None
-        self._current_config: Dict[str, Any] = {}
-        self._agent_engine_ref = None
-        self._api_keys: Dict[str, str] = {}
-        self._saved_models: List[Dict[str, Any]] = []
-        self._custom_providers: List[Dict[str, Any]] = []
-        self._active_provider_profile_id: Optional[str] = None
-        self._initialized = True
-        self._load_config()
+    def _init(self):
+        # 加载配置文件
+        self.config = self._load_config()
+        # 内置预设供应商，和前端完全对齐
+        self.builtin_providers = self._load_builtin_providers()
+        # 用户自定义供应商
+        self._custom_providers = self._load_custom_providers()
+        # 已初始化的LLM实例缓存
+        self._llm_cache: Dict[str, BaseLLM] = {}
 
-    # ── AgentEngine 绑定 ──────────────────────────────────
-
-    def bind_agent_engine(self, engine) -> None:
-        """绑定 AgentEngine 实例，切换模型时自动同步"""
-        self._agent_engine_ref = engine
-        if self._current_llm is not None:
-            self._sync_to_agent()
-        logger.info(f"LLMManager[{self.profile_id}] 已绑定 AgentEngine")
-
-    def _seed_initial_llm(self, llm: BaseLLM, provider: str) -> None:
-        """在启动时注入已有的 LLM 实例（避免重复创建）"""
-        self._current_llm = llm
-        self._current_provider = provider
-        logger.info(f"LLMManager[{self.profile_id}] 已接收初始 LLM: {provider}")
-
-    @staticmethod
-    def is_real_api_key(key: Optional[str]) -> bool:
-        """Return False for UI masks and local placeholders that must not be used."""
-        if not key:
-            return False
-        stripped = str(key).strip()
-        if not stripped:
-            return False
-        invalid_values = {"****", "local-placeholder", "placeholder", "undefined", "null"}
-        if stripped in invalid_values:
-            return False
-        if stripped.startswith("YOUR_") or "****" in stripped:
-            return False
-        return True
-
-    def try_restore_saved_provider(self) -> bool:
-        """尝试从已保存的配置中恢复上次使用的 provider"""
-        saved_provider = None
-        saved_model = None
-        saved_endpoint = None
+    def _load_config(self) -> Dict[str, Any]:
+        """加载config.toml配置文件"""
+        config_path = Path("config.toml")
+        if not config_path.exists():
+            config_path = Path("config.example.toml")
         try:
-            if self._config_file.exists():
-                data = json.loads(self._config_file.read_text(encoding="utf-8"))
-                saved_provider = data.get("provider")
-                saved_model = data.get("model")
-                saved_provider_cfg = data.get("saved_models", [])
-                if saved_provider and saved_model:
-                    for entry in saved_provider_cfg:
-                        if entry.get("provider") == saved_provider and entry.get("model") == saved_model:
-                            saved_endpoint = entry.get("api_endpoint")
-                            break
+            if config_path.exists():
+                logger.info(f"加载配置文件: {config_path.absolute()}")
+                return toml.load(config_path)
+            return {}
         except Exception as e:
-            logger.warning(f"读取保存的配置失败: {e}")
-            return False
+            logger.warning(f"加载配置文件失败: {e}，使用默认配置")
+            return {}
 
-        if not saved_provider:
-            logger.info(f"LLMManager[{self.profile_id}] 没有保存的 provider")
-            return False
-        if saved_provider == self._current_provider and self._current_llm is not None:
-            logger.info(f"保存的 provider 与当前相同且 LLM 已存在")
-            return True
-
-        custom_provider = self.get_custom_provider(saved_provider)
-        saved_entry = None
-        try:
-            if self._config_file.exists():
-                data = json.loads(self._config_file.read_text(encoding="utf-8"))
-                for entry in data.get("saved_models", []):
-                    if entry.get("provider") == saved_provider and entry.get("model") == saved_model:
-                        saved_entry = entry
-                        break
-        except Exception:
-            saved_entry = None
-
-        entry_key = (saved_entry or {}).get("api_key")
-        api_key = (
-            entry_key if self.is_real_api_key(entry_key)
-            else (custom_provider or {}).get("api_key")
-            or self.get_api_key(saved_provider)
-        )
-        if not api_key:
-            logger.warning(f"已保存的 provider {saved_provider} 无 API key")
-            return False
-
-        try:
-            if custom_provider:
-                llm = self._custom_provider_to_llm(custom_provider, api_key, saved_model, saved_endpoint)
-            else:
-                from app.llm.factory import get_llm
-                llm = get_llm(saved_provider, api_key, saved_model)
-            if saved_model:
-                llm.model = saved_model
-            if saved_endpoint and hasattr(llm, 'api_base'):
-                llm.api_base = saved_endpoint
-            self._current_llm = llm
-            self._current_provider = saved_provider
-            self._current_model = saved_model
-            self._active_provider_profile_id = saved_provider if custom_provider else None
-            self._sync_to_agent()
-            logger.info(f"已从保存的配置恢复 LLM: {saved_provider} / {saved_model}")
-            return True
-        except Exception as e:
-            logger.warning(f"恢复保存的 LLM 失败: {e}")
-            return False
-
-    def _sync_to_agent(self) -> None:
-        """将当前 LLM 同步到 AgentEngine"""
-        if self._agent_engine_ref is not None:
-            self._agent_engine_ref.llm = self._current_llm
-            if self._current_llm is not None and hasattr(self._agent_engine_ref, "context_compressor"):
-                info = get_model_info(getattr(self._current_llm, "model", "") or "")
-                if info and info.context_window:
-                    self._agent_engine_ref.context_compressor.context_length = info.context_window
-                    self._agent_engine_ref.context_compressor.threshold_tokens = int(
-                        info.context_window * self._agent_engine_ref.context_compressor.threshold_percent
-                    )
-            logger.debug(f"LLMManager[{self.profile_id}] 同步到 AgentEngine")
-
-    # ── 配置持久化 ────────────────────────────────────────
-
-    def _load_config(self) -> None:
-        """从文件加载配置"""
-        try:
-            if self._config_file.exists():
-                data = json.loads(self._config_file.read_text(encoding="utf-8"))
-                self._api_keys = data.get("api_keys", {})
-                self._saved_models = data.get("saved_models", [])
-                self._custom_providers = data.get("custom_providers", [])
-                self._active_provider_profile_id = data.get("active_provider_profile_id")
-                saved_provider = data.get("provider")
-                if saved_provider and (saved_provider in get_available_providers() or self.get_custom_provider(saved_provider)):
-                    self._current_provider = saved_provider
-                    self._current_model = data.get("model") or self._current_model
-                logger.info(f"LLMManager[{self.profile_id}] 已加载配置")
-        except Exception as e:
-            logger.warning(f"加载 LLM 配置失败: {e}")
-
-    def _save_config(self) -> None:
-        """保存配置到文件"""
-        try:
-            self._config_file.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "provider": self._current_provider,
-                "model": self._current_model,
-                "api_keys": self._api_keys,
-                "saved_models": self._saved_models,
-                "custom_providers": self._custom_providers,
-                "active_provider_profile_id": self._active_provider_profile_id,
-            }
-            self._config_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning(f"保存 LLM 配置失败: {e}")
-
-    # ── API 密钥管理 ──────────────────────────────────────
-
-    def get_api_key(self, provider: str) -> Optional[str]:
-        """获取指定 provider 的 API 密钥"""
-        if provider in self._api_keys:
-            key = self._api_keys[provider]
-            # 占位符视为无效，回退到环境变量
-            if self.is_real_api_key(key):
-                return key
-        from app.llm.factory import _get_default_api_key
-        key = _get_default_api_key(provider)
-        if key:
-            self._api_keys[provider] = key
-        return key
-
-    def set_api_key(self, provider: str, api_key: str) -> None:
-        """设置并持久化指定 provider 的 API 密钥"""
-        if self.is_real_api_key(api_key):
-            self._api_keys[provider] = api_key
-            self._save_config()
-
-    def get_all_api_keys(self) -> Dict[str, str]:
-        """获取所有已配置的 API 密钥"""
-        result = dict(self._api_keys)
-        for p in get_available_providers():
-            if p not in result:
-                from app.llm.factory import _get_default_api_key
-                key = _get_default_api_key(p)
-                if key:
-                    result[p] = key
-        return result
-
-    # ── 当前状态 ──────────────────────────────────────────
-
-    def get_current_llm(self) -> Optional[BaseLLM]:
-        return self._current_llm
-
-    def get_current_provider(self) -> str:
-        return self._current_provider
-
-    def get_current_model(self) -> Optional[str]:
-        return self._current_model
-
-    def get_current_config(self) -> Dict[str, Any]:
-        custom_provider = self.get_custom_provider(self._current_provider)
-        return {
-            "provider": self._current_provider,
-            "model": self._current_model,
-            "api_key_configured": bool((custom_provider or {}).get("api_key") or self.get_api_key(self._current_provider)),
-            "provider_profile_id": self._active_provider_profile_id,
+    def _load_builtin_providers(self) -> List[Dict[str, Any]]:
+        """加载内置预设供应商，和前端TEMPLATE_OPTIONS完全对齐"""
+        builtin = []
+        # 从环境变量加载
+        env_prefix_map = {
+            'openai': 'OPENAI_API_KEY',
+            'sheng_suan_yun': 'SHENG_SUAN_YUN_API_KEY',
+            'patewayai': 'PATEWAYAI_API_KEY',
+            'volcengine_agentplan': 'VOLCENGINE_AGENTPLAN_API_KEY',
+            'byteplus': 'BYTEPLUS_API_KEY',
+            'doubaoseed': 'DOUBAOSEED_API_KEY',
+            'ccsub': 'CCSUB_API_KEY',
+            'unity2ai': 'UNITY2AI_API_KEY',
+            'siliconflow': 'SILICONFLOW_API_KEY',
+            'siliconflow_en': 'SILICONFLOW_EN_API_KEY',
+            'dmxapi': 'DMXAPI_API_KEY',
+            'packycode': 'PACKYCODE_API_KEY',
+            'apikey_fun': 'APIKEY_FUN_API_KEY',
+            'apinebula': 'APINEBULA_API_KEY',
+            'atlascloud': 'ATLASCLOUD_API_KEY',
+            'sudocode': 'SUDOCODE_API_KEY',
+            'claude_cn': 'CLAUDE_CN_API_KEY',
+            'runapi': 'RUNAPI_API_KEY',
+            'relaxycode': 'RELAXYCODE_API_KEY',
+            'cubence': 'CUBENCE_API_KEY',
+            'aigocode': 'AIGOCODE_API_KEY',
+            'rightcode': 'RIGHTCODE_API_KEY',
+            'aicodemirror': 'AICODEMIRROR_API_KEY',
+            'crazyrouter': 'CRAZYROUTER_API_KEY',
+            'sssaicode': 'SSSAICODE_API_KEY',
+            'youyun': 'YOUYUN_API_KEY',
+            'youyun_coding': 'YOUYUN_CODING_API_KEY',
+            'micu': 'MICU_API_KEY',
+            'ctok': 'CTOK_API_KEY',
+            'azure_openai': 'AZURE_OPENAI_API_KEY',
+            'deepseek': 'DEEPSEEK_API_KEY',
+            'zhipu': 'ZHIPU_API_KEY',
+            'zhipu_en': 'ZHIPU_EN_API_KEY',
+            'qianfan': 'QIANFAN_API_KEY',
+            'bailian': 'BAILIAN_API_KEY',
+            'kimi': 'KIMI_API_KEY',
+            'kimi_coding': 'KIMI_CODING_API_KEY',
+            'stepfun': 'STEPFUN_API_KEY',
+            'stepfun_en': 'STEPFUN_EN_API_KEY',
+            'modelscope': 'MODELSCOPE_API_KEY',
+            'longcat': 'LONGCAT_API_KEY',
+            'minimax': 'MINIMAX_API_KEY',
+            'minimax_en': 'MINIMAX_EN_API_KEY',
+            'bailing': 'BAILING_API_KEY',
+            'xiaomi_mimo': 'XIAOMI_MIMO_API_KEY',
+            'xiaomi_mimo_turbo': 'XIAOMI_MIMO_TURBO_API_KEY',
+            'novita_ai': 'NOVITA_AI_API_KEY',
+            'nvidia': 'NVIDIA_API_KEY',
+            'aihubmix': 'AIHUBMIX_API_KEY',
+            'cherryin': 'CHERRYIN_API_KEY',
+            'eflowcode': 'EFLOWCODE_API_KEY',
+            'pipellm': 'PIPELLM_API_KEY',
+            'openrouter': 'OPENROUTER_API_KEY',
+            'therouter': 'THEROUTER_API_KEY',
         }
-
-    # ── 自定义供应商管理 ──────────────────────────────────
-
-    @staticmethod
-    def _mask_key(key: Optional[str]) -> str:
-        if not key:
-            return ""
-        if len(key) <= 8:
-            return "****"
-        return f"{key[:4]}****{key[-4:]}"
-
-    def _public_custom_provider(self, provider: Dict[str, Any]) -> Dict[str, Any]:
-        item = dict(provider)
-        key = item.pop("api_key", "")
-        item["has_api_key"] = bool(key)
-        item["api_key_masked"] = self._mask_key(key)
-        return item
-
-    def list_custom_providers(self) -> List[Dict[str, Any]]:
-        import os
-        import json
-        from pathlib import Path
-        # 从config目录读取自定义供应商配置
-        custom_config_dir = Path('config/providers')
-        custom_config_dir.mkdir(parents=True, exist_ok=True)
-        # 读取所有json配置文件
-        for config_file in custom_config_dir.glob('*.json'):
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    provider_config = json.load(f)
-                    if all(k in provider_config for k in ['id', 'name', 'endpoint', 'model']):
-                        builtin_providers.append({
-                            'id': provider_config['id'],
-                            'name': provider_config.get('name', provider_config['id']),
-                            'protocol': provider_config.get('protocol', 'openai_compatible'),
-                            'base_url': provider_config['endpoint'],
-                            'default_model': provider_config['model'],
-                            'models': provider_config.get('models', [provider_config['model']]),
-                            'icon': provider_config.get('icon', '⚙️'),
-                            'color': provider_config.get('color', '#7C3AED'),
-                            'enabled': provider_config.get('enabled', True),
-                            'has_api_key': bool(provider_config.get('api_key') or os.getenv(f'{provider_config[id].upper()}_API_KEY')),
-                            'api_key': provider_config.get('api_key') or os.getenv(f'{provider_config[id].upper()}_API_KEY'),
-                        })
-            except Exception as e:
-                logger.warning(f'加载自定义供应商配置{config_file}失败: {e}')
-        builtin_providers = []
-        # EdgeFn GLM
-        if os.getenv('EDGEFN_API_KEY'):
-            builtin_providers.append({
-                'id': 'edgefn',
-                'name': 'EdgeFn GLM-5.2',
+        # 内置供应商配置，和前端完全一致
+        builtin_configs = [
+            # 星标推荐
+            {
+                'id': 'openai',
+                'name': '🟢 OpenAI Official',
                 'protocol': 'openai_compatible',
-                'base_url': 'https://api.edgefn.net/v1',
-                'default_model': 'GLM-5.2',
-                'models': ['GLM-5.2', 'GLM-4.5V'],
-                'icon': '🌐',
-                'color': '#165DFF',
-                'enabled': True,
-                'has_api_key': True,
-            })
-        # DeepSeek
-        if os.getenv('DEEPSEEK_API_KEY'):
-            builtin_providers.append({
+                'base_url': 'https://api.openai.com/v1',
+                'default_model': 'gpt-4o',
+                'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
+                'icon': '🟢',
+                'color': '#10A37F',
+                'notes': 'OpenAI官方接口，支持GPT-4o/GPT-3.5-turbo等。',
+                'star': True,
+            },
+            {
+                'id': 'sheng_suan_yun',
+                'name': '🟣 胜算云',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.shengsuanyun.com/v1',
+                'default_model': 'sheng-suan-7b',
+                'models': ['sheng-suan-7b'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': '胜算云模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'patewayai',
+                'name': '⚫ PatewayAI',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.patewayai.com/v1',
+                'default_model': 'pateway-v1',
+                'models': ['pateway-v1'],
+                'icon': '⚫',
+                'color': '#1f2937',
+                'notes': 'PatewayAI官方接口。',
+                'star': True,
+            },
+            {
+                'id': 'volcengine_agentplan',
+                'name': '🔵 火山Agentplan',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://ark.cn-beijing.volces.com/api/plan/v3',
+                'default_model': 'doubao-pro-32k',
+                'models': ['doubao-pro-32k'],
+                'icon': '🔵',
+                'color': '#3b82f6',
+                'notes': '火山引擎AgentPlan/豆包兼容接口。',
+                'star': True,
+            },
+            {
+                'id': 'byteplus',
+                'name': '🔵 BytePlus',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.byteplus.com/v1',
+                'default_model': 'byteplus-v1',
+                'models': ['byteplus-v1'],
+                'icon': '🔵',
+                'color': '#3b82f6',
+                'notes': 'BytePlus官方接口。',
+                'star': True,
+            },
+            {
+                'id': 'doubaoseed',
+                'name': '🟣 DouBaoSeed',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.doubao.com/v1',
+                'default_model': 'doubao-seed-128k',
+                'models': ['doubao-seed-128k'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': '字节跳动豆包Seed系列模型。',
+                'star': True,
+            },
+            {
+                'id': 'ccsub',
+                'name': '🟢 CCSub',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.ccsub.com/v1',
+                'default_model': 'ccsub-7b',
+                'models': ['ccsub-7b'],
+                'icon': '🟢',
+                'color': '#22c55e',
+                'notes': 'CCSub模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'unity2ai',
+                'name': '⚫ Unity2.ai',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.unity2.ai/v1',
+                'default_model': 'unity-v1',
+                'models': ['unity-v1'],
+                'icon': '⚫',
+                'color': '#1f2937',
+                'notes': 'Unity2.ai官方接口。',
+                'star': True,
+            },
+            {
+                'id': 'siliconflow',
+                'name': '💜 SiliconFlow',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.siliconflow.cn/v1',
+                'default_model': 'deepseek-v3',
+                'models': ['deepseek-v3', 'qwen-max'],
+                'icon': '💜',
+                'color': '#8b5cf6',
+                'notes': '硅基流动聚合平台，支持海量开源/商用模型（中文）。',
+                'star': True,
+            },
+            {
+                'id': 'siliconflow_en',
+                'name': '💜 SiliconFlow en',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.siliconflow.com/v1',
+                'default_model': 'deepseek-v3',
+                'models': ['deepseek-v3'],
+                'icon': '💜',
+                'color': '#8b5cf6',
+                'notes': '硅基流动国际版接口。',
+                'star': True,
+            },
+            {
+                'id': 'dmxapi',
+                'name': '⚪ DMXAPI',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.dmxapi.com/v1',
+                'default_model': 'dmx-v1',
+                'models': ['dmx-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': 'DMXAPI模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'packycode',
+                'name': '⚫ PackyCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.packycode.com/v1',
+                'default_model': 'packy-coder-v1',
+                'models': ['packy-coder-v1'],
+                'icon': '⚫',
+                'color': '#1f2937',
+                'notes': 'PackyCode代码大模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'apikey_fun',
+                'name': '🟠 APIKEY.FUN',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.apikey.fun/v1',
+                'default_model': 'apikeyfun-v1',
+                'models': ['apikeyfun-v1'],
+                'icon': '🟠',
+                'color': '#f59e0b',
+                'notes': 'APIKEY.FUN聚合模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'apinebula',
+                'name': '⚪ APINebula',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.apinebula.com/v1',
+                'default_model': 'apinebula-v1',
+                'models': ['apinebula-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': 'APINebula星云模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'atlascloud',
+                'name': '▲ AtlasCloud',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.atlascloud.ai/v1',
+                'default_model': 'atlas-v1',
+                'models': ['atlas-v1'],
+                'icon': '▲',
+                'color': '#6366f1',
+                'notes': 'AtlasCloud大模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'sudocode',
+                'name': '🟣 SudoCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.sudocode.com/v1',
+                'default_model': 'sudo-coder-v1',
+                'models': ['sudo-coder-v1'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': 'SudoCode代码大模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'claude_cn',
+                'name': '🍀 ClaudeCN',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://claude.volcengineapi.com/v1',
+                'default_model': 'claude-3-5-sonnet',
+                'models': ['claude-3-5-sonnet'],
+                'icon': '🍀',
+                'color': '#4ade80',
+                'notes': '火山方舟Claude国内节点接口。',
+                'star': True,
+            },
+            {
+                'id': 'runapi',
+                'name': '⬛ RunAPI',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.runapi.com/v1',
+                'default_model': 'runapi-v1',
+                'models': ['runapi-v1'],
+                'icon': '⬛',
+                'color': '#18181b',
+                'notes': 'RunAPI聚合模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'relaxycode',
+                'name': '⚪ RelaxyCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.relaxycode.com/v1',
+                'default_model': 'relaxy-coder-v1',
+                'models': ['relaxy-coder-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': 'RelaxyCode代码模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'cubence',
+                'name': '⬛ Cubence',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.cubence.com/v1',
+                'default_model': 'cubence-v1',
+                'models': ['cubence-v1'],
+                'icon': '⬛',
+                'color': '#18181b',
+                'notes': 'Cubence模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'aigocode',
+                'name': '🟣 AIGoCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.aigocode.com/v1',
+                'default_model': 'aigo-coder-v1',
+                'models': ['aigo-coder-v1'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': 'AIGoCode代码大模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'rightcode',
+                'name': '🟠 RightCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.rightcode.com/v1',
+                'default_model': 'right-coder-v1',
+                'models': ['right-coder-v1'],
+                'icon': '🟠',
+                'color': '#f59e0b',
+                'notes': 'RightCode代码模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'aicodemirror',
+                'name': '✖️ AICodeMirror',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.aicodemirror.com/v1',
+                'default_model': 'aicm-v1',
+                'models': ['aicm-v1'],
+                'icon': '✖️',
+                'color': '#ef4444',
+                'notes': 'AICodeMirror镜像模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'crazyrouter',
+                'name': '⚪ CrazyRouter',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.crazyrouter.ai/v1',
+                'default_model': 'crazy-v1',
+                'models': ['crazy-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': 'CrazyRouter大模型路由接口。',
+                'star': True,
+            },
+            {
+                'id': 'sssaicode',
+                'name': '⬛ SSSAiCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.sssaicode.com/v1',
+                'default_model': 'sssaicode-v1',
+                'models': ['sssaicode-v1'],
+                'icon': '⬛',
+                'color': '#18181b',
+                'notes': 'SSSAiCode代码模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'youyun',
+                'name': '🟣 优云智算',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.youyunzhisuan.com/v1',
+                'default_model': 'youyun-v1',
+                'models': ['youyun-v1'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': '优云智算大模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'youyun_coding',
+                'name': '🟣 优云智算Coding',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.youyunzhisuan.com/v1',
+                'default_model': 'youyun-coder-v1',
+                'models': ['youyun-coder-v1'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': '优云智算代码模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'micu',
+                'name': '🔵 Micu',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.micu.ai/v1',
+                'default_model': 'micu-v1',
+                'models': ['micu-v1'],
+                'icon': '🔵',
+                'color': '#3b82f6',
+                'notes': 'Micu大模型接口。',
+                'star': True,
+            },
+            {
+                'id': 'ctok',
+                'name': '🔵 CTok.ai',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.ctok.ai/v1',
+                'default_model': 'ctok-v1',
+                'models': ['ctok-v1'],
+                'icon': '🔵',
+                'color': '#3b82f6',
+                'notes': 'CTok.ai模型接口。',
+                'star': True,
+            },
+            # 普通源
+            {
+                'id': 'azure_openai',
+                'name': '🔵 Azure OpenAI',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://{resource}.openai.azure.com/openai/deployments/{deployment}/v1',
+                'default_model': 'gpt-4o',
+                'models': ['gpt-4o'],
+                'icon': '🔵',
+                'color': '#3b82f6',
+                'notes': '微软Azure OpenAI服务，需替换资源和部署名称。',
+                'star': False,
+            },
+            {
                 'id': 'deepseek',
-                'name': 'DeepSeek V3',
+                'name': '🔍 DeepSeek',
                 'protocol': 'openai_compatible',
                 'base_url': 'https://api.deepseek.com/v1',
                 'default_model': 'deepseek-chat',
                 'models': ['deepseek-chat', 'deepseek-coder'],
                 'icon': '🔍',
-                'color': '#2563EB',
-                'enabled': True,
-                'has_api_key': True,
-            })
-        # 豆包Doubao
-        if os.getenv('DOUBAO_API_KEY'):
-            builtin_providers.append({
-                'id': 'doubao',
-                'name': '字节豆包',
+                'color': '#2563eb',
+                'notes': '深度求索官方接口，支持deepseek-chat/deepseek-coder。',
+                'star': False,
+            },
+            {
+                'id': 'zhipu',
+                'name': '🔷 Zhipu GLM',
                 'protocol': 'openai_compatible',
-                'base_url': 'https://ark.cn-beijing.volces.com/api/plan/v1',
-                'default_model': 'doubao-pro-32k',
-                'models': ['doubao-pro-32k', 'doubao-lite-128k'],
-                'icon': '📦',
-                'color': '#22C55E',
-                'enabled': True,
-                'has_api_key': True,
-            })
-        # OpenAI
-        if os.getenv('OPENAI_API_KEY'):
-            builtin_providers.append({
-                'id': 'openai',
-                'name': 'OpenAI GPT',
+                'base_url': 'https://open.bigmodel.cn/api/paas/v4',
+                'default_model': 'glm-4',
+                'models': ['glm-4', 'glm-3.5-turbo'],
+                'icon': '🔷',
+                'color': '#6366f1',
+                'notes': '智谱清言官方接口，支持GLM-4/GLM-3.5等模型。',
+                'star': False,
+            },
+            {
+                'id': 'zhipu_en',
+                'name': '🔷 Zhipu GLM en',
                 'protocol': 'openai_compatible',
-                'base_url': 'https://api.openai.com/v1',
-                'default_model': 'gpt-4o',
-                'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
-                'icon': '🤖',
-                'color': '#10A37F',
-                'enabled': True,
-                'has_api_key': True,
-            })
-        # 通义千问
-        if os.getenv('DASHSCOPE_API_KEY'):
-            builtin_providers.append({
-                'id': 'qwen',
-                'name': '阿里通义千问',
+                'base_url': 'https://open.bigmodel.cn/api/paas/v4',
+                'default_model': 'glm-4-air',
+                'models': ['glm-4-air'],
+                'icon': '🔷',
+                'color': '#6366f1',
+                'notes': '智谱GLM英文模型系列。',
+                'star': False,
+            },
+            {
+                'id': 'qianfan',
+                'name': '🐾 百度千帆',
                 'protocol': 'openai_compatible',
-                'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                'base_url': 'https://qianfan.baidubce.com/v2',
+                'default_model': 'ernie-3.5-8k',
+                'models': ['ernie-3.5-8k'],
+                'icon': '🐾',
+                'color': '#165dff',
+                'notes': '百度智能云千帆大模型平台兼容接口。',
+                'star': False,
+            },
+            {
+                'id': 'bailian',
+                'name': '🟣 Bailian',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://bailian.aliyuncs.com/v1',
                 'default_model': 'qwen-max',
-                'models': ['qwen-max', 'qwen-plus', 'qwen-long'],
-                'icon': '☁️',
-                'color': '#FF6A00',
-                'enabled': True,
-                'has_api_key': True,
-            })
-        # 把内置供应商和自定义供应商合并返回
-        return builtin_providers + [self._public_custom_provider(p) for p in self._custom_providers]
+                'models': ['qwen-max'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': '阿里云百炼平台兼容接口。',
+                'star': False,
+            },
+            {
+                'id': 'kimi',
+                'name': '🟣 Kimi Moonshot',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.moonshot.cn/v1',
+                'default_model': 'moonshot-v1-8k',
+                'models': ['moonshot-v1-8k', 'moonshot-v1-128k'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': 'Moonshot AI官方接口，支持超长上下文。',
+                'star': False,
+            },
+            {
+                'id': 'kimi_coding',
+                'name': '🟣 Kimi For Coding',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.moonshot.cn/v1',
+                'default_model': 'moonshot-coder-v1',
+                'models': ['moonshot-coder-v1'],
+                'icon': '🟣',
+                'color': '#a855f7',
+                'notes': 'Kimi代码专用模型。',
+                'star': False,
+            },
+            {
+                'id': 'stepfun',
+                'name': '🔹 StepFun',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.stepfun.com/v1',
+                'default_model': 'step-1-8k',
+                'models': ['step-1-8k'],
+                'icon': '🔹',
+                'color': '#3b82f6',
+                'notes': '阶跃星辰官方中文接口。',
+                'star': False,
+            },
+            {
+                'id': 'stepfun_en',
+                'name': '🔹 StepFun en',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.stepfun.com/v1',
+                'default_model': 'step-1-32k',
+                'models': ['step-1-32k'],
+                'icon': '🔹',
+                'color': '#3b82f6',
+                'notes': '阶跃星辰英文模型系列。',
+                'star': False,
+            },
+            {
+                'id': 'modelscope',
+                'name': '🔵 ModelScope',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.modelscope.cn/v1',
+                'default_model': 'modelscope-v1',
+                'models': ['modelscope-v1'],
+                'icon': '🔵',
+                'color': '#3b82f6',
+                'notes': '阿里达摩院ModelScope平台接口。',
+                'star': False,
+            },
+            {
+                'id': 'longcat',
+                'name': '🟢 Longcat',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.longcat.ai/v1',
+                'default_model': 'longcat-7b',
+                'models': ['longcat-7b'],
+                'icon': '🟢',
+                'color': '#22c55e',
+                'notes': 'Longcat长上下文模型。',
+                'star': False,
+            },
+            {
+                'id': 'minimax',
+                'name': '🎙️ MiniMax',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.minimax.chat/v1',
+                'default_model': 'minimax-chat-01',
+                'models': ['minimax-chat-01'],
+                'icon': '🎙️',
+                'color': '#ec4899',
+                'notes': 'MiniMax官方中文接口，支持abab大模型系列。',
+                'star': False,
+            },
+            {
+                'id': 'minimax_en',
+                'name': '🎙️ MiniMax en',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.minimax.chat/v1',
+                'default_model': 'minimax-abab6.5',
+                'models': ['minimax-abab6.5'],
+                'icon': '🎙️',
+                'color': '#ec4899',
+                'notes': 'MiniMax英文模型系列。',
+                'star': False,
+            },
+            {
+                'id': 'bailing',
+                'name': '⚪ BaiLing',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.bailing.ai/v1',
+                'default_model': 'bailing-v1',
+                'models': ['bailing-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': '百聆大模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'xiaomi_mimo',
+                'name': '➖ Xiaomi MiMo',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.mi.ai/v1',
+                'default_model': 'mimo-v1',
+                'models': ['mimo-v1'],
+                'icon': '➖',
+                'color': '#6b7280',
+                'notes': '小米MiMo大模型系列。',
+                'star': False,
+            },
+            {
+                'id': 'xiaomi_mimo_turbo',
+                'name': '➖ Xiaomi MiMo Turbo',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.mi.ai/v1',
+                'default_model': 'mimo-turbo-v1',
+                'models': ['mimo-turbo-v1'],
+                'icon': '➖',
+                'color': '#6b7280',
+                'notes': '小米MiMo Turbo系列。',
+                'star': False,
+            },
+            {
+                'id': 'novita_ai',
+                'name': '▲ Novita AI',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.novita.ai/v3/openai',
+                'default_model': 'novita-v1',
+                'models': ['novita-v1'],
+                'icon': '▲',
+                'color': '#6366f1',
+                'notes': 'Novita AI大模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'nvidia',
+                'name': '🟢 Nvidia',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.nvcf.nvidia.com/v2',
+                'default_model': 'nvidia-llama-3',
+                'models': ['nvidia-llama-3'],
+                'icon': '🟢',
+                'color': '#22c55e',
+                'notes': 'Nvidia NIM模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'aihubmix',
+                'name': '⚪ AiHubMix',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.aihubmix.com/v1',
+                'default_model': 'aihubmix-v1',
+                'models': ['aihubmix-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': 'AiHubMix聚合模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'cherryin',
+                'name': '🔴 CherryIN',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.cherryin.com/v1',
+                'default_model': 'cherry-v1',
+                'models': ['cherry-v1'],
+                'icon': '🔴',
+                'color': '#ef4444',
+                'notes': 'CherryIN模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'eflowcode',
+                'name': '⚪ E-FlowCode',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.eflowcode.com/v1',
+                'default_model': 'eflow-coder-v1',
+                'models': ['eflow-coder-v1'],
+                'icon': '⚪',
+                'color': '#9ca3af',
+                'notes': 'E-FlowCode代码模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'pipellm',
+                'name': '⬛ PIPELLM',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.pipellm.com/v1',
+                'default_model': 'pipe-v1',
+                'models': ['pipe-v1'],
+                'icon': '⬛',
+                'color': '#18181b',
+                'notes': 'PIPELLM流水线大模型接口。',
+                'star': False,
+            },
+            {
+                'id': 'openrouter',
+                'name': '🔄 OpenRouter',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://openrouter.ai/api/v1',
+                'default_model': 'anthropic/claude-3-opus',
+                'models': ['anthropic/claude-3-opus'],
+                'icon': '🔄',
+                'color': '#6366f1',
+                'notes': 'OpenRouter聚合平台，支持全球数百种模型。',
+                'star': False,
+            },
+            {
+                'id': 'therouter',
+                'name': '🔄 TheRouter',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.therouter.ai/v1',
+                'default_model': 'router-v1',
+                'models': ['router-v1'],
+                'icon': '🔄',
+                'color': '#6366f1',
+                'notes': 'TheRouter大模型路由接口。',
+                'star': False,
+            },
+            {
+                'id': 'ollama',
+                'name': '🐳 Ollama OpenAI 兼容',
+                'protocol': 'openai_compatible',
+                'base_url': 'http://localhost:11434/v1',
+                'default_model': 'llama3.2',
+                'models': ['llama3.2', 'qwen'],
+                'icon': '🐳',
+                'color': '#22c55e',
+                'notes': '本地模型，通常不需要 API Key，可填任意占位值。',
+                'star': False,
+            },
+        ]
+        # 合并环境变量中的API Key
+        for provider in builtin_configs:
+            # 优先从环境变量加载
+            env_key = env_prefix_map.get(provider['id'])
+            if env_key and os.getenv(env_key):
+                provider['api_key'] = os.getenv(env_key)
+                provider['has_api_key'] = True
+            # 其次从config.toml加载
+            config_providers = self.config.get('model_providers', {})
+            if provider['id'] in config_providers:
+                config = config_providers[provider['id']]
+                if config.get('api_key'):
+                    provider['api_key'] = config['api_key']
+                    provider['has_api_key'] = True
+                if config.get('base_url'):
+                    provider['base_url'] = config['base_url']
+                if config.get('default_model'):
+                    provider['default_model'] = config['default_model']
+            builtin.append(provider)
+        return builtin
 
+    def _load_custom_providers(self) -> List[Dict[str, Any]]:
+        """加载用户自定义供应商"""
+        custom_path = Path("data") / "custom_providers.json"
+        if not custom_path.exists():
+            return []
+        try:
+            with open(custom_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"加载自定义供应商失败: {e}")
+            return []
+
+    def _save_custom_providers(self):
+        """保存自定义供应商到文件"""
+        custom_path = Path("data") / "custom_providers.json"
+        custom_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(custom_path, "w", encoding="utf-8") as f:
+                json.dump(self._custom_providers, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存自定义供应商失败: {e}")
+
+    def _public_custom_provider(self, provider: Dict[str, Any]) -> Dict[str, Any]:
+        """返回脱敏的公共供应商信息，不返回API Key"""
+        public = {k: v for k, v in provider.items() if k != 'api_key'}
+        public['has_api_key'] = bool(provider.get('api_key'))
+        return public
+
+    def list_custom_providers(self) -> List[Dict[str, Any]]:
+        """获取所有可用供应商列表（内置+自定义），自动过滤未配置API Key的内置供应商"""
+        # 自定义供应商全部返回
+        custom = [self._public_custom_provider(p) for p in self._custom_providers]
+        # 内置供应商只返回配置了API Key的
+        builtin = [
+            self._public_custom_provider(p)
+            for p in self.builtin_providers
+            if p.get('has_api_key', False)
+        ]
+        return builtin + custom
 
     def get_custom_provider(self, provider_id: str) -> Optional[Dict[str, Any]]:
-        for provider in self._custom_providers:
-            if provider.get("id") == provider_id:
-                return dict(provider)
+        """获取指定供应商配置"""
+        for p in self.builtin_providers:
+            if p['id'] == provider_id:
+                return p.copy()
+        for p in self._custom_providers:
+            if p['id'] == provider_id:
+                return p.copy()
         return None
 
     def upsert_custom_provider(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """创建或更新自定义供应商"""
+        provider_id = data.get('id') or f"custom_{os.urandom(4).hex()}"
+        # 检查是否是内置供应商，不允许修改
+        for p in self.builtin_providers:
+            if p['id'] == provider_id:
+                raise ValueError("内置供应商不允许修改")
         provider = dict(data)
-        provider_id = provider.get("id") or f"custom_{uuid.uuid4().hex[:10]}"
-        provider["id"] = provider_id
-        provider.setdefault("protocol", "openai_compatible")
-        provider.setdefault("enabled", True)
-        provider.setdefault("models", [])
-        provider.setdefault("request_config", {})
-        provider.setdefault("icon", "⚙")
-        provider.setdefault("color", "#7C3AED")
-        if not self.is_real_api_key(provider.get("api_key")):
-            provider.pop("api_key", None)
-            old = self.get_custom_provider(provider_id)
-            if old and old.get("api_key"):
-                provider["api_key"] = old["api_key"]
-
-        replaced = False
-        for idx, existing in enumerate(self._custom_providers):
-            if existing.get("id") == provider_id:
-                self._custom_providers[idx] = provider
-                replaced = True
-                break
-        if not replaced:
-            self._custom_providers.append(provider)
-        self._save_config()
+        provider['id'] = provider_id
+        provider.setdefault('protocol', 'openai_compatible')
+        provider.setdefault('enabled', True)
+        provider.setdefault('models', [])
+        provider.setdefault('request_config', {})
+        provider.setdefault('icon', '⚙️')
+        provider.setdefault('color', '#7C3AED')
+        # 替换旧的
+        for i, p in enumerate(self._custom_providers):
+            if p['id'] == provider_id:
+                self._custom_providers[i] = provider
+                self._save_custom_providers()
+                return self._public_custom_provider(provider)
+        # 新增
+        self._custom_providers.append(provider)
+        self._save_custom_providers()
         return self._public_custom_provider(provider)
 
     def delete_custom_provider(self, provider_id: str) -> bool:
-        before = len(self._custom_providers)
-        self._custom_providers = [p for p in self._custom_providers if p.get("id") != provider_id]
-        if len(self._custom_providers) < before:
-            if self._active_provider_profile_id == provider_id:
-                self._active_provider_profile_id = None
-            if self._current_provider == provider_id:
-                self._current_provider = "tongyi"
-                self._current_model = None
-                self._current_llm = None
-            self._save_config()
-            return True
+        """删除自定义供应商"""
+        for i, p in enumerate(self._custom_providers):
+            if p['id'] == provider_id:
+                del self._custom_providers[i]
+                self._save_custom_providers()
+                # 清除缓存
+                self._llm_cache.pop(provider_id, None)
+                return True
         return False
 
-    def _custom_provider_to_llm(
-        self,
-        provider: Dict[str, Any],
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        api_endpoint: Optional[str] = None,
-    ) -> BaseLLM:
-        chosen_model = model or provider.get("default_model") or (provider.get("models") or [{}])[0].get("id")
-        resolved_key = api_key if self.is_real_api_key(api_key) else provider.get("api_key")
-        llm = ConfigurableOpenAICompatibleLLM(
-            api_key=resolved_key or "",
-            model=chosen_model,
-            provider_id=provider["id"],
-            base_url=api_endpoint or provider.get("base_url") or "https://api.openai.com/v1",
-            request_config=provider.get("request_config") or {},
-            model_overrides=provider.get("model_overrides") or {},
+    def _custom_provider_to_llm(self, provider: Dict[str, Any], api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
+        """将自定义供应商配置转换为LLM实例"""
+        base_url = api_endpoint or provider['base_url']
+        final_api_key = api_key or provider.get('api_key') or ''
+        final_model = model or provider['default_model']
+        # 目前全部兼容OpenAI协议
+        return OpenAICompatibleLLM(
+            base_url=base_url,
+            api_key=final_api_key,
+            model=final_model,
+            request_config=provider.get('request_config', {}),
         )
+
+    def get_llm(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
+        """获取LLM实例，优先从缓存读取"""
+        cache_key = f"{provider_id}:{model or 'default'}:{api_key or 'default'}:{api_endpoint or 'default'}"
+        if cache_key in self._llm_cache:
+            return self._llm_cache[cache_key]
+        provider = self.get_custom_provider(provider_id)
+        if not provider:
+            raise ValueError(f"供应商 {provider_id} 不存在")
+        llm = self._custom_provider_to_llm(provider, api_key, model, api_endpoint)
+        self._llm_cache[cache_key] = llm
         return llm
 
-    # ── 模型切换 ──────────────────────────────────────────
-
-    def switch_model(
-        self,
-        provider: str,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        api_endpoint: Optional[str] = None,
-        **kwargs,
-    ) -> bool:
-        """切换模型"""
+    async def test_connection(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> Dict[str, Any]:
+        """测试供应商连接"""
         try:
-            available = get_available_providers()
-            custom_provider = self.get_custom_provider(provider)
-            if provider not in available and not custom_provider:
-                logger.error(f"提供商 {provider} 不可用，可用: {available}")
-                return False
-
-            resolved_key = (
-                api_key if self.is_real_api_key(api_key)
-                else (custom_provider or {}).get("api_key")
-                or self.get_api_key(provider)
-            )
-            if not resolved_key:
-                logger.warning(f"{provider} 未配置 API 密钥")
-
-            llm = self._custom_provider_to_llm(custom_provider, resolved_key, model, api_endpoint) if custom_provider else get_llm(provider, resolved_key)
-            if not llm:
-                logger.error(f"无法创建 LLM 实例: {provider}")
-                return False
-
-            if api_endpoint and hasattr(llm, 'api_base'):
-                llm.api_base = api_endpoint
-            if model:
-                llm.model = model
-
-            for key, value in kwargs.items():
-                if hasattr(llm, key):
-                    setattr(llm, key, value)
-
-            self._current_llm = llm
-            self._current_provider = provider
-            self._current_model = model or llm.model
-            self._active_provider_profile_id = provider if custom_provider else None
-
-            if self.is_real_api_key(api_key):
-                if custom_provider:
-                    custom_provider["api_key"] = api_key
-                    self.upsert_custom_provider(custom_provider)
-                else:
-                    self._api_keys[provider] = api_key
-
-            self._sync_to_agent()
-            self._save_config()
-
-            logger.info(f"LLMManager[{self.profile_id}] 模型切换: {provider} / {model or llm.model}")
-            return True
-
+            llm = self.get_llm(provider_id, api_key, model, api_endpoint)
+            # 发送简单测试请求
+            resp = await llm.chat([{"role": "user", "content": "hi，只用回复ok"}])
+            return {
+                "success": True,
+                "message": "连接测试成功",
+                "response": resp.content,
+            }
         except Exception as e:
-            logger.error(f"模型切换失败: {e}", exc_info=True)
-            return False
+            logger.warning(f"测试连接失败: {e}")
+            return {
+                "success": False,
+                "message": f"连接测试失败: {str(e)}",
+            }
 
-    async def test_connection(
-        self,
-        provider: str,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        api_endpoint: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """测试模型连接"""
-        result = {"success": False, "message": "", "model": ""}
+    async def fetch_models(self, provider_id: str, api_key: Optional[str] = None, api_endpoint: Optional[str] = None) -> Dict[str, Any]:
+        """获取供应商的模型列表"""
         try:
-            custom_provider = self.get_custom_provider(provider)
-            resolved_key = (
-                api_key if self.is_real_api_key(api_key)
-                else (custom_provider or {}).get("api_key")
-                or self.get_api_key(provider)
-            )
-            llm = self._custom_provider_to_llm(custom_provider, resolved_key, model, api_endpoint) if custom_provider else get_llm(provider, resolved_key)
-            if api_endpoint and hasattr(llm, 'api_base'):
-                llm.api_base = api_endpoint
-            if model:
-                llm.model = model
-
-            ok = await llm.initialize()
-            result["success"] = ok
-            result["model"] = llm.model
-            result["message"] = f"{provider} 连接{'成功' if ok else '失败'}"
+            llm = self.get_llm(provider_id, api_key, "test", api_endpoint)
+            models = await llm.fetch_models()
+            return {
+                "success": True,
+                "message": f"获取到 {len(models)} 个模型",
+                "models": models,
+            }
         except Exception as e:
-            result["message"] = f"连接测试失败: {e}"
-        return result
+            logger.warning(f"获取模型列表失败: {e}")
+            return {
+                "success": False,
+                "message": f"获取模型列表失败: {str(e)}",
+                "models": [],
+            }
 
-    def switch_to_profile(self, profile) -> bool:
-        """切换到指定Profile配置"""
-        return self.switch_model(
-            provider=profile.provider,
-            api_key=profile.api_key,
-            model=profile.model,
-            api_endpoint=profile.api_endpoint,
-            temperature=profile.temperature,
-            max_tokens=profile.max_tokens,
-            top_p=profile.top_p,
-        )
-
-    # ── 已保存模型管理 ────────────────────────────────────
-
-    def get_saved_models(self) -> List[Dict[str, Any]]:
-        """获取所有已保存的模型配置（API 密钥脱敏）"""
-        result = []
-        for m in self._saved_models:
-            entry = dict(m)
-            key = entry.get("api_key", "")
-            if key and len(key) > 8:
-                entry["api_key"] = key[:4] + "****" + key[-4:]
-            elif key:
-                entry["api_key"] = "****"
-            result.append(entry)
-        return result
-
-    def add_saved_model(self, entry: Dict[str, Any]) -> str:
-        """添加一个已保存的模型配置，返回 id"""
-        if not self.is_real_api_key(entry.get("api_key")):
-            entry.pop("api_key", None)
-        entry["id"] = uuid.uuid4().hex[:12]
-        self._saved_models = [
-            m for m in self._saved_models
-            if not (
-                m.get("provider") == entry.get("provider")
-                and m.get("model") == entry.get("model")
-                and (m.get("api_endpoint") or "") == (entry.get("api_endpoint") or "")
+    async def test_tools(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> Dict[str, Any]:
+        """测试工具调用支持"""
+        try:
+            llm = self.get_llm(provider_id, api_key, model, api_endpoint)
+            # 简单的工具调用测试
+            tools = [{
+                "type": "function",
+                "function": {
+                    "name": "echo",
+                    "description": "返回输入的内容",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
+                    },
+                },
+            }]
+            resp = await llm.chat(
+                [{"role": "user", "content": "调用echo工具，输入text: hello"}],
+                tools=tools,
+                tool_choice="auto",
             )
-        ]
-        self._saved_models.append(entry)
-        self._save_config()
-        logger.info(f"已保存模型配置: {entry.get('provider')} / {entry.get('model')}")
-        return entry["id"]
-
-    def delete_saved_model(self, model_id: str) -> bool:
-        """删除已保存的模型配置"""
-        before = len(self._saved_models)
-        self._saved_models = [m for m in self._saved_models if m.get("id") != model_id]
-        if len(self._saved_models) < before:
-            self._save_config()
-            logger.info(f"已删除模型配置: {model_id}")
-            return True
-        return False
-
-    def get_saved_model_by_id(self, model_id: str) -> Optional[Dict[str, Any]]:
-        """根据 id 查找已保存的模型"""
-        for m in self._saved_models:
-            if m.get("id") == model_id:
-                return dict(m)
-        return None
-
-    # ── 状态查询 ──────────────────────────────────────────
-
-    def get_all_providers_status(self) -> list:
-        """获取所有提供商的当前状态"""
-        statuses = []
-        for p in get_available_providers():
-            info = get_provider_info(p) or {}
-            is_current = p == self._current_provider
-            has_key = bool(self.get_api_key(p))
-            statuses.append({
-                "id": p,
-                "name": info.get("name", p),
-                "icon": info.get("icon", ""),
-                "color": info.get("color", ""),
-                "is_current": is_current,
-                "has_api_key": has_key,
-                "model": self._current_model if is_current else None,
-            })
-        for provider in self._custom_providers:
-            p = provider.get("id")
-            is_current = p == self._current_provider
-            statuses.append({
-                "id": p,
-                "name": provider.get("name", p),
-                "icon": provider.get("icon", "⚙"),
-                "color": provider.get("color", "#7C3AED"),
-                "is_current": is_current,
-                "has_api_key": bool(provider.get("api_key")),
-                "model": self._current_model if is_current else provider.get("default_model"),
-                "custom": True,
-            })
-        return statuses
-
-
-# ── 全局单例 ──────────────────────────────────────────────
-
-_llm_manager_instance: Optional[LLMManager] = None
-
-
-def get_llm_manager(profile_id: str = "default") -> LLMManager:
-    """获取LLMManager实例，per-profile独立实例"""
-    global _llm_manager_instance
-    if profile_id == "default":
-        if _llm_manager_instance is None:
-            _llm_manager_instance = LLMManager(profile_id)
-        return _llm_manager_instance
-    # per-profile独立实例
-    return LLMManager(profile_id)
-
-
-def initialize_llm_with_config(provider: Optional[str] = None, api_key: Optional[str] = None):
-    """使用配置初始化 LLM"""
-    provider = provider or "tongyi"
-    mgr = get_llm_manager()
-    if mgr.switch_model(provider, api_key):
-        return mgr.get_current_llm()
-    return None
+            tool_calls = resp.tool_calls or []
+            return {
+                "success": True,
+                "message": f"工具调用测试完成，支持工具调用: {len(tool_calls) > 0}",
+                "tool_call_supported": len(tool_calls) > 0,
+                "tool_calls": [t.model_dump() for t in tool_calls],
+            }
+        except Exception as e:
+            logger.warning(f"测试工具调用失败: {e}")
+            return {
+                "success": False,
+                "message": f"测试工具调用失败: {str(e)}",
+                "tool_call_supported": False,
+            }

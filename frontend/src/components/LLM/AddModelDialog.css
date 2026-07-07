@@ -14,15 +14,15 @@
 .add-model-dialog {
   background: #fff;
   border-radius: 12px;
-  width: 90%;
-  max-width: 900px;
-  max-height: 85vh;
+  width: 95%;
+  max-width: 1200px;
+  max-height: 90vh;
   overflow-y: auto;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
 }
 
 .add-model-dialog-wide {
-  max-width: 1100px;
+  max-width: 1200px;
 }
 
 .add-model-header {
@@ -70,7 +70,39 @@
   padding: 24px;
 }
 
-/* 预设供应商网格布局，和截图完全一致 */
+/* 顶部分类标签，和cc完全一致 */
+.provider-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.provider-tab {
+  padding: 12px 24px;
+  background: #f5f5f5;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.provider-tab.active {
+  background: #165dff;
+  color: #fff;
+}
+
+.provider-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 16px;
+}
+
+/* 预设供应商网格，完全对齐cc的样式 */
 .provider-template-grid {
   display: flex;
   flex-wrap: wrap;
@@ -85,12 +117,12 @@
   padding: 10px 16px;
   background: #f8f9fa;
   border: 1px solid #e9ecef;
-  border-radius: 16px;
+  border-radius: 20px;
   cursor: pointer;
   transition: all 0.2s ease;
   font-size: 14px;
   position: relative;
-  min-width: 160px;
+  min-width: fit-content;
 }
 
 .provider-template:hover {
@@ -104,22 +136,23 @@
   color: #165dff;
 }
 
-.provider-template strong {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.provider-icon {
+  font-size: 16px;
+}
+
+.provider-name {
   white-space: nowrap;
 }
 
-/* 右上角黄色星标，和截图一致 */
-.provider-template .star-badge {
+/* 右上角星标，和cc一致 */
+.provider-template.starred .star-badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  font-size: 14px;
+  top: -6px;
+  right: -6px;
+  font-size: 12px;
   background: #fff;
   border-radius: 50%;
-  padding: 0 2px;
+  padding: 2px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 

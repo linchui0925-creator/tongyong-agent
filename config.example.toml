@@ -1,0 +1,108 @@
+# ==================================
+# TongYong Agent 全局配置文件
+# 可以直接复制为 config.toml 修改使用
+# ==================================
+
+# 基础配置
+[base]
+model = "gpt-4o"
+model_provider = "openai"
+model_reasoning_effort = "medium"
+disable_response_storage = true
+personality = "pragmatic"
+
+# 供应商配置，和预设完全对齐，配置后无需前端手动添加
+[model_providers]
+# 1. OpenAI
+[model_providers.openai]
+name = "OpenAI Official"
+base_url = "https://api.openai.com/v1"
+api_key = "sk-xxx" # 替换为你的API Key
+wire_api = "responses"
+requires_openai_auth = true
+
+# 2. 胜算云
+[model_providers.sheng_suan_yun]
+name = "胜算云"
+base_url = "https://api.shengsuanyun.com/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 3. PatewayAI
+[model_providers.patewayai]
+name = "PatewayAI"
+base_url = "https://api.patewayai.com/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 4. 火山Agentplan
+[model_providers.volcengine_agentplan]
+name = "火山Agentplan"
+base_url = "https://ark.cn-beijing.volces.com/api/plan/v3"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 5. BytePlus
+[model_providers.byteplus]
+name = "BytePlus"
+base_url = "https://api.byteplus.com/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 6. DouBaoSeed
+[model_providers.doubaoseed]
+name = "DouBaoSeed"
+base_url = "https://api.doubao.com/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 7. CCSub
+[model_providers.ccsub]
+name = "CCSub"
+base_url = "https://api.ccsub.com/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 8. Unity2.ai
+[model_providers.unity2ai]
+name = "Unity2.ai"
+base_url = "https://api.unity2.ai/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 9. SiliconFlow
+[model_providers.siliconflow]
+name = "SiliconFlow"
+base_url = "https://api.siliconflow.cn/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 10. SiliconFlow en
+[model_providers.siliconflow_en]
+name = "SiliconFlow en"
+base_url = "https://api.siliconflow.com/v1"
+api_key = "xxx"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 更多供应商可以按照上面的格式添加，所有预设都支持
+[marketplaces]
+[marketplaces.openai_bundled]
+last_updated = "2026-05-08T00:29:37Z"
+source_type = "local"
+source = "./.codex/.tmp/bundled-marketplaces/openai-bundled"
+
+[marketplaces.openai_primary_runtime]
+last_updated = "2026-05-08T01:45:16Z"
+source_type = "local"
+source = "~/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
+
+[projects]

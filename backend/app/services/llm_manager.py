@@ -280,7 +280,81 @@ class LLMManager:
         return item
 
     def list_custom_providers(self) -> List[Dict[str, Any]]:
-        return [self._public_custom_provider(p) for p in self._custom_providers]
+        import os
+        builtin_providers = []
+        # EdgeFn GLM
+        if os.getenv('EDGEFN_API_KEY'):
+            builtin_providers.append({
+                'id': 'edgefn',
+                'name': 'EdgeFn GLM-5.2',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.edgefn.net/v1',
+                'default_model': 'GLM-5.2',
+                'models': ['GLM-5.2', 'GLM-4.5V'],
+                'icon': '🌐',
+                'color': '#165DFF',
+                'enabled': True,
+                'has_api_key': True,
+            })
+        # DeepSeek
+        if os.getenv('DEEPSEEK_API_KEY'):
+            builtin_providers.append({
+                'id': 'deepseek',
+                'name': 'DeepSeek V3',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.deepseek.com/v1',
+                'default_model': 'deepseek-chat',
+                'models': ['deepseek-chat', 'deepseek-coder'],
+                'icon': '🔍',
+                'color': '#2563EB',
+                'enabled': True,
+                'has_api_key': True,
+            })
+        # 豆包Doubao
+        if os.getenv('DOUBAO_API_KEY'):
+            builtin_providers.append({
+                'id': 'doubao',
+                'name': '字节豆包',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://ark.cn-beijing.volces.com/api/plan/v1',
+                'default_model': 'doubao-pro-32k',
+                'models': ['doubao-pro-32k', 'doubao-lite-128k'],
+                'icon': '📦',
+                'color': '#22C55E',
+                'enabled': True,
+                'has_api_key': True,
+            })
+        # OpenAI
+        if os.getenv('OPENAI_API_KEY'):
+            builtin_providers.append({
+                'id': 'openai',
+                'name': 'OpenAI GPT',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://api.openai.com/v1',
+                'default_model': 'gpt-4o',
+                'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
+                'icon': '🤖',
+                'color': '#10A37F',
+                'enabled': True,
+                'has_api_key': True,
+            })
+        # 通义千问
+        if os.getenv('DASHSCOPE_API_KEY'):
+            builtin_providers.append({
+                'id': 'qwen',
+                'name': '阿里通义千问',
+                'protocol': 'openai_compatible',
+                'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                'default_model': 'qwen-max',
+                'models': ['qwen-max', 'qwen-plus', 'qwen-long'],
+                'icon': '☁️',
+                'color': '#FF6A00',
+                'enabled': True,
+                'has_api_key': True,
+            })
+        # 把内置供应商和自定义供应商合并返回
+        return builtin_providers + [self._public_custom_provider(p) for p in self._custom_providers]
+
 
     def get_custom_provider(self, provider_id: str) -> Optional[Dict[str, Any]]:
         for provider in self._custom_providers:

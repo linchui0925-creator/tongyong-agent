@@ -565,7 +565,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
     const request_config = parseJsonObject(requestJson, '高级配置');
     const models = modelLinesToEntries(modelsText);
     return {
-      id,
+      id: id || undefined,
       name: providerName.trim(),
       protocol: 'openai_compatible',
       base_url: baseUrl.trim().replace(/\/$/, ''),
@@ -589,7 +589,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
       if (res.success) {
         setTestStatus('success');
         setStatusMessage(`获取成功，共 ${res.models?.length || 0} 个模型，已自动填充到模型列表`);
-        setModelsText(res.models?.map(m => m.id).join('\n') || modelsText);
+        setModelsText(Array.isArray(res.models) ? (res.models as any[]).map((m: any) => typeof m === "string" ? m : m.id).join('\n') : modelsText);
       } else {
         setTestStatus('fail');
         setStatusMessage(`获取失败: ${res.message}`);
@@ -645,14 +645,14 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
     setTestStatus('testing');
     setStatusMessage('正在保存并切换...');
     try {
-      const profile = buildProfile(savedProviderId);
+      const profile = buildProfile(savedProviderId || undefined);
       const saved = await saveProviderProfile(profile);
       if (!saved.success) {
         setTestStatus('fail');
         setStatusMessage(`保存失败: ${saved.message}`);
         return;
       }
-      const res = await switchModel(saved.provider.id!, apiKey.trim() || undefined, defaultModel.trim(), baseUrl.trim());
+      const res = await switchModel(saved.provider.id!, apiKey.trim() || undefined, defaultModel.trim() || undefined, baseUrl.trim() || undefined);
       if (!res.success) {
         setTestStatus('fail');
         setStatusMessage(`切换失败: ${res.message}`);

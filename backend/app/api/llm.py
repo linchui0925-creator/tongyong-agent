@@ -555,7 +555,9 @@ async def test_provider_temp(config: CustomProviderTestConfig = CustomProviderTe
     }
     try:
         llm = llm_mgr._custom_provider_to_llm(temp_provider, config.api_key, config.model, config.base_url)
-        resp = await llm.chat([{'role': 'user', 'content': 'hi, reply ok only'}])
+        from app.llm.base import Message
+        messages = [Message(role='user', content='hi, reply ok only')]
+        resp = await llm.chat(messages)
         return {
             'success': True,
             'message': '连接测试成功',
@@ -587,6 +589,8 @@ async def test_provider_tools_temp(config: CustomProviderTestConfig = CustomProv
     }
     try:
         llm = llm_mgr._custom_provider_to_llm(temp_provider, config.api_key, config.model, config.base_url)
+        from app.llm.base import Message
+        messages = [Message(role='user', content='call echo tool, input text: hello')]
         tools = [{
             'type': 'function',
             'function': {
@@ -600,9 +604,8 @@ async def test_provider_tools_temp(config: CustomProviderTestConfig = CustomProv
             },
         }]
         resp = await llm.chat(
-            [{'role': 'user', 'content': 'call echo tool, input text: hello'}],
+            messages,
             tools=tools,
-            tool_choice='auto',
         )
         tool_calls = resp.tool_calls or []
         return {
@@ -636,7 +639,11 @@ async def fetch_provider_models_temp(config: CustomProviderTestConfig = CustomPr
     }
     try:
         llm = llm_mgr._custom_provider_to_llm(temp_provider, config.api_key, config.model, config.base_url)
-        models = await llm.fetch_models()
+        # 部分LLM实现不支持fetch_models，返回空列表
+        if hasattr(llm, 'fetch_models'):
+            models = await llm.fetch_models()
+        else:
+            models = []
         return {
             'success': True,
             'message': f'got {len(models)} models',

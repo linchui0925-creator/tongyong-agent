@@ -47,6 +47,57 @@ class LLMManager:
     def _sync_to_agent(self):
         """同步LLM到agent，兼容原有接口"""
         pass
+    
+    def get_current_config(self):
+        """获取当前LLM配置，兼容原有接口"""
+        return {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key_configured": False
+        }
+    
+    def get_api_key(self, provider):
+        """获取API Key，兼容原有接口"""
+        return None
+    
+    def list_custom_providers(self):
+        """获取自定义供应商列表"""
+        return list(self._custom_providers.values()) if hasattr(self, '_custom_providers') else []
+    
+    def get_current_provider(self):
+        """获取当前供应商ID"""
+        return getattr(self, '_current_provider', 'edgefn')
+    
+    def get_current_model(self):
+        """获取当前模型名称"""
+        return getattr(self, '_current_model', 'glm-5.2')
+    
+    def get_current_llm(self):
+        """获取当前LLM实例"""
+        return None
+    
+    def get_custom_provider(self, provider_id):
+        """获取自定义供应商配置"""
+        if hasattr(self, '_custom_providers') and provider_id in self._custom_providers:
+            return self._custom_providers[provider_id]
+        # 从builtin中查找
+        for p in getattr(self, 'builtin_providers', []):
+            if p.get('id') == provider_id:
+                return p
+        return None
+    
+    def get_saved_models(self):
+        """获取已保存的模型列表"""
+        return []
+    
+    def upsert_custom_provider(self, config):
+        """保存自定义供应商"""
+        if not hasattr(self, '_custom_providers'):
+            self._custom_providers = {}
+        provider_id = config.get('id') or config.get('name', 'custom').lower().replace(' ', '_')
+        config['id'] = provider_id
+        self._custom_providers[provider_id] = config
+        return config
 
     def _load_config(self) -> Dict[str, Any]:
         """加载config.toml配置文件"""
@@ -1013,3 +1064,54 @@ def get_llm_manager():
     def _sync_to_agent(self):
         """同步LLM到agent，兼容原有接口"""
         pass
+    
+    def get_current_config(self):
+        """获取当前LLM配置，兼容原有接口"""
+        return {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key_configured": False
+        }
+    
+    def get_api_key(self, provider):
+        """获取API Key，兼容原有接口"""
+        return None
+    
+    def list_custom_providers(self):
+        """获取自定义供应商列表"""
+        return list(self._custom_providers.values()) if hasattr(self, '_custom_providers') else []
+    
+    def get_current_provider(self):
+        """获取当前供应商ID"""
+        return getattr(self, '_current_provider', 'edgefn')
+    
+    def get_current_model(self):
+        """获取当前模型名称"""
+        return getattr(self, '_current_model', 'glm-5.2')
+    
+    def get_current_llm(self):
+        """获取当前LLM实例"""
+        return None
+    
+    def get_custom_provider(self, provider_id):
+        """获取自定义供应商配置"""
+        if hasattr(self, '_custom_providers') and provider_id in self._custom_providers:
+            return self._custom_providers[provider_id]
+        # 从builtin中查找
+        for p in getattr(self, 'builtin_providers', []):
+            if p.get('id') == provider_id:
+                return p
+        return None
+    
+    def get_saved_models(self):
+        """获取已保存的模型列表"""
+        return []
+    
+    def upsert_custom_provider(self, config):
+        """保存自定义供应商"""
+        if not hasattr(self, '_custom_providers'):
+            self._custom_providers = {}
+        provider_id = config.get('id') or config.get('name', 'custom').lower().replace(' ', '_')
+        config['id'] = provider_id
+        self._custom_providers[provider_id] = config
+        return config

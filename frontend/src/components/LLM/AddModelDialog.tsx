@@ -32,7 +32,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'sheng_suan_yun',
     name: '🟣 胜算云',
-    endpoint: 'https://api.shengsuanyun.com/v1',
+    endpoint: 'https://router.shengsuanyun.com/api',
     model: 'sheng-suan-7b',
     notes: '胜算云模型接口。',
     star: true,
@@ -48,7 +48,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'volcengine_agentplan',
     name: '🔵 火山Agentplan',
-    endpoint: 'https://ark.cn-beijing.volces.com/api/plan/v3',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3',
     model: 'doubao-pro-32k',
     notes: '火山引擎AgentPlan/豆包兼容接口。',
     star: true,
@@ -64,7 +64,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'doubaoseed',
     name: '🟣 DouBaoSeed',
-    endpoint: 'https://api.doubao.com/v1',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3',
     model: 'doubao-seed-128k',
     notes: '字节跳动豆包Seed系列模型。',
     star: true,
@@ -104,7 +104,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'dmxapi',
     name: '⚪ DMXAPI',
-    endpoint: 'https://api.dmxapi.com/v1',
+    endpoint: 'https://www.dmxapi.cn',
     model: 'dmx-v1',
     notes: 'DMXAPI模型接口。',
     star: true,
@@ -112,7 +112,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'packycode',
     name: '⚫ PackyCode',
-    endpoint: 'https://api.packycode.com/v1',
+    endpoint: 'https://www.packyapi.com',
     model: 'packy-coder-v1',
     notes: 'PackyCode代码大模型接口。',
     star: true,
@@ -176,7 +176,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'cubence',
     name: '⬛ Cubence',
-    endpoint: 'https://api.cubence.com/v1',
+    endpoint: 'https://api.cubence.com',
     model: 'cubence-v1',
     notes: 'Cubence模型接口。',
     star: true,
@@ -184,7 +184,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'aigocode',
     name: '🟣 AIGoCode',
-    endpoint: 'https://api.aigocode.com/v1',
+    endpoint: 'https://api.aigocode.com',
     model: 'aigo-coder-v1',
     notes: 'AIGoCode代码大模型接口。',
     star: true,
@@ -208,7 +208,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'crazyrouter',
     name: '⚪ CrazyRouter',
-    endpoint: 'https://api.crazyrouter.ai/v1',
+    endpoint: 'https://crazyrouter.com/v1',
     model: 'crazy-v1',
     notes: 'CrazyRouter大模型路由接口。',
     star: true,
@@ -216,7 +216,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'sssaicode',
     name: '⬛ SSSAiCode',
-    endpoint: 'https://api.sssaicode.com/v1',
+    endpoint: 'https://node-hk.sssaicode.com/api',
     model: 'sssaicode-v1',
     notes: 'SSSAiCode代码模型接口。',
     star: true,
@@ -240,7 +240,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'micu',
     name: '🔵 Micu',
-    endpoint: 'https://api.micu.ai/v1',
+    endpoint: 'https://www.openclaudecode.cn',
     model: 'micu-v1',
     notes: 'Micu大模型接口。',
     star: true,
@@ -248,7 +248,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'ctok',
     name: '🔵 CTok.ai',
-    endpoint: 'https://api.ctok.ai/v1',
+    endpoint: 'https://api.ctok.ai',
     model: 'ctok-v1',
     notes: 'CTok.ai模型接口。',
     star: true,
@@ -282,7 +282,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'zhipu_en',
     name: '🔷 Zhipu GLM en',
-    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    endpoint: 'https://api.z.ai/v1',
     model: 'glm-4-air',
     notes: '智谱GLM英文模型系列。',
     star: false,
@@ -290,7 +290,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'qianfan',
     name: '🐾 百度千帆',
-    endpoint: 'https://qianfan.baidubce.com/v2',
+    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     model: 'ernie-3.5-8k',
     notes: '百度智能云千帆大模型平台兼容接口。',
     star: false,
@@ -314,7 +314,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'kimi_coding',
     name: '🟣 Kimi For Coding',
-    endpoint: 'https://api.moonshot.cn/v1',
+    endpoint: 'https://api.kimi.com/v1',
     model: 'moonshot-coder-v1',
     notes: 'Kimi代码专用模型。',
     star: false,
@@ -322,7 +322,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'stepfun',
     name: '🔹 StepFun',
-    endpoint: 'https://api.stepfun.com/v1',
+    endpoint: 'https://api.stepfun.com/step_plan/v1',
     model: 'step-1-8k',
     notes: '阶跃星辰官方中文接口。',
     star: false,
@@ -330,7 +330,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'stepfun_en',
     name: '🔹 StepFun en',
-    endpoint: 'https://api.stepfun.com/v1',
+    endpoint: 'https://api.stepfun.ai/step_plan/v1',
     model: 'step-1-32k',
     notes: '阶跃星辰英文模型系列。',
     star: false,
@@ -338,7 +338,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'modelscope',
     name: '🔵 ModelScope',
-    endpoint: 'https://api.modelscope.cn/v1',
+    endpoint: 'https://api-inference.modelscope.cn/v1',
     model: 'modelscope-v1',
     notes: '阿里达摩院ModelScope平台接口。',
     star: false,
@@ -346,7 +346,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'longcat',
     name: '🟢 Longcat',
-    endpoint: 'https://api.longcat.ai/v1',
+    endpoint: 'https://api.longcat.chat/v1',
     model: 'longcat-7b',
     notes: 'Longcat长上下文模型。',
     star: false,
@@ -354,7 +354,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'minimax',
     name: '🎙️ MiniMax',
-    endpoint: 'https://api.minimax.chat/v1',
+    endpoint: 'https://api.minimaxi.com/v1',
     model: 'minimax-chat-01',
     notes: 'MiniMax官方中文接口，支持abab大模型系列。',
     star: false,
@@ -362,7 +362,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'minimax_en',
     name: '🎙️ MiniMax en',
-    endpoint: 'https://api.minimax.chat/v1',
+    endpoint: 'https://api.minimax.io/v1',
     model: 'minimax-abab6.5',
     notes: 'MiniMax英文模型系列。',
     star: false,
@@ -370,7 +370,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'bailing',
     name: '⚪ BaiLing',
-    endpoint: 'https://api.bailing.ai/v1',
+    endpoint: 'https://api.tbox.cn/v1',
     model: 'bailing-v1',
     notes: '百聆大模型接口。',
     star: false,
@@ -378,7 +378,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'xiaomi_mimo',
     name: '➖ Xiaomi MiMo',
-    endpoint: 'https://api.mi.ai/v1',
+    endpoint: 'https://api.xiaomimimo.com/v1',
     model: 'mimo-v1',
     notes: '小米MiMo大模型系列。',
     star: false,
@@ -394,7 +394,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'novita_ai',
     name: '▲ Novita AI',
-    endpoint: 'https://api.novita.ai/v3/openai',
+    endpoint: 'https://api.novita.ai/openai',
     model: 'novita-v1',
     notes: 'Novita AI大模型接口。',
     star: false,
@@ -402,7 +402,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'nvidia',
     name: '🟢 Nvidia',
-    endpoint: 'https://api.nvcf.nvidia.com/v2',
+    endpoint: 'https://integrate.api.nvidia.com/v1',
     model: 'nvidia-llama-3',
     notes: 'Nvidia NIM模型接口。',
     star: false,
@@ -410,7 +410,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'aihubmix',
     name: '⚪ AiHubMix',
-    endpoint: 'https://api.aihubmix.com/v1',
+    endpoint: 'https://aihubmix.com',
     model: 'aihubmix-v1',
     notes: 'AiHubMix聚合模型接口。',
     star: false,
@@ -426,7 +426,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'eflowcode',
     name: '⚪ E-FlowCode',
-    endpoint: 'https://api.eflowcode.com/v1',
+    endpoint: 'https://e-flowcode.cc/v1',
     model: 'eflow-coder-v1',
     notes: 'E-FlowCode代码模型接口。',
     star: false,
@@ -434,7 +434,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'pipellm',
     name: '⬛ PIPELLM',
-    endpoint: 'https://api.pipellm.com/v1',
+    endpoint: 'https://cc-api.pipellm.ai',
     model: 'pipe-v1',
     notes: 'PIPELLM流水线大模型接口。',
     star: false,

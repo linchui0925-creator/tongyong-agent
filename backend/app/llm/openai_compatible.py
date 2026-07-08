@@ -191,10 +191,78 @@ class OpenAICompatibleLLM(BaseLLM):
         for attempt in range(self.MAX_RETRIES):
             try:
                 async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
+                    # 自动检测API格式（和CC逻辑完全一致）
+                    request_config = getattr(self, 'request_config', {})
+                    api_format = self._detect_api_format(self.api_base, request_config)
+                    
+                    if api_format == 'anthropic':
+                        # Anthropic Messages API格式
+                        # 转换消息格式
+                        system_prompt = ""
+                        anthropic_messages = []
+                        for msg in openai_messages:
+                            if msg["role"] == "system":
+                                system_prompt += msg["content"] + "\n\n"
+                            else:
+                                anthropic_messages.append({
+                                    "role": "user" if msg["role"] == "user" else "assistant",
+                                    "content": msg["content"]
+                                })
+                        
+                        anthropic_body = {
+                            "model": self.model,
+                            "messages": anthropic_messages,
+                            "temperature": getattr(self, "temperature", 0.7),
+                            "max_tokens": self._request_max_tokens(),
+                        }
+                        if system_prompt:
+                            anthropic_body["system"] = system_prompt.strip()
+                        if tools:
+                            anthropic_body["tools"] = [
+                                {
+                                    "name": t["function"]["name"],
+                                    "description": t["function"].get("description", ""),
+                                    "input_schema": t["function"].get("parameters", {}),
+                                } for t in tools
+                            ]
+                        endpoint = f"{self.api_base}/v1/messages"
+                        if str(self.api_base).endswith('/anthropic'):
+                            endpoint = f"{self.api_base}/v1/messages"
+                        request_body = anthropic_body
+                    
+                    elif api_format == 'openai_responses':
+                        # OpenAI Responses API格式
+                        responses_body = {
+                            "model": self.model,
+                            "input": openai_messages,
+                            "temperature": getattr(self, "temperature", 0.7),
+                            "max_output_tokens": self._request_max_tokens(),
+                        }
+                        if tools:
+                            responses_body["tools"] = [
+                                {
+                                    "type": "function",
+                                    "name": t["function"]["name"],
+                                    "description": t["function"].get("description", ""),
+                                    "parameters": t["function"].get("parameters", {}),
+                                } for t in tools
+                            ]
+                        endpoint = f"{self.api_base}/responses"
+                        if str(self.api_base).endswith('/responses'):
+                            endpoint = self.api_base
+                        request_body = responses_body
+                    
+                    else:
+                        # 默认OpenAI Chat Completions格式
+                        endpoint = f"{self.api_base}/chat/completions"
+                        if str(self.api_base).endswith('/chat/completions'):
+                            endpoint = self.api_base
+                        request_body = body
+                    
                     resp = await client.post(
-                        f"{self.api_base}/chat/completions",
+                        endpoint,
                         headers=self._headers(),
-                        json=body,
+                        json=request_body,
                     )
                     resp.raise_for_status()
                     result = self._decode_json_response(resp)
@@ -295,8 +363,92 @@ class OpenAICompatibleLLM(BaseLLM):
         """嵌入模型名称，可由子类覆盖"""
         return "text-embedding-ada-002"
 
+    def _parse_responses_api(self, result: Dict) -> LLMResponse:
+        """解析OpenAI Responses API (/v1/responses) 格式响应"""
+        content = ""
+        tool_calls = []
+        
+        # Responses API输出在output数组里
+        for item in result.get("output", []):
+            if item.get("type") == "message":
+                # 消息内容
+                for content_part in item.get("content", []):
+                    if content_part.get("type") == "output_text":
+                        content += content_part.get("text", "")
+            elif item.get("type") == "function_call":
+                # 工具调用
+                args = {}
+                try:
+                    args = json.loads(item.get("arguments", "{}"))
+                except json.JSONDecodeError:
+                    args = {"_raw": item.get("arguments", "")}
+                tool_calls.append(ToolCallResult(
+                    tool_call_id=item.get("call_id", ""),
+                    tool_name=item.get("name", ""),
+                    arguments=args,
+                ))
+        
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            usage=result.get("usage"),
+        )
+    
+    def _parse_anthropic_api(self, result: Dict) -> LLMResponse:
+        """解析Anthropic Messages API格式响应"""
+        content = ""
+        tool_calls = []
+        
+        # Anthropic格式: content是数组，包含text和tool_use
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                content += block.get("text", "")
+            elif block.get("type") == "tool_use":
+                args = block.get("input", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {"_raw": args}
+                tool_calls.append(ToolCallResult(
+                    tool_call_id=block.get("id", ""),
+                    tool_name=block.get("name", ""),
+                    arguments=args,
+                ))
+        
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            usage=result.get("usage"),
+        )
+    
+    def _detect_api_format(self, base_url: str, request_config: Dict = None) -> str:
+        """自动检测API格式，和CC逻辑完全一致"""
+        # 优先从request_config读取指定格式
+        if request_config and request_config.get('api_format'):
+            return request_config['api_format']
+        
+        url = str(base_url).lower()
+        # URL包含/anthropic -> Anthropic格式（不管在哪个位置）
+        if 'anthropic' in url:
+            return 'anthropic'
+        # URL包含/responses -> OpenAI Responses格式
+        if '/responses' in url:
+            return 'openai_responses'
+        # 默认Chat Completions格式
+        return 'chat_completions'
+
     def _parse_response(self, result: Dict) -> LLMResponse:
-        """解析 OpenAI 格式的响应"""
+        """解析响应，自动兼容三种格式：OpenAI Chat Completions / OpenAI Responses / Anthropic Messages"""
+        # 检测Anthropic格式
+        content_arr = result.get("content")
+        if isinstance(content_arr, list) and len(content_arr) > 0 and isinstance(content_arr[0], dict) and content_arr[0].get("type") in ["text", "tool_use"]:
+            return self._parse_anthropic_api(result)
+        # 检测OpenAI Responses API格式
+        if "output" in result and "choices" not in result:
+            return self._parse_responses_api(result)
+        
+        # 默认OpenAI Chat Completions格式
         choices = result.get("choices", [])
         if not choices:
             raise LLMError("响应格式错误", "INVALID_RESPONSE", result)

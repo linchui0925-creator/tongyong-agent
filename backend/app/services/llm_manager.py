@@ -951,12 +951,13 @@ class LLMManager:
         base_url = api_endpoint or provider.get('base_url', 'https://api.openai.com/v1')
         final_api_key = api_key or provider.get('api_key') or ''
         final_model = model or provider.get('default_model', 'gpt-4o-mini')
-        # 目前全部兼容OpenAI协议
+        # 支持OpenAI/Responses/Anthropic三种API格式，自动检测
         llm = OpenAICompatibleLLM(
             api_key=final_api_key,
             model=final_model,
         )
         llm.api_base = base_url
+        llm.request_config = provider.get('request_config', {})
         return llm
 
     def get_llm(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:

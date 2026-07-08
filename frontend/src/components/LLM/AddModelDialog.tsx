@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   fetchProviderModels,
+  getBuiltinProviders,
   saveProviderProfile,
   switchModel,
   testProviderProfile,
@@ -487,10 +488,34 @@ function modelLinesToEntries(text: string): ProviderModelEntry[] {
 }
 
 export default function AddModelDialog({ open, onClose, initialProfile }: AddModelDialogProps) {
+  const [builtinProviders, setBuiltinProviders] = useState(TEMPLATE_OPTIONS);
   const [template, setTemplate] = useState(TEMPLATE_OPTIONS[0].id);
+  
+  // 从后端加载最新预设供应商配置，确保和后端完全对齐
+  useEffect(() => {
+    getBuiltinProviders()
+      .then(res => {
+        if (res.providers && res.providers.length > 0) {
+          // 转换后端格式为前端TEMPLATE_OPTIONS格式
+          const templates = res.providers.filter(p => p.id).map(p => ({
+            id: p.id as string,
+            name: p.name,
+            endpoint: p.base_url,
+            model: p.default_model || 'gpt-4o-mini',
+            notes: p.notes || '',
+            star: !!(p as any).star,
+          }));
+          setBuiltinProviders(templates);
+        }
+      })
+      .catch(() => {
+        // 加载失败使用本地默认
+      });
+  }, []);
+  
   const selectedTemplate = useMemo(
-    () => TEMPLATE_OPTIONS.find(t => t.id === template) || TEMPLATE_OPTIONS[0],
-    [template],
+    () => builtinProviders.find(t => t.id === template) || builtinProviders[0],
+    [template, builtinProviders],
   );
   const [providerName, setProviderName] = useState('自定义供应商');
   const [baseUrl, setBaseUrl] = useState(selectedTemplate.endpoint);
@@ -689,7 +714,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
 
           <div className="provider-section-title">预设供应商</div>
           <div className="provider-template-grid">
-            {TEMPLATE_OPTIONS.map(item => (
+            {builtinProviders.map(item => (
               <button
                 key={item.id}
                 className={`provider-template ${template === item.id ? 'active' : ''} ${item.star ? 'starred' : ''}`}

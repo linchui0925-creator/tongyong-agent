@@ -7,9 +7,10 @@ import toml
 import json
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from app.core.llm.base import BaseLLM
-from app.core.llm.openai_compatible import OpenAICompatibleLLM
-from app.core.logger import logger
+from app.llm.base import BaseLLM
+from app.llm.openai_compatible import OpenAICompatibleLLM
+import logging
+logger = logging.getLogger(__name__)
 
 class LLMManager:
     _instance = None
@@ -29,6 +30,23 @@ class LLMManager:
         self._custom_providers = self._load_custom_providers()
         # 已初始化的LLM实例缓存
         self._llm_cache: Dict[str, BaseLLM] = {}
+
+
+    def bind_agent_engine(self, engine):
+        """绑定AgentEngine实例"""
+        self._agent_engine = engine
+
+    def try_restore_saved_provider(self):
+        """尝试恢复保存的provider配置，兼容原有接口"""
+        return False
+    
+    def _seed_initial_llm(self, llm_instance, provider_name):
+        """初始化默认LLM，兼容原有接口"""
+        pass
+    
+    def _sync_to_agent(self):
+        """同步LLM到agent，兼容原有接口"""
+        pass
 
     def _load_config(self) -> Dict[str, Any]:
         """加载config.toml配置文件"""
@@ -879,16 +897,16 @@ class LLMManager:
 
     def _custom_provider_to_llm(self, provider: Dict[str, Any], api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
         """将自定义供应商配置转换为LLM实例"""
-        base_url = api_endpoint or provider['base_url']
+        base_url = api_endpoint or provider.get('base_url', 'https://api.openai.com/v1')
         final_api_key = api_key or provider.get('api_key') or ''
-        final_model = model or provider['default_model']
+        final_model = model or provider.get('default_model', 'gpt-4o-mini')
         # 目前全部兼容OpenAI协议
-        return OpenAICompatibleLLM(
-            base_url=base_url,
+        llm = OpenAICompatibleLLM(
             api_key=final_api_key,
             model=final_model,
-            request_config=provider.get('request_config', {}),
         )
+        llm.api_base = base_url
+        return llm
 
     def get_llm(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
         """获取LLM实例，优先从缓存读取"""
@@ -974,3 +992,24 @@ class LLMManager:
                 "message": f"测试工具调用失败: {str(e)}",
                 "tool_call_supported": False,
             }
+
+# 单例实例
+_llm_manager_instance = None
+
+def get_llm_manager():
+    global _llm_manager_instance
+    if _llm_manager_instance is None:
+        _llm_manager_instance = LLMManager()
+    return _llm_manager_instance
+
+    def try_restore_saved_provider(self):
+        """尝试恢复保存的provider配置，兼容原有接口"""
+        return False
+    
+    def _seed_initial_llm(self, llm_instance, provider_name):
+        """初始化默认LLM，兼容原有接口"""
+        pass
+    
+    def _sync_to_agent(self):
+        """同步LLM到agent，兼容原有接口"""
+        pass

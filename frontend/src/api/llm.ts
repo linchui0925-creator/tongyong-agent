@@ -233,6 +233,15 @@ export async function fetchProviderModels(providerId: string, body: {
     base_url?: string;
     request_config?: Record<string, unknown>;
 }): Promise<{success: boolean; models: string[]; message: string}> {
+    // 临时测试走通用接口，不需要提前保存
+    if (providerId === 'temp' || !providerId) {
+        const response = await fetch(`${API_BASE}/provider-fetch-models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return response.json();
+    }
     const response = await fetch(`${API_BASE}/provider-profiles/${providerId}/models/fetch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,6 +256,15 @@ export async function testProviderProfile(providerId: string, body: {
     base_url?: string;
     request_config?: Record<string, unknown>;
 }): Promise<TestResult> {
+    // 临时测试走通用接口，不需要提前保存
+    if (providerId === 'temp' || !providerId) {
+        const response = await fetch(`${API_BASE}/provider-test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return response.json();
+    }
     const response = await fetch(`${API_BASE}/provider-profiles/${providerId}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -260,11 +278,26 @@ export async function testProviderTools(providerId: string, body: {
     model?: string;
     base_url?: string;
     request_config?: Record<string, unknown>;
-}): Promise<{success: boolean; message: string; tool_call_mode?: string; tool_calls?: unknown[]}> {
+}): Promise<{success: boolean; message: string; tool_call_mode?: string; tool_calls?: unknown[]; tool_call_supported?: boolean}> {
+    // 临时测试走通用接口，不需要提前保存
+    if (providerId === 'temp' || !providerId) {
+        const response = await fetch(`${API_BASE}/provider-test-tools`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return response.json();
+    }
     const response = await fetch(`${API_BASE}/provider-profiles/${providerId}/test-tools`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
+    return response.json();
+}
+
+export async function getBuiltinProviders(): Promise<{providers: CustomProviderProfile[]}> {
+    const response = await fetch(`${API_BASE}/builtin-providers`);
+    if (!response.ok) throw new Error('获取内置预设供应商失败');
     return response.json();
 }

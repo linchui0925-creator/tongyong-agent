@@ -170,8 +170,7 @@ agent_engine = app.extra.get("agent_engine")
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
-    logger.error(f'全局异常: {exc}
-{traceback.format_exc()}')
+    logger.error(f'全局异常: {exc}\n{traceback.format_exc()}')
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=500,

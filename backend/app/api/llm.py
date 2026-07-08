@@ -216,6 +216,11 @@ async def list_provider_profiles():
     """获取用户自定义供应商配置（API Key 脱敏）"""
     return {"providers": llm_manager.list_custom_providers()}
 
+@router.get("/builtin-providers")
+async def list_builtin_providers():
+    """获取内置预设供应商列表（和CC 1:1对齐，共55+个厂商）"""
+    return {"providers": llm_manager.builtin_providers}
+
 
 @router.post("/provider-profiles")
 async def create_provider_profile(config: CustomProviderConfig):
@@ -529,3 +534,117 @@ async def get_provider_models(provider: str):
         "models": PROVIDER_MODELS.get(provider, []),
         "has_api_key": bool(llm_manager.get_api_key(provider)),
     }
+
+# 临时测试接口，不需要提前保存供应商，直接传配置测试
+@router.post('/provider-test')
+async def test_provider_temp(config: CustomProviderTestConfig = CustomProviderTestConfig()):
+    """临时测试自定义供应商连接，不需要提前保存"""
+    from app.services.llm_manager import LLMManager
+    llm_mgr = LLMManager()
+    # 构造临时provider配置
+    temp_provider = {
+        'id': 'temp',
+        'name': '临时测试',
+        'protocol': 'openai_compatible',
+        'base_url': config.base_url or 'https://api.openai.com/v1',
+        'default_model': config.model or 'gpt-4o-mini',
+        'api_key': config.api_key or '',
+        'models': [config.model] if config.model else [],
+        'request_config': config.request_config or {},
+        'has_api_key': bool(config.api_key),
+    }
+    try:
+        llm = llm_mgr._custom_provider_to_llm(temp_provider, config.api_key, config.model, config.base_url)
+        resp = await llm.chat([{'role': 'user', 'content': 'hi, reply ok only'}])
+        return {
+            'success': True,
+            'message': '连接测试成功',
+            'response': resp.content,
+        }
+    except Exception as e:
+        import traceback
+        logger.warning(f'temp test connection failed: {e}\n{traceback.format_exc()}')
+        return {
+            'success': False,
+            'message': f'连接测试失败: {str(e)}',
+        }
+
+@router.post('/provider-test-tools')
+async def test_provider_tools_temp(config: CustomProviderTestConfig = CustomProviderTestConfig()):
+    """临时测试自定义供应商工具调用，不需要提前保存"""
+    from app.services.llm_manager import LLMManager
+    llm_mgr = LLMManager()
+    temp_provider = {
+        'id': 'temp',
+        'name': '临时测试',
+        'protocol': 'openai_compatible',
+        'base_url': config.base_url or 'https://api.openai.com/v1',
+        'default_model': config.model or 'gpt-4o-mini',
+        'api_key': config.api_key or '',
+        'models': [config.model] if config.model else [],
+        'request_config': config.request_config or {},
+        'has_api_key': bool(config.api_key),
+    }
+    try:
+        llm = llm_mgr._custom_provider_to_llm(temp_provider, config.api_key, config.model, config.base_url)
+        tools = [{
+            'type': 'function',
+            'function': {
+                'name': 'echo',
+                'description': 'echo input content',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'text': {'type': 'string'}},
+                    'required': ['text'],
+                },
+            },
+        }]
+        resp = await llm.chat(
+            [{'role': 'user', 'content': 'call echo tool, input text: hello'}],
+            tools=tools,
+            tool_choice='auto',
+        )
+        tool_calls = resp.tool_calls or []
+        return {
+            'success': True,
+            'message': f'test tools done, supports tool calls: {len(tool_calls) > 0}',
+            'tool_call_supported': len(tool_calls) > 0,
+            'tool_calls': [t.model_dump() for t in tool_calls],
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'test tools failed: {str(e)}',
+            'tool_call_supported': False,
+        }
+
+@router.post('/provider-fetch-models')
+async def fetch_provider_models_temp(config: CustomProviderTestConfig = CustomProviderTestConfig()):
+    """临时获取自定义供应商模型列表，不需要提前保存"""
+    from app.services.llm_manager import LLMManager
+    llm_mgr = LLMManager()
+    temp_provider = {
+        'id': 'temp',
+        'name': '临时测试',
+        'protocol': 'openai_compatible',
+        'base_url': config.base_url or 'https://api.openai.com/v1',
+        'default_model': config.model or 'gpt-4o-mini',
+        'api_key': config.api_key or '',
+        'models': [config.model] if config.model else [],
+        'request_config': config.request_config or {},
+        'has_api_key': bool(config.api_key),
+    }
+    try:
+        llm = llm_mgr._custom_provider_to_llm(temp_provider, config.api_key, config.model, config.base_url)
+        models = await llm.fetch_models()
+        return {
+            'success': True,
+            'message': f'got {len(models)} models',
+            'models': models,
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f'fetch models failed: {str(e)}',
+            'models': [],
+        }

@@ -82,11 +82,30 @@ export async function testLLMConnection(config: ModelConfig): Promise<TestResult
     }
     return response.json();
 }
+// 统一友好错误提示映射
+const friendlyError = (status: number, detail?: string): string => {
+  const baseMsg: Record<number, string> = {
+    401: "API Key错误或没有该模型访问权限，请检查密钥是否正确",
+    403: "API Key没有访问该接口/模型的权限，请检查开通状态",
+    404: "接口地址不存在，请检查Base URL是否正确",
+    408: "请求超时，请检查网络连接或接口地址是否可访问",
+    429: "请求过于频繁或额度已用完，请稍后再试或检查账户余额",
+    500: "服务器内部错误，请稍后重试",
+    502: "网关错误，请检查接口地址是否正确",
+    503: "服务暂不可用，请稍后重试",
+  };
+  if (baseMsg[status]) return baseMsg[status];
+  if (detail?.includes("timeout") || detail?.includes("超时")) return "连接超时，请检查网络或接口地址是否可访问";
+  if (detail?.includes("ENOTFOUND") || detail?.includes("DNS")) return "域名解析失败，请检查Base URL是否正确";
+  if (detail?.includes("ECONNREFUSED")) return "连接被拒绝，请检查接口地址和端口是否正确";
+  return detail || "未知错误，请检查配置是否正确";
+};
+
 
 export async function switchModel(provider: string, apiKey?: string, model?: string, apiEndpoint?: string): Promise<ConfigUpdateResult> {
-    const response = await fetch(`${API_BASE}/switch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+    try {
+        const response = await fetch(`${API_BASE}/switch`, {
+            method: "POST",
         body: JSON.stringify({
             provider,
             api_key: apiKey || undefined,
@@ -95,12 +114,27 @@ export async function switchModel(provider: string, apiKey?: string, model?: str
             skip_test: true,
         }),
     });
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || '切换模型失败');
+
+        if (!response.ok) {
+            let errMsg = "切换模型失败";
+            try {
+                const err = await response.json();
+                errMsg = friendlyError(response.status, err.detail || err.message);
+            } catch (e) {
+                // 解析失败直接用默认错误
+            }
+            throw new Error(errMsg);
+        }
+        const data = await response.json();
+        return data;
+    } catch (e) {
+        if (e instanceof Error) {
+            throw e;
+        }
+        throw new Error("网络请求失败，请检查网络连接");
     }
-    return response.json();
 }
+
 
 export async function getCurrentModel(): Promise<{
   provider: string;

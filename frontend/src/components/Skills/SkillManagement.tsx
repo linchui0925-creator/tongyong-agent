@@ -21,6 +21,7 @@ import {
 } from '../../api/skills';
 import { reinstallMarketplaceSkill } from '../../api/marketplace';
 import { MarketplaceView } from '../Marketplace/MarketplaceView';
+import { CommunityHubView } from './CommunityHubView';
 
 // ── 共享样式 ──────────────────────────────────────
 
@@ -868,7 +869,7 @@ const LocalSkillsView: React.FC = () => {
 
 // ── 主壳 ──────────────────────────────────────────
 
-type SubTab = 'local' | 'marketplace';
+type SubTab = 'local' | 'marketplace' | 'community';
 
 export const SkillManagement: React.FC = () => {
     const [subTab, setSubTab] = useState<SubTab>('local');
@@ -888,9 +889,17 @@ export const SkillManagement: React.FC = () => {
                 >
                     Skill 市场
                 </button>
+                <button
+                    style={subTabStyle(subTab === 'community')}
+                    onClick={() => setSubTab('community')}
+                >
+                    ✨ Community (Hub)
+                </button>
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
-                {subTab === 'local' ? <LocalSkillsView /> : <MarketplaceView />}
+                {subTab === 'local' && <LocalSkillsView />}
+                {subTab === 'marketplace' && <MarketplaceView />}
+                {subTab === 'community' && <CommunityHubView />}
             </div>
         </div>
     );

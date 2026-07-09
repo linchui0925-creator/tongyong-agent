@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchProviderModels,
   getBuiltinProviders,
@@ -268,8 +268,8 @@ const TEMPLATE_OPTIONS = [
     id: 'deepseek',
     name: '🔍 DeepSeek',
     endpoint: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
-    notes: '深度求索官方接口，支持deepseek-chat/deepseek-coder。',
+    model: 'deepseek-v4-flash',
+    notes: '深度求索官方接口，支持deepseek-v4-flash/deepseek-v4-pro，原生支持推理和工具调用。',
     star: false,
   },
   {
@@ -492,12 +492,36 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   const [template, setTemplate] = useState(TEMPLATE_OPTIONS[0].id);
   
   // 从后端加载最新预设供应商配置，确保和后端完全对齐
+  const [searchKeyword, setSearchKeyword] = useState("");
+
+  // 过滤和分组预设供应商
+  const filteredProviders = useMemo(() => {
+    if (!searchKeyword.trim()) return builtinProviders;
+    const keyword = searchKeyword.toLowerCase();
+    return builtinProviders.filter(p => 
+      p.name.toLowerCase().includes(keyword) || 
+      p.id.toLowerCase().includes(keyword) ||
+      p.endpoint.toLowerCase().includes(keyword)
+    );
+  }, [builtinProviders, searchKeyword]);
+
+  const groupedProviders = useMemo(() => {
+    return {
+      starred: filteredProviders.filter(p => p.star),
+      domestic: filteredProviders.filter(p => !p.star && /[\u4e00-\u9fa5]|tongyi|zhipu|doubao|deepseek|qwen|glm|minimax|moonshot|baichuan|wenxin|sheng_suan/.test(p.id + p.name)),
+      foreign: filteredProviders.filter(p => !p.star && !/[\u4e00-\u9fa5]|tongyi|zhipu|doubao|deepseek|qwen|glm|minimax|moonshot|baichuan|wenxin|sheng_suan/.test(p.id + p.name) && !/ollama|local/.test(p.id)),
+      openSource: filteredProviders.filter(p => !p.star && /ollama|local/.test(p.id))
+    };
+  }, [filteredProviders]);
+
+  // 从后端拉一次最新的预设供应商列表（拉取失败就保持本地默认）。
   useEffect(() => {
+    let cancelled = false;
     getBuiltinProviders()
       .then(res => {
+        if (cancelled) return;
         if (res.providers && res.providers.length > 0) {
-          // 转换后端格式为前端TEMPLATE_OPTIONS格式
-          const templates = res.providers.filter(p => p.id).map(p => ({
+          const templates = res.providers.filter((p: any) => p.id).map((p: any) => ({
             id: p.id as string,
             name: p.name,
             endpoint: p.base_url,
@@ -508,11 +532,22 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
           setBuiltinProviders(templates);
         }
       })
-      .catch(() => {
-        // 加载失败使用本地默认
-      });
+      .catch(() => { /* 加载失败使用本地默认 */ });
+  // 选中预设时自动填充表单
+  useEffect(() => {
+    if (!selectedTemplate) return;
+    // 编辑模式不自动覆盖
+    if (initialProfile && savedProviderId) return;
+    setBaseUrl(selectedTemplate.endpoint);
+    setDefaultModel(selectedTemplate.model);
+    setModelsText(selectedTemplate.model);
+    setNotes(selectedTemplate.notes || "");
+    setProviderName(selectedTemplate.name.split(" ").slice(1).join(" ") || selectedTemplate.name);
+  }, [template]);
+
+    return () => { cancelled = true; };
   }, []);
-  
+
   const selectedTemplate = useMemo(
     () => builtinProviders.find(t => t.id === template) || builtinProviders[0],
     [template, builtinProviders],
@@ -520,6 +555,10 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   const [providerName, setProviderName] = useState('自定义供应商');
   const [baseUrl, setBaseUrl] = useState(selectedTemplate.endpoint);
   const [apiKey, setApiKey] = useState('');
+  // 编辑模式时显示已配置 key 的掩码提示；用户开始输入则切换到清空状态
+  const [apiKeyPlaceholder, setApiKeyPlaceholder] = useState('sk-... / 本地模型可留空');
+  // 表单脏标记：用户改动过任一字段后置 true，关闭时确认
+  const [isDirty, setIsDirty] = useState(false);
   const [defaultModel, setDefaultModel] = useState(selectedTemplate.model);
   const [modelsText, setModelsText] = useState(selectedTemplate.model);
   const [website, setWebsite] = useState('');
@@ -544,51 +583,114 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   const [statusMessage, setStatusMessage] = useState('');
   const [savedProviderId, setSavedProviderId] = useState<string | null>(null);
 
+  // 表单初始化 effect 1: open 从 false→true 边沿触发
+  // 只在边沿触发，避免 builtinProviders 后端加载后把用户已输入内容覆盖
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    if (initialProfile) {
-      setTemplate(initialProfile.protocol === 'openai_compatible' ? 'relay' : 'openai_compatible');
-      setProviderName(initialProfile.name || '自定义供应商');
-      setBaseUrl(initialProfile.base_url || '');
-      setDefaultModel(initialProfile.default_model || initialProfile.models?.[0]?.id || '');
-      setModelsText((initialProfile.models || []).map(m => m.id).join('\n') || initialProfile.default_model || '');
-      setWebsite(initialProfile.website || '');
-      setNotes(initialProfile.notes || '');
-      setRequestJson(prettyJson(initialProfile.request_config || {}));
-      setSavedProviderId(initialProfile.id || null);
-    } else {
-      setProviderName(selectedTemplate.name);
-      setBaseUrl(selectedTemplate.endpoint);
-      setDefaultModel(selectedTemplate.model);
-      setModelsText(selectedTemplate.model);
-      setWebsite('');
-      setNotes(selectedTemplate.notes);
-      setRequestJson(prettyJson({
-        chat_path: '/chat/completions',
-        models_path: '/models',
-        tool_call_mode: 'auto',
-        headers: {},
-        body_defaults: {},
-        body_overrides: {},
-        field_mapping: {},
-        response_mapping: {
-          content: 'choices.0.message.content',
-          reasoning_content: 'choices.0.message.reasoning_content',
-          tool_calls: 'choices.0.message.tool_calls',
-          finish_reason: 'choices.0.finish_reason',
-        },
-      }));
+    if (open && !wasOpen.current) {
+      if (initialProfile) {
+        const matchTemplate = builtinProviders.find(t => t.id === initialProfile.id);
+        if (matchTemplate) setTemplate(matchTemplate.id);
+        setProviderName(initialProfile.name || '自定义供应商');
+        setBaseUrl(initialProfile.base_url || '');
+        // 编辑模式不填 key 字段；placeholder 显示已配置 key 的掩码，留空保存沿用旧值
+        setApiKey('');
+        setApiKeyPlaceholder(
+          initialProfile.api_key_masked
+            ? `已配置 ${initialProfile.api_key_masked}，留空保持不变`
+            : '可选 / 本地模型可留空'
+        );
+        setDefaultModel(initialProfile.default_model || initialProfile.models?.[0]?.id || '');
+        setModelsText(
+          (initialProfile.models || []).map(m => m.id).join('\n')
+          || initialProfile.default_model
+          || '',
+        );
+        setWebsite(initialProfile.website || '');
+        setNotes(initialProfile.notes || '');
+        setRequestJson(prettyJson(initialProfile.request_config || {}));
+        setSavedProviderId(initialProfile.id || null);
+      } else {
+        setProviderName('自定义供应商');
+        setBaseUrl(selectedTemplate.endpoint);
+        setApiKey('');
+        setApiKeyPlaceholder('sk-... / 本地模型可留空');
+        setDefaultModel(selectedTemplate.model);
+        setModelsText(selectedTemplate.model);
+        setWebsite('');
+        setNotes(selectedTemplate.notes);
+        setRequestJson(prettyJson({
+          chat_path: '/chat/completions',
+          models_path: '/models',
+          tool_call_mode: 'auto',
+          headers: {},
+          body_defaults: {},
+          body_overrides: {},
+          field_mapping: {},
+          response_mapping: {
+            content: 'choices.0.message.content',
+            reasoning_content: 'choices.0.message.reasoning_content',
+            tool_calls: 'choices.0.message.tool_calls',
+            finish_reason: 'choices.0.finish_reason',
+          },
+        }));
+        setSavedProviderId(null);
+      }
+      setStatusMessage('');
+      setTestStatus('idle');
+      setIsDirty(false);
+    }
+    if (!open) {
+      // 关闭后清空 saved id 防止下次打开用旧值
       setSavedProviderId(null);
     }
+    wasOpen.current = open;
+  }, [open, initialProfile, builtinProviders]);
+
+  // 表单初始化 effect 2: 编辑模式下 initialProfile 切换时也重置（同一个 dialog 实例复用）
+  useEffect(() => {
+    if (!open || !initialProfile) return;
+    setProviderName(initialProfile.name || '自定义供应商');
+    setBaseUrl(initialProfile.base_url || '');
+    setApiKey('');
+    setApiKeyPlaceholder(
+      initialProfile.api_key_masked
+        ? `已配置 ${initialProfile.api_key_masked}，留空保持不变`
+        : '可选 / 本地模型可留空'
+    );
+    setDefaultModel(initialProfile.default_model || initialProfile.models?.[0]?.id || '');
+    setModelsText(
+      (initialProfile.models || []).map(m => m.id).join('\n')
+      || initialProfile.default_model
+      || '',
+    );
+    setWebsite(initialProfile.website || '');
+    setNotes(initialProfile.notes || '');
+    setRequestJson(prettyJson(initialProfile.request_config || {}));
+    setSavedProviderId(initialProfile.id || null);
+    const matchTemplate = builtinProviders.find(t => t.id === initialProfile.id);
+    if (matchTemplate) setTemplate(matchTemplate.id);
     setStatusMessage('');
     setTestStatus('idle');
-  }, [template, open, selectedTemplate, initialProfile]);
+    setIsDirty(false);
+  }, [initialProfile]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 表单初始化 effect 3: 用户切换预设模板时更新 baseUrl/model/notes (保留 providerName/apiKey/website)
+  useEffect(() => {
+    if (!open || initialProfile) return;  // 编辑模式不跟随模板
+    setBaseUrl(selectedTemplate.endpoint);
+    setDefaultModel(selectedTemplate.model);
+    setModelsText(selectedTemplate.model);
+    setNotes(selectedTemplate.notes);
+  }, [template]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const isValid = providerName.trim() && baseUrl.trim() && defaultModel.trim();
 
   const buildProfile = (id?: string): CustomProviderProfile => {
     const request_config = parseJsonObject(requestJson, '高级配置');
     const models = modelLinesToEntries(modelsText);
+    // 注意：apiKey 留空 → api_key: undefined → JSON.stringify 丢字段 →
+    // 后端 upsert_custom_provider 看到没传 key 会沿用旧 key。
     return {
       id: id || undefined,
       name: providerName.trim(),
@@ -665,6 +767,28 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
     }
   };
 
+  const handleSaveOnly = async () => {
+    if (!isValid) return;
+    setTestStatus('testing');
+    setStatusMessage('正在保存...');
+    try {
+      const profile = buildProfile(savedProviderId || undefined);
+      const saved = await saveProviderProfile(profile);
+      if (!saved.success) {
+        setTestStatus('fail');
+        setStatusMessage(`保存失败: ${saved.message}`);
+        return;
+      }
+      setTestStatus('success');
+      setStatusMessage(`已保存 ${providerName} / ${defaultModel}`);
+      setIsDirty(false);
+      setTimeout(() => onClose(), 700);
+    } catch (err: any) {
+      setTestStatus('fail');
+      setStatusMessage(`保存失败: ${err.message}`);
+    }
+  };
+
   const handleSaveSwitch = async () => {
     if (!isValid) return;
     setTestStatus('testing');
@@ -695,73 +819,167 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   if (!open) return null;
 
   return (
-    <div className="add-model-overlay" onClick={onClose}>
+    <div
+      className="add-model-overlay"
+      onClick={() => {
+        if (isDirty && !window.confirm('有未保存的修改，确定关闭吗？')) return;
+        onClose();
+      }}
+    >
       <div className="add-model-dialog add-model-dialog-wide" onClick={e => e.stopPropagation()}>
         <div className="add-model-header">
           <div>
-            <h2>添加新供应商</h2>
-            <p>保存 Base URL、模型 ID 与密钥后即可在顶部一键切换。</p>
+            <h2>{initialProfile ? '编辑供应商' : '添加新供应商'}</h2>
+            <p>
+              {initialProfile
+                ? '修改后会更新该供应商的连接信息与默认模型。'
+                : '保存 Base URL、模型 ID 与密钥后即可在顶部一键切换。'}
+            </p>
           </div>
-          <button className="add-model-close" onClick={onClose}>✕</button>
+          <button
+            className="add-model-close"
+            onClick={() => {
+              if (isDirty && !window.confirm('有未保存的修改，确定关闭吗？')) return;
+              onClose();
+            }}
+          >
+            ✕
+          </button>
         </div>
 
         <div className="add-model-body">
-          {/* 顶部分类标签 */}
-          <div className="provider-tabs">
-            <button className="provider-tab active">Codex 供应商</button>
-            <button className="provider-tab">统一供应商</button>
-          </div>
-
+          {/* 顶部标题，所有供应商预设统一展示 */}
           <div className="provider-section-title">预设供应商</div>
-          <div className="provider-template-grid">
-            {builtinProviders.map(item => (
-              <button
-                key={item.id}
-                className={`provider-template ${template === item.id ? 'active' : ''} ${item.star ? 'starred' : ''}`}
-                onClick={() => setTemplate(item.id)}
-              >
-                <span className="provider-icon">{item.name.split(' ')[0]}</span>
-                <span className="provider-name">{item.name.split(' ').slice(1).join(' ')}</span>
-                {item.star && <span className="star-badge">⭐</span>}
-              </button>
-            ))}
-          </div>
+
+          <input
+            className="provider-search" 
+            placeholder="搜索供应商名称/ID/地址..." 
+            value={searchKeyword}
+            onChange={e => setSearchKeyword(e.target.value)}
+          />
+
+          {groupedProviders.starred.length > 0 && (
+            <div className="provider-group">
+              <div className="provider-group-title">⭐ 推荐常用</div>
+              <div className="provider-group-desc">国内访问稳定，原生支持工具调用，适合日常使用</div>
+              <div className="provider-template-grid">
+                {groupedProviders.starred.map(item => (
+                  <button
+                    key={item.id}
+                    className={`provider-template ${template === item.id ? "active" : ""} starred`}
+                    onClick={() => setTemplate(item.id)}
+                  >
+                    <span className="provider-icon">{item.name.split(" ")[0]}</span>
+                    <span className="provider-name">{item.name.split(" ").slice(1).join(" ")}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {groupedProviders.domestic.length > 0 && (
+            <div className="provider-group">
+              <div className="provider-group-title">🇨🇳 国内厂商</div>
+              <div className="provider-group-desc">国内大模型服务商，直连访问无需代理</div>
+              <div className="provider-template-grid">
+                {groupedProviders.domestic.map(item => (
+                  <button
+                    key={item.id}
+                    className={`provider-template ${template === item.id ? "active" : ""}`}
+                    onClick={() => setTemplate(item.id)}
+                  >
+                    <span className="provider-icon">{item.name.split(" ")[0]}</span>
+                    <span className="provider-name">{item.name.split(" ").slice(1).join(" ")}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {groupedProviders.foreign.length > 0 && (
+            <div className="provider-group">
+              <div className="provider-group-title">🌐 海外厂商</div>
+              <div className="provider-group-desc">海外模型服务商，需要可访问国际网络的环境</div>
+              <div className="provider-template-grid">
+                {groupedProviders.foreign.map(item => (
+                  <button
+                    key={item.id}
+                    className={`provider-template ${template === item.id ? "active" : ""}`}
+                    onClick={() => setTemplate(item.id)}
+                  >
+                    <span className="provider-icon">{item.name.split(" ")[0]}</span>
+                    <span className="provider-name">{item.name.split(" ").slice(1).join(" ")}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {groupedProviders.openSource.length > 0 && (
+            <div className="provider-group">
+              <div className="provider-group-title">📦 开源本地</div>
+              <div className="provider-group-desc">本地部署的开源模型，如Ollama、LocalAI等</div>
+              <div className="provider-template-grid">
+                {groupedProviders.openSource.map(item => (
+                  <button
+                    key={item.id}
+                    className={`provider-template ${template === item.id ? "active" : ""}`}
+                    onClick={() => setTemplate(item.id)}
+                  >
+                    <span className="provider-icon">{item.name.split(" ")[0]}</span>
+                    <span className="provider-name">{item.name.split(" ").slice(1).join(" ")}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
 
           <div className="add-model-grid">
             <div className="add-model-field">
               <label className="required">供应商名称</label>
-              <input value={providerName} onChange={e => setProviderName(e.target.value)} placeholder="例如 EdgeFn / OpenRouter / 公司网关" />
+              <input value={providerName} onChange={e => { setProviderName(e.target.value); setIsDirty(true); }} placeholder="例如 EdgeFn / OpenRouter / 公司网关" />
             </div>
             <div className="add-model-field">
               <label>官网 / 控制台</label>
-              <input value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://..." />
+              <input value={website} onChange={e => { setWebsite(e.target.value); setIsDirty(true); }} placeholder="https://..." />
             </div>
           </div>
 
           <div className="add-model-field">
             <label className="required">API 端点 Base URL</label>
-            <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
+            <input value={baseUrl} onChange={e => { setBaseUrl(e.target.value); setIsDirty(true); }} placeholder="https://api.example.com/v1" />
           </div>
 
           <div className="add-model-grid">
             <div className="add-model-field">
               <label>API Key</label>
-              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-... / 本地模型可留空" />
+              <input
+                type="password"
+                value={apiKey}
+                onChange={e => { setApiKey(e.target.value); setIsDirty(true); }}
+                placeholder={apiKeyPlaceholder}
+              />
+              {initialProfile?.has_api_key && !apiKey && (
+                <span className="add-model-field-hint">
+                  已配置 {initialProfile.api_key_masked || 'API Key'}，留空保存则保持不变
+                </span>
+              )}
             </div>
             <div className="add-model-field">
               <label className="required">默认模型</label>
-              <input value={defaultModel} onChange={e => setDefaultModel(e.target.value)} placeholder="模型 ID" />
+              <input value={defaultModel} onChange={e => { setDefaultModel(e.target.value); setIsDirty(true); }} placeholder="模型 ID" />
             </div>
           </div>
 
           <div className="add-model-field">
             <label>模型列表 <span>每行一个 model id</span></label>
-            <textarea value={modelsText} onChange={e => setModelsText(e.target.value)} rows={5} />
+            <textarea value={modelsText} onChange={e => { setModelsText(e.target.value); setIsDirty(true); }} rows={5} />
           </div>
 
           <div className="add-model-field">
             <label>备注</label>
-            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="用途、限制、计费说明" />
+            <input value={notes} onChange={e => { setNotes(e.target.value); setIsDirty(true); }} placeholder="用途、限制、计费说明" />
           </div>
 
           <button className="advanced-toggle" onClick={() => setAdvancedOpen(v => !v)}>
@@ -774,7 +992,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
               <textarea
                 className="json-textarea"
                 value={requestJson}
-                onChange={e => setRequestJson(e.target.value)}
+                onChange={e => { setRequestJson(e.target.value); setIsDirty(true); }}
                 rows={14}
                 spellCheck={false}
               />
@@ -788,10 +1006,29 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
           )}
 
           <div className="add-model-actions provider-actions">
-            <button className="btn-test" disabled={!isValid || testStatus === 'testing'} onClick={handleFetchModels}>获取模型</button>
-            <button className="btn-test" disabled={!isValid || testStatus === 'testing'} onClick={handleTestChat}>测试连接</button>
-            <button className="btn-test" disabled={!isValid || testStatus === 'testing'} onClick={handleTestTools}>测试工具</button>
-            <button className="btn-save" disabled={!isValid || testStatus === 'testing'} onClick={handleSaveSwitch}>保存并切换</button>
+            <div className="provider-actions-left">
+              <button className="btn-test" disabled={!isValid || testStatus === 'testing'} onClick={handleFetchModels}>获取模型</button>
+              <button className="btn-test" disabled={!isValid || testStatus === 'testing'} onClick={handleTestChat}>测试连接</button>
+              <button className="btn-test" disabled={!isValid || testStatus === 'testing'} onClick={handleTestTools}>测试工具</button>
+            </div>
+            <div className="provider-actions-right">
+              <button
+                className="btn-save-secondary"
+                disabled={!isValid || testStatus === 'testing'}
+                onClick={handleSaveOnly}
+                title="仅保存为可用供应商，不切换当前模型"
+              >
+                仅保存
+              </button>
+              <button
+                className="btn-save"
+                disabled={!isValid || testStatus === 'testing'}
+                onClick={handleSaveSwitch}
+                title="保存并立即切换为当前模型"
+              >
+                保存并切换
+              </button>
+            </div>
           </div>
         </div>
       </div>

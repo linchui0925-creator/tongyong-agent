@@ -37,67 +37,217 @@ class LLMManager:
         self._agent_engine = engine
 
     def try_restore_saved_provider(self):
-        """尝试恢复保存的provider配置，兼容原有接口"""
-        return False
-    
+        """尝试从 data/llm_config.json 恢复上次保存的 provider/model；返回 (provider, model) 或 None。"""
+        try:
+            cfg_path = Path("data") / "llm_config.json"
+            if not cfg_path.exists():
+                return None
+            saved = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
+            provider = saved.get("provider")
+            if not provider:
+                return None
+            self._current_provider = provider
+            self._current_model = saved.get("model") or self._default_model_for(provider)
+            profile_id = saved.get("active_provider_profile_id")
+            if profile_id:
+                self._current_provider_profile_id = profile_id
+            return (provider, self._current_model)
+        except Exception as e:
+            logger.warning(f"try_restore_saved_provider failed: {e}")
+            return None
+
     def _seed_initial_llm(self, llm_instance, provider_name):
-        """初始化默认LLM，兼容原有接口"""
-        pass
-    
+        """记录启动时注入的 LLM，作为 get_current_llm() 的兜底。"""
+        if llm_instance is not None:
+            self._current_llm = llm_instance
+            if not getattr(self, "_current_model", None):
+                self._current_model = getattr(llm_instance, "model", None)
+        if provider_name:
+            self._current_provider = provider_name
+
     def _sync_to_agent(self):
-        """同步LLM到agent，兼容原有接口"""
-        pass
-    
-    def get_current_config(self):
-        """获取当前LLM配置，兼容原有接口"""
-        return {
-            "provider": "openai",
-            "model": "gpt-4o-mini",
-            "api_key_configured": False
-        }
-    
-    def get_api_key(self, provider):
-        """获取API Key，兼容原有接口"""
-        return None
-    
-    def list_custom_providers(self):
-        """获取自定义供应商列表"""
-        return list(self._custom_providers.values()) if hasattr(self, '_custom_providers') else []
-    
-    def get_current_provider(self):
-        """获取当前供应商ID"""
-        return getattr(self, '_current_provider', 'edgefn')
-    
-    def get_current_model(self):
-        """获取当前模型名称"""
-        return getattr(self, '_current_model', 'glm-5.2')
-    
+        """把当前 LLM 同步到 agent engine。"""
+        engine = getattr(self, "_agent_engine", None)
+        if engine is not None and getattr(self, "_current_llm", None) is not None:
+            engine.llm = self._current_llm
+
+    # ── 当前状态查询（替换硬编码 stub）───────────────────────
+    def _default_provider(self) -> str:
+        return getattr(self, "config", {}).get("default_provider", "edgefn")
+
+    def _default_model(self) -> str:
+        return getattr(self, "config", {}).get("default_model", "glm-5.2")
+
+    def _default_model_for(self, provider_id: str) -> str:
+        for p in getattr(self, "builtin_providers", []):
+            if p.get("id") == provider_id:
+                return p.get("default_model") or "gpt-4o-mini"
+        for p in getattr(self, "_custom_providers", []):
+            if p.get("id") == provider_id:
+                return p.get("default_model") or "gpt-4o-mini"
+        return "gpt-4o-mini"
+
+    def get_current_provider(self) -> str:
+        return getattr(self, "_current_provider", None) or self._default_provider()
+
+    def get_current_model(self) -> str:
+        return getattr(self, "_current_model", None) or self._default_model()
+
     def get_current_llm(self):
-        """获取当前LLM实例"""
+        return getattr(self, "_current_llm", None)
+
+    def get_current_config(self) -> Dict[str, Any]:
+        provider = self.get_current_provider()
+        model = self.get_current_model()
+        return {
+            "provider": provider,
+            "model": model,
+            "api_key_configured": bool(self.get_api_key(provider)),
+            "provider_profile_id": getattr(self, "_current_provider_profile_id", None),
+        }
+
+    def get_api_key(self, provider: str) -> Optional[str]:
+        if not provider:
+            return None
+        # 自定义供应商里保存的 key
+        for p in getattr(self, "_custom_providers", []):
+            if p.get("id") == provider and p.get("api_key"):
+                return p["api_key"]
+        # builtin: 优先 data/llm_config.json api_keys，否则读环境变量
+        try:
+            cfg_path = Path("data") / "llm_config.json"
+            if cfg_path.exists():
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
+                k = (cfg.get("api_keys") or {}).get(provider)
+                if k:
+                    return k
+        except Exception:
+            pass
+        return os.environ.get(f"{provider.upper()}_API_KEY")
+
+    def get_saved_models(self) -> List[Dict[str, Any]]:
+        """读取 data/llm_config.json 里的 saved_models 列表。"""
+        try:
+            cfg_path = Path("data") / "llm_config.json"
+            if not cfg_path.exists():
+                return []
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
+            return cfg.get("saved_models") or []
+        except Exception as e:
+            logger.warning(f"get_saved_models failed: {e}")
+            return []
+
+    def add_saved_model(self, entry: Dict[str, Any]) -> str:
+        """往 data/llm_config.json 加一条 saved_model，返回 entry.id。"""
+        cfg_path = Path("data") / "llm_config.json"
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        except Exception:
+            cfg = {}
+        cfg.setdefault("saved_models", [])
+        entry_id = entry.get("id") or os.urandom(6).hex()
+        entry["id"] = entry_id
+        cfg["saved_models"].append(entry)
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return entry_id
+
+    def delete_saved_model(self, model_id: str) -> bool:
+        cfg_path = Path("data") / "llm_config.json"
+        if not cfg_path.exists():
+            return False
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        before = len(cfg.get("saved_models", []))
+        cfg["saved_models"] = [m for m in cfg.get("saved_models", []) if m.get("id") != model_id]
+        if len(cfg["saved_models"]) == before:
+            return False
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+
+    def get_saved_model_by_id(self, model_id: str) -> Optional[Dict[str, Any]]:
+        for m in self.get_saved_models():
+            if m.get("id") == model_id:
+                return m
         return None
-    
-    def get_custom_provider(self, provider_id):
-        """获取自定义供应商配置"""
-        if hasattr(self, '_custom_providers') and provider_id in self._custom_providers:
-            return self._custom_providers[provider_id]
-        # 从builtin中查找
-        for p in getattr(self, 'builtin_providers', []):
-            if p.get('id') == provider_id:
-                return p
-        return None
-    
-    def get_saved_models(self):
-        """获取已保存的模型列表"""
-        return []
-    
-    def upsert_custom_provider(self, config):
-        """保存自定义供应商"""
-        if not hasattr(self, '_custom_providers'):
-            self._custom_providers = {}
-        provider_id = config.get('id') or config.get('name', 'custom').lower().replace(' ', '_')
-        config['id'] = provider_id
-        self._custom_providers[provider_id] = config
-        return config
+
+    def is_real_api_key(self, key: Optional[str]) -> bool:
+        """判断 api_key 是否是用户实际填的（排除 YOUR_API_KEY / sk-placeholder / sk-test）。"""
+        if not key:
+            return False
+        bad = {"YOUR_API_KEY", "sk-placeholder", "sk-xxx", "sk-test", "sk-x", "sk-openai-test-123"}
+        return key not in bad
+
+    # ── provider 状态枚举 + 切换 ──────────────────────────────
+    def get_all_providers_status(self) -> List[Dict[str, Any]]:
+        """返回所有 builtin + custom provider 的 UI 展示信息（带 is_current / has_api_key 标记）。"""
+        current = self.get_current_provider()
+        result: List[Dict[str, Any]] = []
+        for p in getattr(self, "builtin_providers", []):
+            result.append({
+                "id": p["id"],
+                "name": p.get("name", p["id"]),
+                "icon": p.get("icon", ""),
+                "color": p.get("color", "#7C3AED"),
+                "is_current": p["id"] == current,
+                "has_api_key": bool(self.get_api_key(p["id"])),
+                "model": p.get("default_model"),
+                "type": "builtin",
+            })
+        for p in getattr(self, "_custom_providers", []):
+            result.append({
+                "id": p["id"],
+                "name": p.get("name", p["id"]),
+                "icon": p.get("icon", "⚙️"),
+                "color": p.get("color", "#7C3AED"),
+                "is_current": p["id"] == current,
+                "has_api_key": bool(p.get("api_key")),
+                "model": p.get("default_model"),
+                "type": "custom",
+            })
+        return result
+
+    def switch_model(self, provider: str, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs) -> bool:
+        """切换当前 LLM；同步 agent engine.llm；写入 data/llm_config.json。"""
+        try:
+            endpoint = kwargs.get("api_endpoint")
+            try:
+                llm = self._build_llm_for(provider, api_key, model, endpoint)
+            except ValueError:
+                logger.warning(f"switch_model: provider {provider} 不存在")
+                return False
+            # 选 model 时优先用显式 model，否则 custom provider 的 default_model，否则 llm 默认
+            cfg = self.get_custom_provider(provider) or {}
+            self._current_provider = provider
+            self._current_model = model or cfg.get("default_model") or llm.model
+            self._current_llm = llm
+            self._current_provider_profile_id = (
+                provider if any(p.get("id") == provider for p in self._custom_providers) else None
+            )
+            engine = getattr(self, "_agent_engine", None)
+            if engine is not None:
+                engine.llm = llm
+            try:
+                cfg_path = Path("data") / "llm_config.json"
+                if cfg_path.exists():
+                    saved = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
+                else:
+                    saved = {}
+                saved["provider"] = provider
+                saved["model"] = self._current_model
+                if any(p.get("id") == provider for p in self._custom_providers):
+                    saved["active_provider_profile_id"] = provider
+                cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                cfg_path.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"switch_model 持久化失败: {e}")
+            self._llm_cache.pop(provider, None)
+            return True
+        except Exception as e:
+            logger.error(f"switch_model 失败: {e}", exc_info=True)
+            return False
 
     def _load_config(self) -> Dict[str, Any]:
         """加载config.toml配置文件"""
@@ -115,7 +265,20 @@ class LLMManager:
 
     def _load_builtin_providers(self) -> List[Dict[str, Any]]:
         """加载内置预设供应商，和前端TEMPLATE_OPTIONS完全对齐"""
-        builtin = []
+        builtin = [
+        {
+            'id': 'edgefn',
+            'name': '⚡ EdgeFn聚合',
+            'protocol': 'openai_compatible',
+            'base_url': 'https://api.edgefn.net/v1',
+            'default_model': 'GLM-5.2',
+            'models': ['GLM-5.2', 'GLM-4.5V', 'GLM-4-flash', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat'],
+            'icon': '⚡',
+            'color': '#F59E0B',
+            'notes': 'EdgeFn聚合代理，一个Key支持智谱/DeepSeek等多模型，国内访问稳定',
+            'star': True,
+        },
+]
         # 从环境变量加载
         env_prefix_map = {
             'openai': 'OPENAI_API_KEY',
@@ -181,11 +344,11 @@ class LLMManager:
                 'name': '🟢 OpenAI Official',
                 'protocol': 'openai_compatible',
                 'base_url': 'https://api.openai.com/v1',
-                'default_model': 'gpt-4o',
-                'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
+                'default_model': '请输入模型ID',
+                'models': [],
                 'icon': '🟢',
                 'color': '#10A37F',
-                'notes': 'OpenAI官方接口，支持GPT-4o/GPT-3.5-turbo等。',
+                'notes': '官方接口地址正确，请填写你已开通权限的模型ID',
                 'star': True,
             },
             {
@@ -277,11 +440,11 @@ class LLMManager:
                 'name': '💜 SiliconFlow',
                 'protocol': 'openai_compatible',
                 'base_url': 'https://api.siliconflow.cn/v1',
-                'default_model': 'deepseek-ai/DeepSeek-V3',
-                'models': ['deepseek-v3', 'qwen-max'],
+                'default_model': '请输入模型ID',
+                'models': [],
                 'icon': '💜',
                 'color': '#8b5cf6',
-                'notes': '硅基流动聚合平台，支持海量开源/商用模型（中文）。',
+                'notes': '官方接口地址正确，请填写你已开通权限的模型ID',
                 'star': True,
             },
             {
@@ -546,7 +709,7 @@ class LLMManager:
                 'models': ['deepseek-chat', 'deepseek-coder'],
                 'icon': '🔍',
                 'color': '#2563eb',
-                'notes': '深度求索官方接口，支持deepseek-chat/deepseek-coder。',
+                'notes': '深度求索官方接口，支持deepseek-v4-flash/deepseek-v4-pro，原生支持推理和工具调用。',
                 'star': False,
             },
             {
@@ -554,11 +717,11 @@ class LLMManager:
                 'name': '🔷 Zhipu GLM',
                 'protocol': 'openai_compatible',
                 'base_url': 'https://open.bigmodel.cn/api/paas/v4',
-                'default_model': 'glm-5',
-                'models': ['glm-4', 'glm-3.5-turbo'],
+                'default_model': 'glm-5.2',
+                'models': ['glm-5.4', 'glm-5.2', 'glm-5-flash'],
                 'icon': '🔷',
                 'color': '#6366f1',
-                'notes': '智谱清言官方接口，支持GLM-4/GLM-3.5等模型。',
+                'notes': '智谱AI官方接口，GLM-5系列最新模型，用户确认5.2/5.4可用',
                 'star': False,
             },
             {
@@ -626,11 +789,11 @@ class LLMManager:
                 'name': '🔹 StepFun',
                 'protocol': 'openai_compatible',
                 'base_url': 'https://api.stepfun.com/step_plan/v1',
-                'default_model': 'step-3.5-flash',
-                'models': ['step-1-8k'],
+                'default_model': '请输入模型ID',
+                'models': [],
                 'icon': '🔹',
                 'color': '#3b82f6',
-                'notes': '阶跃星辰官方中文接口。',
+                'notes': '官方接口地址正确，请填写你已开通权限的模型ID',
                 'star': False,
             },
             {
@@ -674,11 +837,11 @@ class LLMManager:
                 'name': '🎙️ MiniMax',
                 'protocol': 'openai_compatible',
                 'base_url': 'https://api.minimaxi.com/v1',
-                'default_model': 'minimax-m2.7',
-                'models': ['minimax-chat-01'],
+                'default_model': '请输入模型ID',
+                'models': [],
                 'icon': '🎙️',
                 'color': '#ec4899',
-                'notes': 'MiniMax官方中文接口，支持abab大模型系列。',
+                'notes': '官方接口地址正确，请填写你已开通权限的模型ID',
                 'star': False,
             },
             {
@@ -881,10 +1044,28 @@ class LLMManager:
         except Exception as e:
             logger.error(f"保存自定义供应商失败: {e}")
 
+    @staticmethod
+    def _mask_key(key: Optional[str]) -> Optional[str]:
+        """把 API Key 脱敏成 sk-XX...YY 这种形式，方便 UI 展示"已配置"。
+        真实 key 永远不返回给前端；用户不输入新值就保存时后端会沿用旧 key。
+        """
+        if not key:
+            return None
+        if len(key) <= 10:
+            return '***'
+        return f"{key[:4]}...{key[-4:]}"
+
     def _public_custom_provider(self, provider: Dict[str, Any]) -> Dict[str, Any]:
-        """返回脱敏的公共供应商信息，不返回API Key"""
+        """返回脱敏的公共供应商信息。
+        - 不返回原始 api_key（避免泄露）
+        - 返回 api_key_masked 给前端显示"已配置 sk-XX...YY"
+        - 返回 has_api_key 布尔供 UI 决策
+        - 保存时如果前端没传 api_key，调用方应用旧 key 兜底（见 upsert_custom_provider）
+        """
         public = {k: v for k, v in provider.items() if k != 'api_key'}
-        public['has_api_key'] = bool(provider.get('api_key'))
+        raw_key = provider.get('api_key')
+        public['has_api_key'] = bool(raw_key)
+        public['api_key_masked'] = self._mask_key(raw_key)
         return public
 
     def list_custom_providers(self) -> List[Dict[str, Any]]:
@@ -910,7 +1091,10 @@ class LLMManager:
         return None
 
     def upsert_custom_provider(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """创建或更新自定义供应商"""
+        """创建或更新自定义供应商。
+        关键约定: 如果 data 里没传 api_key 但旧记录里有，则沿用旧 key。
+        这让前端在编辑已有 provider 时可以选择不重输 key(避免误清空)。
+        """
         provider_id = data.get('id') or f"custom_{os.urandom(4).hex()}"
         # 检查是否是内置供应商，不允许修改
         for p in self.builtin_providers:
@@ -924,6 +1108,10 @@ class LLMManager:
         provider.setdefault('request_config', {})
         provider.setdefault('icon', '⚙️')
         provider.setdefault('color', '#7C3AED')
+        # 如果新数据没传 api_key 但已有旧记录，沿用旧 key（避免编辑时丢失）
+        existing = next((p for p in self._custom_providers if p.get('id') == provider_id), None)
+        if not provider.get('api_key') and existing and existing.get('api_key'):
+            provider['api_key'] = existing['api_key']
         # 替换旧的
         for i, p in enumerate(self._custom_providers):
             if p['id'] == provider_id:
@@ -960,15 +1148,29 @@ class LLMManager:
         llm.request_config = provider.get('request_config', {})
         return llm
 
+    def _build_llm_for(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None):
+        """根据 provider_id 构造 LLM 实例。先查 custom/builtin dict，没命中再走 factory。"""
+        provider = self.get_custom_provider(provider_id)
+        if provider:
+            return self._custom_provider_to_llm(provider, api_key, model, api_endpoint)
+        # 兜底：factory.py 注册的 provider（tongyi/openai/anthropic/edgefn/...）
+        try:
+            from app.llm.factory import get_llm as _factory_get_llm
+            llm = _factory_get_llm(provider_id, api_key=api_key)
+            if model:
+                llm.model = model
+            if api_endpoint and hasattr(llm, "api_base"):
+                llm.api_base = api_endpoint
+            return llm
+        except Exception as e:
+            raise ValueError(f"供应商 {provider_id} 不存在或 factory 未注册: {e}")
+
     def get_llm(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
         """获取LLM实例，优先从缓存读取"""
         cache_key = f"{provider_id}:{model or 'default'}:{api_key or 'default'}:{api_endpoint or 'default'}"
         if cache_key in self._llm_cache:
             return self._llm_cache[cache_key]
-        provider = self.get_custom_provider(provider_id)
-        if not provider:
-            raise ValueError(f"供应商 {provider_id} 不存在")
-        llm = self._custom_provider_to_llm(provider, api_key, model, api_endpoint)
+        llm = self._build_llm_for(provider_id, api_key, model, api_endpoint)
         self._llm_cache[cache_key] = llm
         return llm
 
@@ -1053,66 +1255,3 @@ def get_llm_manager():
     if _llm_manager_instance is None:
         _llm_manager_instance = LLMManager()
     return _llm_manager_instance
-
-    def try_restore_saved_provider(self):
-        """尝试恢复保存的provider配置，兼容原有接口"""
-        return False
-    
-    def _seed_initial_llm(self, llm_instance, provider_name):
-        """初始化默认LLM，兼容原有接口"""
-        pass
-    
-    def _sync_to_agent(self):
-        """同步LLM到agent，兼容原有接口"""
-        pass
-    
-    def get_current_config(self):
-        """获取当前LLM配置，兼容原有接口"""
-        return {
-            "provider": "openai",
-            "model": "gpt-4o-mini",
-            "api_key_configured": False
-        }
-    
-    def get_api_key(self, provider):
-        """获取API Key，兼容原有接口"""
-        return None
-    
-    def list_custom_providers(self):
-        """获取自定义供应商列表"""
-        return list(self._custom_providers.values()) if hasattr(self, '_custom_providers') else []
-    
-    def get_current_provider(self):
-        """获取当前供应商ID"""
-        return getattr(self, '_current_provider', 'edgefn')
-    
-    def get_current_model(self):
-        """获取当前模型名称"""
-        return getattr(self, '_current_model', 'glm-5.2')
-    
-    def get_current_llm(self):
-        """获取当前LLM实例"""
-        return None
-    
-    def get_custom_provider(self, provider_id):
-        """获取自定义供应商配置"""
-        if hasattr(self, '_custom_providers') and provider_id in self._custom_providers:
-            return self._custom_providers[provider_id]
-        # 从builtin中查找
-        for p in getattr(self, 'builtin_providers', []):
-            if p.get('id') == provider_id:
-                return p
-        return None
-    
-    def get_saved_models(self):
-        """获取已保存的模型列表"""
-        return []
-    
-    def upsert_custom_provider(self, config):
-        """保存自定义供应商"""
-        if not hasattr(self, '_custom_providers'):
-            self._custom_providers = {}
-        provider_id = config.get('id') or config.get('name', 'custom').lower().replace(' ', '_')
-        config['id'] = provider_id
-        self._custom_providers[provider_id] = config
-        return config

@@ -9,11 +9,18 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+import base64
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Tuple
 from zipfile import BadZipFile
+
+from app.services.ocr_service import extract_text_from_image, is_ocr_available
+from app.services.document_parser import (
+    parse_pdf, parse_docx, parse_xlsx, parse_pptx, parse_text_file, parse_csv,
+    _pdf_available, _docx_available, _xlsx_available, _pptx_available
+)
 
 
 MAX_EXTRACTED_CHARS = 120_000
@@ -76,11 +83,24 @@ def extract_attachment(path: Path, mime_type: str, filename: str) -> AttachmentE
         if suffix == ".pptx" or mime.endswith("presentationml.presentation"):
             return _extract_pptx(path)
         if mime.startswith("image/"):
-            return AttachmentExtraction(
-                status="metadata_only",
-                summary="图片附件已上传；当前 harness 仅传递元数据和可打开链接，不假装读取像素内容。",
-                details={"kind": "image"},
-            )
+            # 先尝试OCR识别文字
+            ocr_text = None
+            if is_ocr_available():
+                ocr_text = extract_text_from_image(path)
+            
+            if ocr_text:
+                return AttachmentExtraction(
+                    status="ocr_extracted",
+                    text=ocr_text,
+                    summary=f"图片附件已上传，OCR识别出文字内容，共{len(ocr_text)}字符。",
+                    details={"kind": "image", "ocr": True, "text_length": len(ocr_text)},
+                )
+            else:
+                return AttachmentExtraction(
+                    status="metadata_only",
+                    summary="图片附件已上传；未检测到可识别文字，已提供文件链接。如果当前模型支持多模态，会自动发送图片内容进行理解。",
+                    details={"kind": "image", "ocr": False},
+                )
         return AttachmentExtraction(
             status="unsupported",
             summary="该附件类型暂不支持正文抽取，仅提供元数据。",

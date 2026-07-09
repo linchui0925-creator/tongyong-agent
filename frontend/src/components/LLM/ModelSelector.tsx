@@ -229,6 +229,8 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
 
   const deleteCard = async (card: ConnectedModelCard) => {
     if (card.source !== 'profile' || !card.profile?.id) return;
+    if (!window.confirm(`确定要删除供应商「${card.name}」吗？此操作不可恢复。`)) return;
+
     setBusyId(card.id);
     try {
       await deleteProviderProfile(card.profile.id);

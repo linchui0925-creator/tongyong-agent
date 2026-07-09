@@ -283,11 +283,22 @@
 .btn-save {
   background: #165dff;
   color: #fff;
-  margin-left: auto;
 }
 
 .btn-save:hover {
   background: #0d47d9;
+}
+
+/* 次按钮：灰底，跟主按钮并排 */
+.btn-save-secondary {
+  background: var(--input-bg, #f5f5f5);
+  color: var(--text-primary, #333);
+  border: 1px solid var(--border-color, #d9d9d9);
+}
+
+.btn-save-secondary:hover:not(:disabled) {
+  background: var(--hover-bg, #eaeaea);
+  border-color: var(--primary-color, #165dff);
 }
 
 .add-model-actions button:disabled {
@@ -295,6 +306,101 @@
   cursor: not-allowed;
 }
 
+/* 底部操作区分左右两组 */
 .provider-actions {
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
+
+.provider-actions-left,
+.provider-actions-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.provider-actions-right {
+  margin-left: auto;
+}
+
+/* 字段下方提示文字，例如"已配置 sk-...16217，留空保持不变" */
+.add-model-field-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  line-height: 1.5;
+}
+
+.provider-search {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.provider-search:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.provider-group {
+  margin-bottom: 24px;
+}
+
+.provider-group-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  padding-left: 4px;
+}
+
+.provider-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+
+.provider-search {
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.provider-search:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.provider-group {
+  margin-bottom: 24px;
+}
+
+.provider-group-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  padding-left: 4px;
+}
+
+
+.provider-group-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  padding-left: 4px;
+}
+

@@ -24,6 +24,7 @@ from app.api import proxy
 from app.api import skills as skills_api
 from app.api import proxy
 from app.api import marketplace as marketplace_api
+from app.api import hub as hub_api
 from app.api import proxy
 from app.api import tool_harness as tool_harness_api
 from app.api import proxy
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(dreaming_api.router)
     app.include_router(skills_api.router)
     app.include_router(marketplace_api.router)
+    app.include_router(hub_api.router)
     app.include_router(tool_harness_api.router)
     app.include_router(files_api.router)
     app.include_router(attachments_api.router)

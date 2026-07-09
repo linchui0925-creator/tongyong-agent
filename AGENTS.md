@@ -55,6 +55,8 @@
 │   │   ├── base.py                # BaseLLM 抽象
 │   │   └── openai_compatible.py   # 通用 OpenAI 兼容
 │   ├── app/services/llm_manager.py
+│   ├── app/core/community_hub.py      # W5-1 Community Hub 核心 (194行 + scrape)
+│   ├── app/api/hub.py                 # W5-1 /api/hub/* 路由
 │   ├── .venv311/                   # 3.11 生产 venv (跑 uvicorn)
 │   ├── .venv/                      # 3.13 dev venv (含 langchain_core, 跑 pytest)
 │   ├── tests/                      # gitignored 但 git 跟踪, 200+ 用例
@@ -204,6 +206,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W5-1 | Skill Community Hub: catalog sync 跟 install 严格分离; browse layer (.lol/.cn) active mapping miner; UI 3rd sub-tab "✨ Community (Hub)"; 4 种卡片状态 (Available/Installed/Updated/Browse-Only); install 必须用户主动 + 二次确认 toast; default whitelist 2 个 (anthropics + ComposioHQ), 待 linc 跑 HEAD probe 验证真假后再扩 |
 | (pending) | W4-51 | 会话附件渲染层 MVP: 上传/安全 serve/图片直显/文件卡片/拖拽粘贴/stream attachment_ids |
 | (pending) | W4-50 | 单 agent 隔离 workspace 工具; workspace_terminal 等完整输出; LangChain tool session 上下文 + 自动压缩/context 事件对齐 |
 | (pending) | W4-49 | 新会话隔离: 无 session_id 创建新会话; 跨会话记忆改 memory_search/list 工具; 新增 todo_write/read; terminal 高风险命令审批门禁 |
@@ -235,6 +238,45 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W5-1: Skill Community Hub (catalog ↔ install 严格分离)
+
+- **场景**: 用户反馈本地 skill 不够用, 想从社区 (skillhub.lol / skillhub.cn) 自动拉取最新 skill 到本地, 多样性 + 实时更新 + 按需下载。
+- **核心铁律 (spec §0 §3 §7)**:
+  1. **catalog 同步永远不动本地** — HubScheduler 后台跑 sync, 只写 `marketplace_registry.json` + `community_hub.json`, 不 install
+  2. **install 必须用户主动触发** — 二次确认 toast (纯 UX 增强, 后端不依赖), UI 显式点击 ⬇ Install
+  3. **browse layer (.lol/.cn) 是 active mapping miner, 不是装饰** — 详情页暴露 `github.com/owner/repo`, 挖出来写 `slug_mappings` + 动态加 scraped source
+- **数据流**:
+  - `community_hub.json` (schema v2): `github_sources[]` (default/user/scraped) + `browse_layers[]` (默认 enabled=false) + `slug_mappings{}` (slug → {source, path, scraped_from, confidence})
+  - 6 个新 config 字段: `community_hub_sync_interval_hours=6`, `community_hub_sync_on_startup=True`, `community_hub_browse_lol_enabled=False`, `community_hub_browse_cn_enabled=False`, `community_hub_scrape_rate_per_sec=1.0`, `community_hub_max_repos=50`, `community_hub_frontend_install_confirm=True`
+- **API 路由** (`app/api/hub.py`, ~340 行):
+  - `GET /api/hub/info` — Hub Status card
+  - `GET/POST/DELETE /api/hub/sources` — 增删 GitHub source (默认源保护 400, 重复 409)
+  - `POST /api/hub/sources/{owner_repo}/toggle` — enable/disable
+  - `POST /api/hub/sync` — 触发 background catalog sync
+  - `GET /api/hub/browse-layers` + `POST /api/hub/browse-layers/{id}/toggle` — browse layer 启停
+  - `POST /api/hub/install {slug}` — **唯一 install 入口**, 查 slug_mappings 走 marketplace.install_skill
+  - `GET/POST /api/hub/slug-mapping` — 用户补 mapping
+  - `GET /api/hub/diff` — 跨源聚合 catalog
+- **前端** (`CommunityHubView.tsx` ~600 行, `SkillManagement.tsx` 加 3rd sub-tab "✨ Community (Hub)"):
+  - 5 panel: Hub Status / Browse Layers / Filters / Skill Grid (4 种卡片状态) / Detail Modal
+  - 卡片 4 状态: Available (⬇ Install) / Installed (✓, 灰化) / Updated (⬆ Update) / Browse-Only (↗ View on skillhub.lol, 无 source)
+  - Install 二次确认 toast 走 UI 模态, 后端不强制
+  - 主题: 4 套 (dark-stone/light-clean/sepia-warm/midnight-blue) 通过 CSS variables 自动适配
+- **测试**: 64 个新 test (S1-S7):
+  - S1 config 持久化 7 个 / S2 HubScheduler 8 个 / S3 sync_all_sources 7 个
+  - S4 API 13 个 / S5 install 12 个 / S6 scrape + browse-layer API 15 个 / S7 lifespan 2 个
+  - 关键: **测试隔离 bug** — `_empty_config()` 之前用 `list(DEFAULT_BROWSE_LAYERS)` 浅 copy, 测试间共享 dict 引用导致 `enabled` 状态泄漏; 改 `copy.deepcopy()` 修掉
+- **关键文件**:
+  - `backend/app/core/community_hub.py` (~480 行) — config + scheduler + scrape + install
+  - `backend/app/api/hub.py` (~340 行) — 上述 11 个 endpoint
+  - `backend/app/lifespan.py` — `_startup_hub` / `_shutdown_hub` 用全局 `_HUB_SCHEDULER_REF`
+  - `frontend/src/api/hub.ts` — 11 个 API wrapper
+  - `frontend/src/components/Skills/CommunityHubView.tsx` — 主壳
+  - `frontend/src/components/Skills/SkillManagement.tsx` — 加 3rd sub-tab
+- **沙箱限制**: skillhub.lol/.cn 沙箱外网不通, 测试用 `_HTTP_FETCHER` 全局 hook 注入 fixture; sandbox 跑 sync 会全部 timeout, 这是预期, 生产环境正常
+- **默认 whitelist 待验证**: 目前只 2 个 (anthropics/skills, ComposioHQ/awesome-claude-skills), 用户跑 HEAD probe 验证真假后扩
+- **回归**: 165 + 64 = 229 tests passing (含 W4-* 全子集), in-process TestClient 验证 hub router 挂在主 app 上
 
 ### W4-51: 会话内附件渲染层 MVP
 

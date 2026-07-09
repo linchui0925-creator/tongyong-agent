@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     await _startup_tools(app)
     await _startup_database(app)
     await _startup_llm(app)
+    await _startup_hub(app)
     await _startup_im_gateway(app)
 
     logger.info("=" * 50)
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ──
     logger.info("应用正在关闭...")
+    await _shutdown_hub()
     await _shutdown_im_gateway()
     logger.info("应用已关闭")
 
@@ -86,6 +88,74 @@ async def _startup_llm(app: FastAPI) -> None:
         logger.warning("[startup] LLM 验证 5s 超时, 跳过 (chat 时会重试)")
     except Exception as e:
         logger.error(f"LLM连接验证失败: {e}")
+
+
+async def _startup_hub(app: FastAPI) -> None:
+    """启动 Community HubScheduler (W5-1) — catalog sync + browse layer scrape"""
+    from app.config import settings
+    if not getattr(settings, "community_hub_sync_on_startup", True):
+        logger.info("[skip] HubScheduler 启动期同步已禁用 (community_hub_sync_on_startup=False)")
+    try:
+        from app.core.community_hub import HubScheduler, sync_all_sources, scrape_browse_layers
+
+        interval_h = float(getattr(settings, "community_hub_sync_interval_hours", 6))
+        sync_on_start = bool(getattr(settings, "community_hub_sync_on_startup", True))
+        sched = HubScheduler(
+            interval_seconds=interval_h * 3600,
+            sync_on_start=False,  # 我们手控, fire-and-forget 在下面
+            sync_body=None,
+        )
+
+        # 注入 sync body — catalog only, 不 install
+        async def _sync_body():
+            result = await sync_all_sources(force=False)
+            # scrape 是同步函数, 在 executor 跑
+            import asyncio
+            loop = asyncio.get_running_loop()
+            scrape_result = await loop.run_in_executor(
+                None, _sync_scrape_sync, None
+            )
+            return {
+                "ok": result.get("ok", False) and scrape_result.get("ok", True),
+                "count": result.get("count", 0),
+                "scrape": scrape_result,
+            }
+        sched.install_sync_body(_sync_body)
+        app.state.hub = sched
+        global _HUB_SCHEDULER_REF
+        _HUB_SCHEDULER_REF = sched
+        await sched.start()
+
+        # 启动期 fire-and-forget 一次
+        if sync_on_start:
+            import asyncio
+            asyncio.create_task(sched.sync_now())
+        logger.info(f"HubScheduler 已启动: interval={interval_h}h, sync_on_start={sync_on_start}")
+    except Exception as e:
+        logger.warning(f"HubScheduler 启动失败 (无害): {e}")
+
+
+def _sync_scrape_sync(config_path):
+    """同步包装 scrape_browse_layers (在 executor 跑)"""
+    import asyncio
+    from app.core import community_hub
+    return asyncio.run(community_hub.scrape_browse_layers(config_path=config_path))
+
+
+_HUB_SCHEDULER_REF = None  # 全局引用, _shutdown_hub 拿得到
+
+
+async def _shutdown_hub() -> None:
+    """停 HubScheduler — cancel 后台 loop"""
+    global _HUB_SCHEDULER_REF
+    if _HUB_SCHEDULER_REF is None:
+        return
+    try:
+        await _HUB_SCHEDULER_REF.stop()
+        logger.info("HubScheduler 已停止")
+    except Exception as e:
+        logger.warning(f"HubScheduler 关闭失败 (无害): {e}")
+    _HUB_SCHEDULER_REF = None
 
 
 async def _startup_im_gateway(app: FastAPI) -> None:

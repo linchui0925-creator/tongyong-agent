@@ -25,10 +25,18 @@ class ModelConfig(BaseModel):
     api_key: Optional[str] = Field(None, description="API 密钥，为空则使用已有配置")
     api_endpoint: Optional[str] = Field(None, description="自定义 API 端点 URL，为空则使用默认")
     model: Optional[str] = Field(None, description="模型名称，为空则使用默认")
+    # 兼容前端把整个 profile 当 body 发的场景（CustomProviderProfile.default_model）
+    default_model: Optional[str] = None
+    name: Optional[str] = None
+    protocol: Optional[str] = None
+    request_config: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = Field(None, ge=0, le=2)
     max_tokens: Optional[int] = Field(None, ge=1)
     top_p: Optional[float] = Field(None, ge=0, le=1)
     skip_test: bool = Field(False, description="跳过连接测试，直接切换")
+
+    def resolved_model(self) -> Optional[str]:
+        return self.model or self.default_model
 
 
 class ApiKeyUpdate(BaseModel):
@@ -73,9 +81,17 @@ class CustomProviderConfig(BaseModel):
 
 class CustomProviderTestConfig(BaseModel):
     api_key: Optional[str] = None
+    # 'model' 跟前端 CustomProviderProfile 里的 default_model 兼容 — 前端把整个 profile 当 body 发。
+    # 后端 Pydantic v2 会静默丢掉未知字段，所以这里加一个 alias。
     model: Optional[str] = None
+    default_model: Optional[str] = None
+    name: Optional[str] = None
+    protocol: Optional[str] = None
     base_url: Optional[str] = None
     request_config: Optional[Dict[str, Any]] = None
+
+    def resolved_model(self) -> Optional[str]:
+        return self.model or self.default_model
 
 
 class ProviderInfo(BaseModel):
@@ -97,70 +113,30 @@ class LLMFullConfig(BaseModel):
 
 # 各提供商的已知模型（供前端选择）
 PROVIDER_MODELS = {
-    "tongyi": [
-        "qwen-max", "qwen-plus", "qwen-turbo",
-        "qwen-max-2025-01-25", "qwen-plus-2025-01-25",
-        "qwen-turbo-2024-11-01", "qwen2.5-72b-instruct",
-        "qwen2.5-32b-instruct", "qwen2.5-14b-instruct",
-        "qwen2.5-7b-instruct", "qwen2.5-3b-instruct",
-    ],
-    "openai": [
-        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4",
-        "gpt-3.5-turbo", "o1", "o3-mini",
-    ],
-    "anthropic": [
-        "claude-sonnet-4-20250514", "claude-sonnet-4", "claude-3-5-sonnet-latest",
-        "claude-3-opus-latest", "claude-3-haiku-latest",
-        "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
-    ],
+    "tongyi": [],
+    "openai": [],
+    "anthropic": [],
     "google": [
         "gemini-2.0-flash", "gemini-2.0-flash-lite",
         "gemini-1.5-pro", "gemini-1.5-flash",
         "gemini-1.5-pro-002", "gemini-1.5-flash-002",
     ],
-    "zhipu": [
-        "glm-4-plus", "glm-4", "glm-4-air", "glm-4-flash",
-        "glm-4v-plus", "glm-4v",
-    ],
-    "baichuan": [
-        "baichuan4-turbo", "baichuan4", "baichuan3-turbo",
-    ],
-    "wenxin": [
-        "ERNIE-4.5-8K-Preview", "ERNIE-4.0-8K", "ERNIE-3.5-8K",
-        "ERNIE-Speed-128K", "ERNIE-Lite-8K",
-    ],
-    "xfyun": [
-        "4.0Ultra", "4.0Turbo", "3.5Max", "3.0Max",
-        "lite", "general", "generalv3",
-    ],
+    "zhipu": ["glm-5.4", "glm-5.2", "glm-5-flash"],
+    "baichuan": [],
+    "wenxin": [],
+    "xfyun": [],
     "deepseek": [
-        "deepseek-chat", "deepseek-reasoner",
+        "deepseek-v4-flash", "deepseek-v4-pro",
     ],
-    "yi": [
-        "yi-large", "yi-large-turbo", "yi-medium", "yi-spark",
-    ],
+    "yi": [],
     "ollama": [
         "llama3.2", "llama3.1", "qwen2.5", "mistral",
         "deepseek-r1", "phi4", "gemma2", "codellama",
     ],
-    "minimax": [
-        "MiniMax-Text-01", "MiniMax-M1", "MiniMax-M2",
-        "MiniMax-M2.1", "MiniMax-M2.5", "MiniMax-M2.7",
-    ],
-    "moonshot": [
-        "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k",
-    ],
-    "stepfun": [
-        "step-2-16k-nightly", "step-1-32k", "step-1-8k",
-        "step-1-flash",
-    ],
-    "siliconflow": [
-        "Qwen/Qwen2.5-7B-Instruct", "Qwen/Qwen2.5-14B-Instruct",
-        "Qwen/Qwen2.5-32B-Instruct", "Qwen/Qwen2.5-72B-Instruct",
-        "deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1",
-        "meta-llama/Llama-3.3-70B-Instruct",
-        "THUDM/glm-4-9b-chat",
-    ],
+    "minimax": [],
+    "moonshot": [],
+    "stepfun": [],
+    "siliconflow": [],
     # W4-41 (2026-06-30): edgefn.net 聚合代理, 一个 key 走多模型
     # - GLM-4.5V: 当前 EdgeFn 控制台推荐示例模型
     # - GLM-5.2: 验证 OK (reasoning model, 原生 tool_calls)

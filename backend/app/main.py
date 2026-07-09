@@ -33,6 +33,7 @@ from app.api import proxy
 from app.api import attachments as attachments_api
 from app.api import proxy
 from app.api import contact as contact_api
+from app.api import coze_skills as coze_skills_api
 from app.api import proxy
 from app.api.stream import router as stream_router
 from app.core.multi_agent.api import router as team_router
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(hermes_router)
     app.include_router(dreaming_api.router)
     app.include_router(skills_api.router)
+    app.include_router(coze_skills_api.router)
     app.include_router(marketplace_api.router)
     app.include_router(hub_api.router)
     app.include_router(tool_harness_api.router)

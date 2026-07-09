@@ -21,6 +21,7 @@ import {
 } from '../../api/skills';
 import { reinstallMarketplaceSkill } from '../../api/marketplace';
 import { MarketplaceView } from '../Marketplace/MarketplaceView';
+import CozeSkillsMarket from './CozeSkillsMarket';
 import { CommunityHubView } from './CommunityHubView';
 
 // ── 共享样式 ──────────────────────────────────────
@@ -898,7 +899,7 @@ export const SkillManagement: React.FC = () => {
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
                 {subTab === 'local' && <LocalSkillsView />}
-                {subTab === 'marketplace' && <MarketplaceView />}
+                {subTab === 'marketplace' && <><CozeSkillsMarket onInstall={() => window.location.reload()} /><MarketplaceView /></>}
                 {subTab === 'community' && <CommunityHubView />}
             </div>
         </div>

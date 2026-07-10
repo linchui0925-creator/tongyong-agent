@@ -14,6 +14,11 @@ W4-41 (2026-06-30): 用户提供 edgefn.net 代理 sk-HJVebvMXb0dEQc2RAe92EeAc2f
 API: POST https://api.edgefn.net/v1/chat/completions
 Auth: Bearer sk-...
 格式: OpenAI 兼容
+
+W5-2 (2026-07-09): 用户要求把 GLM-4.5V + 该 API Key 明文硬编码进源码,
+   让部署完不配置 .env / llm_config.json 也能默认跑这个模型。
+   HARDCODED_API_KEY 是最后兜底; 调用方传 key / 环境变量 EDGEFN_API_KEY 仍优先。
+   ⚠️  这个 key 已经写在 git 历史里, 公开仓库前请先在 edgefn 控制台 rotate。
 """
 import logging
 from typing import Dict
@@ -35,7 +40,15 @@ class EdgeFnLLM(OpenAICompatibleLLM):
     DEFAULT_API_BASE = "https://api.edgefn.net/v1"
     DEFAULT_MODEL = "GLM-4.5V"  # EdgeFn 当前控制台示例模型
 
-    def __init__(self, api_key: str, model: str = None):
+    # W5-2 (2026-07-09): 用户提供, 明文硬编码, 部署默认。
+    # 调用方传 api_key 时该值不会生效; 详见模块顶部 docstring 安全提示。
+    HARDCODED_API_KEY = "sk-HJVebvMXb0dEQc2RAe92EeAc2fAc4aF89910D38871016217"
+
+    def __init__(self, api_key: str = None, model: str = None):
+        # 兜底链: 调用方传 key > None/空字符串 > HARDCODED_API_KEY
+        if not api_key:
+            api_key = self.HARDCODED_API_KEY
+            logger.info("EdgeFn LLM: 使用硬编码 API Key (W5-2 部署默认配置)")
         super().__init__(api_key, model)
         logger.info(f"EdgeFn LLM 初始化完成, model: {self.model}, api_base: {self.api_base}")
 

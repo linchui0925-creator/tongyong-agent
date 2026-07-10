@@ -21,7 +21,7 @@
 | LLM 路由 | 通过 `LLMManager` 统一, 支持运行时切换 provider |
 | Agent 协作 | `app/core/multi_agent/team.py` 593 行 — Leader + 多个角色 |
 | 持久化 | SQLite (`backend/data/agent.db`), ChromaDB 向量, langgraph checkpoint |
-| 默认 LLM | **edgefn / GLM-5.2** (W4-41 切换, 用户提供 sk-HJVebvMXb0d...6217) — edgefn.net 聚合代理, 智谱 reasoning, 原生 function call |
+| 默认 LLM | **edgefn / GLM-4.5V** (W5-2 硬编码, sk-HJVebvMXb0d...6217 明文进 git) — edgefn.net 聚合代理, 部署不配 .env / llm_config.json 也跑 GLM-4.5V; `edgefn.py:43` `HARDCODED_API_KEY` 是最后兜底, `config.py:63` `edgefn_api_key` 默认值是主入口 |
 | 协议端口 | backend 8000, frontend 5173 (vite dev proxy /api → 8000) |
 
 ---
@@ -206,6 +206,7 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W5-2 | edgefn/GLM-4.5V 硬编码部署默认: edgefn.py HARDCODED_API_KEY + config.py edgefn_api_key 默认值 + llm_manager._default_model() 兜底, 全新部署不配 .env / llm_config.json 也跑 GLM-4.5V; .env + llm_config.json 同步切到 edgefn/GLM-4.5V; ⚠️ API key 明文进 git, public repo 前先在 edgefn 控制台 rotate |
 | (pending) | W5-1 | Skill Community Hub: catalog sync 跟 install 严格分离; browse layer (.lol/.cn) active mapping miner; UI 3rd sub-tab "✨ Community (Hub)"; 4 种卡片状态 (Available/Installed/Updated/Browse-Only); install 必须用户主动 + 二次确认 toast; default whitelist 2 个 (anthropics + ComposioHQ), 待 linc 跑 HEAD probe 验证真假后再扩 |
 | (pending) | W4-51 | 会话附件渲染层 MVP: 上传/安全 serve/图片直显/文件卡片/拖拽粘贴/stream attachment_ids |
 | (pending) | W4-50 | 单 agent 隔离 workspace 工具; workspace_terminal 等完整输出; LangChain tool session 上下文 + 自动压缩/context 事件对齐 |
@@ -239,7 +240,26 @@ with TestClient(app) as c:
 
 ## 6.5 已知坑 (按 W4 倒序)
 
-### W5-1: Skill Community Hub (catalog ↔ install 严格分离)
+### W5-2: edgefn/GLM-4.5V 硬编码部署默认 (明文 API Key 进 git)
+
+- **场景**: 用户要求把 edgefn 那个 GLM-4.5V 模型 (sk-HJVebvMXb0d...6217) 明文写死进代码, 部署完不配置 API 也能默认跑这个模型。
+- **核心铁律**:
+  1. **兜底链 4 级**: 调用方显式 `api_key` > `EDGEFN_API_KEY` 环境变量 / `.env` / `settings.edgefn_api_key` > **`EdgeFnLLM.HARDCODED_API_KEY`** (代码常量, 最后兜底) > 报错
+  2. **`edgefn.py` 的 `HARDCODED_API_KEY` 是 absolute fallback**: 即使 .env / llm_config.json / settings 全空, `EdgeFnLLM()` 不传 key 也能用
+  3. **`config.py` 的 `edgefn_api_key: str = "sk-..."` 是 pydantic 默认**: 走 `Settings` 类的 .env 加载链, 部署时 .env 没写也会用这个默认值
+  4. **`llm_manager.py:_default_model()` 兜底改 GLM-4.5V**: 配合 `try_restore_saved_provider` 失败路径, 跟 `factory.get_llm()` 串成完整 fallback
+- **修改文件 (4 个)**:
+  - `backend/app/llm/edgefn.py`: 加 `HARDCODED_API_KEY = "sk-HJVebvMXb0d..."`; `__init__(api_key=None, model=None)` 没传 key 自动用 hardcoded
+  - `backend/app/services/llm_manager.py`: `_default_model()` 默认值 `glm-5.2` → `GLM-4.5V`; builtin edgefn `default_model` `GLM-5.2` → `GLM-4.5V` (models 列表顺序调整, GLM-5.2 仍可用)
+  - `backend/app/config.py`: `default_llm_provider: tongyi` → `edgefn`; 加 `default_llm_model: str = "GLM-4.5V"`; `edgefn_api_key: Optional=None` → `str="sk-..."` 硬编码默认
+  - `backend/.env` + `backend/data/llm_config.json`: 当前 dev 实例同步切到 edgefn/GLM-4.5V (这两个 gitignored, 不进 git)
+- **安全警告 ⚠️**: API key 明文进了 `app/llm/edgefn.py` + `app/config.py` 两个源文件, 即将进 git 历史。
+  - 当前仓库 `git remote` 是 local, 暂时安全
+  - **push 到 GitHub public 前**: 必须先去 edgefn 控制台 rotate 这把 key, 然后同步更新两处源文件
+  - 已在两个文件顶部 docstring + 字段注释都加了 `⚠️ rotate` 提醒
+- **测试**: 173 passed (安全子集回归), in-process TestClient 验证 `current_provider=edgefn, current_model=GLM-4.5V`; 全新部署场景 (删 `llm_config.json` + 临时空 `.env` + unset `EDGEFN_API_KEY`) 验证 `factory.get_llm()` 拿到 `EdgeFnLLM(model=GLM-4.5V, key=sk-HJVebv...)`
+- **遗留**: `engine.llm is None at startup` 是预存行为 (`try_restore_saved_provider` 阶段不构造实例, 首次 chat 才建), 不在本次范围
+
 
 - **场景**: 用户反馈本地 skill 不够用, 想从社区 (skillhub.lol / skillhub.cn) 自动拉取最新 skill 到本地, 多样性 + 实时更新 + 按需下载。
 - **核心铁律 (spec §0 §3 §7)**:

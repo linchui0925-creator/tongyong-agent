@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     debug: bool = True
     database_url: str = "sqlite:///./data/tongyong.db"
     chroma_persist_directory: str = "./data/chroma"
-    default_llm_provider: str = "tongyi"
+    default_llm_provider: str = "edgefn"  # W5-2: 默认 edgefn
+    default_llm_model: str = "GLM-4.5V"   # W5-2: 默认 GLM-4.5V
     
     tongyi_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
@@ -59,7 +60,10 @@ class Settings(BaseSettings):
     moonshot_api_key: Optional[str] = None
     stepfun_api_key: Optional[str] = None
     siliconflow_api_key: Optional[str] = None
-    edgefn_api_key: Optional[str] = None
+    # W5-2 (2026-07-09): 默认硬编码 edgefn API Key。
+    # 部署不配 EDGEFN_API_KEY 环境变量 / .env 时使用该值。
+    # ⚠️  该 key 已经写在 git 历史里, 公开仓库前请先在 edgefn 控制台 rotate。
+    edgefn_api_key: str = "sk-HJVebvMXb0dEQc2RAe92EeAc2fAc4aF89910D38871016217"
     
     memory_top_k: int = 10
     compress_threshold: int = 5000

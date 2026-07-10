@@ -76,7 +76,9 @@ class LLMManager:
         return getattr(self, "config", {}).get("default_provider", "edgefn")
 
     def _default_model(self) -> str:
-        return getattr(self, "config", {}).get("default_model", "glm-5.2")
+        # W5-2 (2026-07-09): 兜底默认模型从 glm-5.2 → GLM-4.5V,
+        # 配合 edgefn.py 的 HARDCODED_API_KEY, 部署不配 llm_config.json 也能跑
+        return getattr(self, "config", {}).get("default_model", "GLM-4.5V")
 
     def _default_model_for(self, provider_id: str) -> str:
         for p in getattr(self, "builtin_providers", []):
@@ -271,8 +273,8 @@ class LLMManager:
             'name': '⚡ EdgeFn聚合',
             'protocol': 'openai_compatible',
             'base_url': 'https://api.edgefn.net/v1',
-            'default_model': 'GLM-5.2',
-            'models': ['GLM-5.2', 'GLM-4.5V', 'GLM-4-flash', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat'],
+            'default_model': 'GLM-4.5V',  # W5-2: 部署默认硬编码 GLM-4.5V
+            'models': ['GLM-4.5V', 'GLM-5.2', 'GLM-4-flash', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat'],
             'icon': '⚡',
             'color': '#F59E0B',
             'notes': 'EdgeFn聚合代理，一个Key支持智谱/DeepSeek等多模型，国内访问稳定',

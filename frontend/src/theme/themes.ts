@@ -1,11 +1,11 @@
 /**
  * Theme definitions — 维知 四材 (W5-3 材质感主题)
  *
- * 4 套主题对应四种"材质":
- *   ink-paper   (key: dark-stone)      墨·朱砂, 纸白底 + 赭红 + 蓝/黄/紫三态
- *   paper-cinnabar (key: light-clean)  纸·朱砂, 暖白宣纸 + 朱砂红 + 墨/靛/琥珀
- *   oxide       (key: sepia-warm)     铜·锈, 暖铜氧化棕 + 铜橙
- *   night-cyan  (key: midnight-blue)  夜·电青, 深墨色 + 亮青电光
+ * 4 套主题对应 4 个真正不同的材质, 互相配色不重叠:
+ *   墨·朱砂 (key: dark-stone)      暖白宣纸 + 墨黑 + 朱砂红 — 古典水墨
+ *   纸·碧玉 (key: light-clean)     冷翡翠纸 + 深碧 + 翠绿 — 文房青绿
+ *   铜·金箔 (key: sepia-warm)      深古铜底 + 金箔 + 琥珀 — 金属暖调
+ *   夜·电青 (key: midnight-blue)  深电青底 + 亮青电光 — 合成器夜色
  *
  * key 名保留旧值以兼容 localStorage / 类型, 显示名/配色全部换成材质系。
  * 每套材质新增多 accent 字段 (--accent / --accent-2 / --accent-3 / --accent-4)
@@ -15,13 +15,13 @@
  */
 
 export type ThemeId = 'dark-stone' | 'light-clean' | 'sepia-warm' | 'midnight-blue';
-export type Material = 'ink-paper' | 'paper-cinnabar' | 'oxide' | 'night-cyan';
+export type Material = 'ink-cinnabar' | 'paper-jade' | 'copper-gold' | 'night-cyan';
 
 export interface ThemeTokens {
   id: ThemeId;
   /** 显示名 (中文, 用于 ThemeSwitcher) */
   name: string;
-  /** 中文单字标记, 用于侧栏紧凑按钮 (墨/纸/铜/夜) */
+  /** 中文单字标记, 用于侧栏紧凑按钮 */
   glyph: string;
   description: string;
   isDark: boolean;
@@ -30,8 +30,6 @@ export interface ThemeTokens {
 }
 
 // 飘逸 + 大气 display stack
-// 优先级: 系统里若有方正/华文楷体/STKaiti, 直接用; 否则 fallback 到
-// PingFang/思源宋体/Hiragino Mincho; 没有则用系统中文字符 generic 兜底。
 const displayFontFamily = [
   '"马善政体"',
   '"方正清刻本悦宋"',
@@ -50,7 +48,7 @@ const displayFontFamily = [
   'serif',
 ].join(', ');
 
-// body 用冷静无衬线系统栈, 不引 Google Fonts (sandbox 不能外网)
+// body 用冷静无衬线系统栈
 const baseFontFamily = [
   '"Inter"',
   '"SF Pro Text"',
@@ -90,33 +88,33 @@ const baseTokens = {
 };
 
 export const themes: Record<ThemeId, ThemeTokens> = {
-  // ── 墨·朱砂 (浅纸底, 赭红主调) ──
+  // ── 墨·朱砂 — 暖白宣纸 + 墨黑 + 朱砂 ──
   'dark-stone': {
     id: 'dark-stone',
     name: '墨·朱砂',
     glyph: '墨',
-    description: '纸白底, 朱砂红点睛, 端庄大气',
+    description: '暖白宣纸, 朱砂红点睛, 端庄大气',
     isDark: false,
-    material: 'ink-paper',
+    material: 'ink-cinnabar',
     tokens: {
       ...baseTokens,
-      '--bg-primary':   '#f4ede0',
+      '--bg-primary':   '#f4eee0',
       '--bg-secondary': 'rgba(232, 220, 200, 0.72)',
       '--bg-tertiary':  'rgba(216, 200, 174, 0.7)',
       '--bg-card':      'rgba(248, 242, 230, 0.82)',
-      '--bg-hover':     'rgba(192, 57, 43, 0.10)',
+      '--bg-hover':     'rgba(184, 48, 42, 0.10)',
       '--bg-inset':     'rgba(222, 207, 184, 0.7)',
       '--bg-glass':     'rgba(245, 237, 224, 0.66)',
 
       '--accent':        '#b8302a',
-      '--accent-2':      '#2a4d8f',
-      '--accent-3':      '#c69a3a',
-      '--accent-4':      '#6b3d8e',
+      '--accent-2':      '#1a1815',
+      '--accent-3':      '#8a5a2a',
+      '--accent-4':      '#4a3f33',
       '--accent-hover':  '#c93c34',
       '--accent-subtle': 'rgba(184, 48, 42, 0.12)',
       '--accent-border': 'rgba(184, 48, 42, 0.38)',
 
-      '--text-primary':   '#1f1c18',
+      '--text-primary':   '#1a1815',
       '--text-secondary': '#3a342c',
       '--text-tertiary':  '#6a6055',
       '--text-muted':     '#938878',
@@ -128,151 +126,151 @@ export const themes: Record<ThemeId, ThemeTokens> = {
       '--danger': '#b8302a',
       '--danger-subtle': 'rgba(184, 48, 42, 0.12)',
 
-      '--border':       'rgba(31, 28, 24, 0.14)',
-      '--border-hover': 'rgba(31, 28, 24, 0.26)',
-      '--border-light': 'rgba(31, 28, 24, 0.07)',
+      '--border':       'rgba(26, 24, 21, 0.14)',
+      '--border-hover': 'rgba(26, 24, 21, 0.26)',
+      '--border-light': 'rgba(26, 24, 21, 0.07)',
 
       '--bubble-user-bg-start': '#b8302a',
       '--bubble-user-bg-end':   '#8a1f1c',
       '--bubble-user-text':     '#fff8ec',
       '--bubble-agent-bg':      'rgba(248, 242, 230, 0.92)',
-      '--bubble-agent-border':  'rgba(31, 28, 24, 0.10)',
-      '--bubble-agent-text':    '#1f1c18',
+      '--bubble-agent-border':  'rgba(26, 24, 21, 0.10)',
+      '--bubble-agent-text':    '#1a1815',
       '--avatar-user-start':    '#d35445',
       '--avatar-user-end':      '#8a1f1c',
-      '--avatar-agent-start':   '#1f1c18',
+      '--avatar-agent-start':   '#1a1815',
       '--avatar-agent-end':     '#4a3f33',
 
-      '--shadow-sm': '0 1px 2px rgba(31, 28, 24, 0.10)',
-      '--shadow-md': '0 6px 20px rgba(31, 28, 24, 0.14)',
-      '--shadow-lg': '0 16px 48px rgba(31, 28, 24, 0.18)',
+      '--shadow-sm': '0 1px 2px rgba(26, 24, 21, 0.10)',
+      '--shadow-md': '0 6px 20px rgba(26, 24, 21, 0.14)',
+      '--shadow-lg': '0 16px 48px rgba(26, 24, 21, 0.18)',
     },
   },
 
-  // ── 纸·朱砂 (深色墨底, 朱砂亮) ──
+  // ── 纸·碧玉 — 冷翡翠纸 + 深碧 ──
   'light-clean': {
     id: 'light-clean',
-    name: '纸·朱砂',
+    name: '纸·碧玉',
     glyph: '纸',
-    description: '墨底朱砂, 纸面浮出一点绛红',
-    isDark: true,
-    material: 'paper-cinnabar',
-    tokens: {
-      ...baseTokens,
-      '--bg-primary':   '#0e0d0c',
-      '--bg-secondary': 'rgba(26, 23, 22, 0.78)',
-      '--bg-tertiary':  'rgba(40, 35, 32, 0.78)',
-      '--bg-card':      'rgba(22, 20, 18, 0.74)',
-      '--bg-hover':     'rgba(216, 75, 64, 0.12)',
-      '--bg-inset':     'rgba(8, 7, 7, 0.74)',
-      '--bg-glass':     'rgba(18, 16, 15, 0.66)',
-
-      '--accent':        '#d84b40',
-      '--accent-2':      '#4d7fc4',
-      '--accent-3':      '#e0b056',
-      '--accent-4':      '#9c6dc7',
-      '--accent-hover':  '#e86757',
-      '--accent-subtle': 'rgba(216, 75, 64, 0.16)',
-      '--accent-border': 'rgba(216, 75, 64, 0.4)',
-
-      '--text-primary':   '#f5ecdc',
-      '--text-secondary': '#d3c5ad',
-      '--text-tertiary':  '#9a8c75',
-      '--text-muted':     '#6d614f',
-
-      '--success': '#5fb55f',
-      '--success-subtle': 'rgba(95, 181, 95, 0.14)',
-      '--warning': '#e5b135',
-      '--warning-subtle': 'rgba(229, 177, 53, 0.15)',
-      '--danger': '#d84b40',
-      '--danger-subtle': 'rgba(216, 75, 64, 0.14)',
-
-      '--border':       'rgba(216, 197, 173, 0.10)',
-      '--border-hover': 'rgba(216, 197, 173, 0.20)',
-      '--border-light': 'rgba(216, 197, 173, 0.05)',
-
-      '--bubble-user-bg-start': '#d84b40',
-      '--bubble-user-bg-end':   '#a03228',
-      '--bubble-user-text':     '#fff5e8',
-      '--bubble-agent-bg':      'rgba(22, 20, 18, 0.92)',
-      '--bubble-agent-border':  'rgba(216, 197, 173, 0.10)',
-      '--bubble-agent-text':    '#f5ecdc',
-      '--avatar-user-start':    '#e86757',
-      '--avatar-user-end':      '#a03228',
-      '--avatar-agent-start':   '#f5ecdc',
-      '--avatar-agent-end':     '#5c4f3d',
-
-      '--shadow-sm': '0 1px 2px rgba(0,0,0,0.4)',
-      '--shadow-md': '0 6px 20px rgba(0,0,0,0.5)',
-      '--shadow-lg': '0 16px 48px rgba(0,0,0,0.6)',
-    },
-  },
-
-  // ── 铜·锈 (氧化铜棕, 哑光暖) ──
-  'sepia-warm': {
-    id: 'sepia-warm',
-    name: '铜·锈',
-    glyph: '铜',
-    description: '氧化铜棕, 哑光铜橙',
+    description: '冷翡翠纸, 翠绿主调, 文房青绿',
     isDark: false,
-    material: 'oxide',
+    material: 'paper-jade',
     tokens: {
       ...baseTokens,
-      '--bg-primary':   '#ece2cf',
-      '--bg-secondary': 'rgba(222, 209, 188, 0.74)',
-      '--bg-tertiary':  'rgba(204, 188, 160, 0.72)',
-      '--bg-card':      'rgba(238, 229, 213, 0.82)',
-      '--bg-hover':     'rgba(168, 91, 42, 0.12)',
-      '--bg-inset':     'rgba(216, 199, 174, 0.7)',
-      '--bg-glass':     'rgba(236, 226, 207, 0.66)',
+      '--bg-primary':   '#dee5dd',
+      '--bg-secondary': 'rgba(204, 217, 202, 0.72)',
+      '--bg-tertiary':  'rgba(184, 200, 182, 0.7)',
+      '--bg-card':      'rgba(228, 235, 226, 0.82)',
+      '--bg-hover':     'rgba(58, 110, 82, 0.10)',
+      '--bg-inset':     'rgba(196, 210, 195, 0.7)',
+      '--bg-glass':     'rgba(222, 229, 220, 0.66)',
 
-      '--accent':        '#a85b2a',
-      '--accent-2':      '#7c4222',
-      '--accent-3':      '#c98a1a',
-      '--accent-4':      '#4f3520',
-      '--accent-hover':  '#b96935',
-      '--accent-subtle': 'rgba(168, 91, 42, 0.14)',
-      '--accent-border': 'rgba(168, 91, 42, 0.36)',
+      '--accent':        '#2f6e52',
+      '--accent-2':      '#1a3830',
+      '--accent-3':      '#7a8a4a',
+      '--accent-4':      '#3a5a78',
+      '--accent-hover':  '#3a8765',
+      '--accent-subtle': 'rgba(47, 110, 82, 0.14)',
+      '--accent-border': 'rgba(47, 110, 82, 0.38)',
 
-      '--text-primary':   '#2c1f12',
-      '--text-secondary': '#473522',
-      '--text-tertiary':  '#6f5536',
-      '--text-muted':     '#917a55',
+      '--text-primary':   '#1a2823',
+      '--text-secondary': '#2e3f37',
+      '--text-tertiary':  '#4d6359',
+      '--text-muted':     '#7a8a82',
 
-      '--success': '#7c4222',
-      '--success-subtle': 'rgba(124, 66, 34, 0.12)',
-      '--warning': '#c98a1a',
-      '--warning-subtle': 'rgba(201, 138, 26, 0.15)',
+      '--success': '#2f6e52',
+      '--success-subtle': 'rgba(47, 110, 82, 0.12)',
+      '--warning': '#a87a2a',
+      '--warning-subtle': 'rgba(168, 122, 42, 0.15)',
       '--danger': '#a83a2a',
       '--danger-subtle': 'rgba(168, 58, 42, 0.12)',
 
-      '--border':       'rgba(44, 31, 18, 0.14)',
-      '--border-hover': 'rgba(44, 31, 18, 0.26)',
-      '--border-light': 'rgba(44, 31, 18, 0.07)',
+      '--border':       'rgba(26, 40, 35, 0.14)',
+      '--border-hover': 'rgba(26, 40, 35, 0.26)',
+      '--border-light': 'rgba(26, 40, 35, 0.07)',
 
-      '--bubble-user-bg-start': '#a85b2a',
-      '--bubble-user-bg-end':   '#7c4222',
-      '--bubble-user-text':     '#fbeed7',
-      '--bubble-agent-bg':      'rgba(238, 229, 213, 0.92)',
-      '--bubble-agent-border':  'rgba(44, 31, 18, 0.10)',
-      '--bubble-agent-text':    '#2c1f12',
-      '--avatar-user-start':    '#c98a4a',
-      '--avatar-user-end':      '#7c4222',
-      '--avatar-agent-start':   '#2c1f12',
-      '--avatar-agent-end':     '#4f3520',
+      '--bubble-user-bg-start': '#2f6e52',
+      '--bubble-user-bg-end':   '#1a4a36',
+      '--bubble-user-text':     '#f0f5ee',
+      '--bubble-agent-bg':      'rgba(228, 235, 226, 0.92)',
+      '--bubble-agent-border':  'rgba(26, 40, 35, 0.10)',
+      '--bubble-agent-text':    '#1a2823',
+      '--avatar-user-start':    '#4a8a6a',
+      '--avatar-user-end':      '#1a4a36',
+      '--avatar-agent-start':   '#1a3830',
+      '--avatar-agent-end':     '#3a5a48',
 
-      '--shadow-sm': '0 1px 2px rgba(44, 31, 18, 0.10)',
-      '--shadow-md': '0 6px 20px rgba(44, 31, 18, 0.14)',
-      '--shadow-lg': '0 16px 48px rgba(44, 31, 18, 0.18)',
+      '--shadow-sm': '0 1px 2px rgba(26, 40, 35, 0.10)',
+      '--shadow-md': '0 6px 20px rgba(26, 40, 35, 0.14)',
+      '--shadow-lg': '0 16px 48px rgba(26, 40, 35, 0.18)',
     },
   },
 
-  // ── 夜·电青 (深墨蓝绿, 冷峻) ──
+  // ── 铜·金箔 — 深古铜底 + 金箔 ──
+  'sepia-warm': {
+    id: 'sepia-warm',
+    name: '铜·金箔',
+    glyph: '铜',
+    description: '深古铜底, 金箔为亮, 金属暖调',
+    isDark: true,
+    material: 'copper-gold',
+    tokens: {
+      ...baseTokens,
+      '--bg-primary':   '#1d140e',
+      '--bg-secondary': 'rgba(38, 26, 18, 0.78)',
+      '--bg-tertiary':  'rgba(54, 38, 26, 0.78)',
+      '--bg-card':      'rgba(32, 22, 16, 0.74)',
+      '--bg-hover':     'rgba(212, 160, 80, 0.12)',
+      '--bg-inset':     'rgba(14, 10, 7, 0.74)',
+      '--bg-glass':     'rgba(28, 20, 14, 0.66)',
+
+      '--accent':        '#d4a050',
+      '--accent-2':      '#a87035',
+      '--accent-3':      '#e8c478',
+      '--accent-4':      '#7a4818',
+      '--accent-hover':  '#e0b06a',
+      '--accent-subtle': 'rgba(212, 160, 80, 0.16)',
+      '--accent-border': 'rgba(212, 160, 80, 0.40)',
+
+      '--text-primary':   '#f0e3cc',
+      '--text-secondary': '#cdbfa4',
+      '--text-tertiary':  '#9a8a6e',
+      '--text-muted':     '#6e5e48',
+
+      '--success': '#7ab87a',
+      '--success-subtle': 'rgba(122, 184, 122, 0.14)',
+      '--warning': '#e8c478',
+      '--warning-subtle': 'rgba(232, 196, 120, 0.15)',
+      '--danger': '#d87862',
+      '--danger-subtle': 'rgba(216, 120, 98, 0.14)',
+
+      '--border':       'rgba(212, 184, 140, 0.12)',
+      '--border-hover': 'rgba(212, 184, 140, 0.22)',
+      '--border-light': 'rgba(212, 184, 140, 0.06)',
+
+      '--bubble-user-bg-start': '#d4a050',
+      '--bubble-user-bg-end':   '#a87035',
+      '--bubble-user-text':     '#1d140e',
+      '--bubble-agent-bg':      'rgba(32, 22, 16, 0.92)',
+      '--bubble-agent-border':  'rgba(212, 184, 140, 0.12)',
+      '--bubble-agent-text':    '#f0e3cc',
+      '--avatar-user-start':    '#e8c478',
+      '--avatar-user-end':      '#a87035',
+      '--avatar-agent-start':   '#d4a050',
+      '--avatar-agent-end':     '#7a4818',
+
+      '--shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.4)',
+      '--shadow-md': '0 6px 20px rgba(0, 0, 0, 0.5)',
+      '--shadow-lg': '0 16px 48px rgba(0, 0, 0, 0.6)',
+    },
+  },
+
+  // ── 夜·电青 — 深电青底 + 亮青电光 ──
   'midnight-blue': {
     id: 'midnight-blue',
     name: '夜·电青',
     glyph: '夜',
-    description: '深墨夜色, 一道电青划过',
+    description: '深电青底, 亮青电光划过',
     isDark: true,
     material: 'night-cyan',
     tokens: {

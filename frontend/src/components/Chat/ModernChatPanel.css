@@ -1000,7 +1000,56 @@
   flex-shrink: 0;
 }
 
-@keyframes statusPulse {
+/* ─────────────────────────────────────────────────────
+ * Typing Indicator (文字 + 加载点, 不含头像)
+ * ───────────────────────────────────────────────────── */
+.chat-typing {
+  display: flex;
+  align-items: flex-start;
+  margin: 4px 0;
+  padding: 2px 0;
+  animation: rowSlideIn 0.18s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.chat-typing-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bubble-agent-bg);
+  border: 1px solid var(--bubble-agent-border);
+  padding: 8px 14px;
+  border-radius: 999px;
+}
+
+.chat-typing-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.chat-typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: typingBounce 1.2s ease-in-out infinite;
+}
+
+.chat-typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.chat-typing-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+/* @keyframes statusPulse {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }

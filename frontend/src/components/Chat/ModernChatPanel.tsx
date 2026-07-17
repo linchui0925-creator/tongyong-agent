@@ -214,7 +214,29 @@ function InlineImagePreviews({ text }: { text: string }) {
   );
 }
 
-// ── Token Usage Bar ───────────────────────────────────────────────────
+// ── Typing Indicator (文字 + 加载点, 不要头像那一行) ─────────
+function TypingIndicator({ currentTool, toolElapsed, progressText }: {
+  currentTool: { name: string; emoji: string; startTime: number } | null;
+  toolElapsed: number;
+  progressText: string;
+}) {
+  return (
+    <div className="chat-typing">
+      <div className="chat-typing-content">
+        <div className="chat-typing-dots">
+          <span /><span /><span />
+        </div>
+        <span className="chat-typing-label">
+          {currentTool
+            ? `${currentTool.emoji || '⚙'} ${currentTool.name} 执行中… (${(toolElapsed / 1000).toFixed(1)}s)`
+            : progressText || '正在思考…'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// // ── Token Usage Bar ───────────────────────────────────────────────────
 function TokenUsageRing({ contextInfo, isCompressing, savedFlash, onCompress }: {
   contextInfo: ContextInfo | null;
   isCompressing: boolean;
@@ -407,7 +429,6 @@ interface ModernChatPanelProps {
 function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
   const [currentSessionId, setCurrentSessionId] = useState<string>(initialSessionId || '');
   const [inputValue, setInputValue] = useState('');
-  const [showHelp, setShowHelp] = useState(false);
   const [waitingAnswer, setWaitingAnswer] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -575,31 +596,6 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         </div>
       )}
 
-      <div className="chat-toolbar">
-        <button className="btn btn-ghost" onClick={() => setShowHelp(!showHelp)}>
-          {showHelp ? '收起帮助' : '使用提示'}
-        </button>
-      </div>
-
-      {showHelp && (
-        <div className="chat-help">
-          <div className="chat-help-section">
-            <strong>对话</strong>
-            <p>在这里与 维知 交流。会结合上下文、记忆和技能回应你的问题。</p>
-          </div>
-          <div className="chat-help-section">
-            <strong>使用说明</strong>
-            <ul>
-              <li><strong>发送</strong> — 输入内容按 <kbd>Enter</kbd> 发送</li>
-              <li><strong>换行</strong> — 按 <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</li>
-              <li><strong>停止</strong> — 维知 回复时点击输入框旁的停止按钮可中断</li>
-              <li><strong>删除</strong> — 鼠标悬停消息可删除单条记录</li>
-              <li><strong>附件</strong> — 拖拽或粘贴图片/PDF/文档到对话窗口</li>
-            </ul>
-          </div>
-        </div>
-      )}
-
       <div className="chat-messages" ref={messagesRef} onScroll={handleScroll}>
         {messages.length === 0 ? (
           <div className="chat-empty">
@@ -639,6 +635,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
             })}
           </>
         )}
+        {isStreaming && <TypingIndicator currentTool={currentTool} toolElapsed={toolElapsed} progressText={progressText} />}
         <div ref={messagesEndRef} />
       </div>
 

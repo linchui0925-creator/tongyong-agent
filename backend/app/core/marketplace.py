@@ -16,9 +16,13 @@ import json
 import logging
 import os
 import re
+import shutil
+import ssl
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
@@ -56,6 +60,12 @@ _SKILL_THREAT_PATTERNS = [
 _GH_RAW_TEMPLATE = "https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{path}"
 _GH_TREE_API = "https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
 _GH_FILE_API = "https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+
+# 无需 Cookie/API Key 的公开 Skill 社区源。用户仍可在界面添加其他 GitHub 仓库。
+DEFAULT_PUBLIC_SKILL_SOURCES = (
+    "anthropics/skills",
+    "obra/superpowers",
+)
 
 
 # ── 缓存辅助 ──────────────────────────────────────
@@ -149,23 +159,28 @@ def _parse_skill_md(content: str) -> Tuple[Dict[str, Any], str]:
 
 # ── GitHub 抓取 ────────────────────────────────────
 
+# 瞬时网络错误重试次数 (GitHub raw/api 偶发 SSL UNEXPECTED_EOF)
+_HTTP_MAX_RETRIES = 3
+_HTTP_RETRY_BACKOFF = 0.8
+
+
+def _build_ssl_context() -> "ssl.SSLContext":
+    """优先用 certifi 的 CA bundle，没有就 unverified（仅 fallback）"""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl._create_unverified_context()
+
+
 def _http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, Dict[str, str], str]:
     """简易 HTTP GET，返回 (status, headers, body)
 
     macOS 系统的 Python 不带 system CA bundle，会报 CERTIFICATE_VERIFY_FAILED
-    这里优先用 certifi 的 CA bundle（项目里应该装了），没有就回退到 unverified
+    这里优先用 certifi 的 CA bundle（项目里应该装了），没有就回退到 unverified。
+    对瞬时网络错误（SSL UNEXPECTED_EOF / URLError / timeout）做指数退避重试。
     """
-    import urllib.request
-    import urllib.error
-    import ssl
-
-    # 构建 SSL context：优先用 certifi 的 CA bundle，没有就 unverified（仅 fallback）
-    ssl_context = None
-    try:
-        import certifi
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        ssl_context = ssl._create_unverified_context()
+    ssl_context = _build_ssl_context()
 
     req = urllib.request.Request(url)
     req.add_header("User-Agent", "tongyong-agent-marketplace/1.0")
@@ -176,14 +191,21 @@ def _http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, 
         for k, v in headers.items():
             req.add_header(k, v)
 
-    try:
-        with urllib.request.urlopen(req, timeout=15, context=ssl_context) as resp:
-            return resp.status, dict(resp.headers), resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers) if e.headers else {}, ""
-    except (urllib.error.URLError, TimeoutError) as e:
-        logger.warning(f"GET {url} 失败: {type(e).__name__}: {e}")
-        return 0, {}, ""
+    last_err: Optional[Exception] = None
+    for attempt in range(1, _HTTP_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=ssl_context) as resp:
+                return resp.status, dict(resp.headers), resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            # HTTP 层面的错误 (403/404/500) 不重试, 直接返回
+            return e.code, dict(e.headers) if e.headers else {}, ""
+        except (urllib.error.URLError, ssl.SSLError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt < _HTTP_MAX_RETRIES:
+                time.sleep(_HTTP_RETRY_BACKOFF * attempt)
+                continue
+    logger.warning(f"GET {url} 失败 (重试 {_HTTP_MAX_RETRIES} 次): {type(last_err).__name__}: {last_err}")
+    return 0, {}, ""
 
 
 def _list_skill_files_in_repo(owner: str, repo: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -224,9 +246,8 @@ def _list_skill_files_in_repo(owner: str, repo: str) -> Dict[str, List[Dict[str,
             if item.get("type") != "blob":
                 continue
             ip = item.get("path", "")
-            # 在 skill 目录下, 且不是更深的子目录
-            ip_dir = str(Path(ip).parent)
-            if ip_dir == skill_dir:
+            # 保留 Skill 目录下的完整递归结构（references/scripts/assets 等）。
+            if ip == skill_md or ip.startswith(skill_dir.rstrip("/") + "/"):
                 files.append({
                     "path": ip,
                     "size": int(item.get("size", 0) or 0),
@@ -272,6 +293,36 @@ def _fetch_skill_content(owner: str, repo: str, path: str) -> Optional[str]:
     return body
 
 
+def _fetch_skill_bytes(owner: str, repo: str, path: str) -> Optional[bytes]:
+    """按原始字节下载 Skill 配套文件。"""
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    try:
+        import certifi
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_context = ssl._create_unverified_context()
+
+    url = _GH_RAW_TEMPLATE.format(owner=owner, repo=repo, path=path)
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "tongyong-agent-marketplace/1.0"},
+    )
+    if settings.marketplace_github_token:
+        request.add_header("Authorization", f"token {settings.marketplace_github_token}")
+    try:
+        with urllib.request.urlopen(request, timeout=15, context=ssl_context) as response:
+            if response.status != 200:
+                return None
+            return response.read()
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+        logger.warning("拉取 %s/%s/%s 失败: %s", owner, repo, path, exc)
+        return None
+
+
 # ── 注册表管理 ────────────────────────────────────
 
 def get_registry() -> Dict[str, Any]:
@@ -287,16 +338,19 @@ def list_marketplace_skills(
     """从 registry 列出 skill（不刷新缓存）
 
     返回每条：{name, description, category, version, tags, source, source_url, content_preview}
+    同名 skill 可能来自多个 source，因此这里按 (name, source_repo) 去重，
+    避免前端出现重复 key，也避免同一仓库的重复条目被重复展示。
     """
     cache = _load_cache()
     results: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
     search_lower = (search or "").lower().strip()
 
     for src_id, src in cache.get("sources", {}).items():
         if source and src_id != source:
             continue
+        source_repo = f"{src.get('owner')}/{src.get('repo')}"
         for skill in src.get("skills", []):
-            # 跳过被安全扫描过滤的
             if skill.get("quarantined_reason"):
                 continue
             cat = skill.get("category", "general")
@@ -306,8 +360,13 @@ def list_marketplace_skills(
                 haystack = f"{skill.get('name', '')} {skill.get('description', '')}".lower()
                 if search_lower not in haystack:
                     continue
+
+            dedupe_key = (skill.get("name", ""), source_repo)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
             files_meta = skill.get("files", [])
-            # 统计: 配套文件数 + 总字节 (SKILL.md 本体除外)
             extra_files = [f for f in files_meta if f.get("path") != skill.get("path")]
             extra_size = sum(int(f.get("size", 0) or 0) for f in extra_files)
 
@@ -318,11 +377,10 @@ def list_marketplace_skills(
                 "version": skill.get("version", "0.0.0"),
                 "tags": skill.get("tags", []),
                 "source": src_id,
-                "source_repo": f"{src.get('owner')}/{src.get('repo')}",
+                "source_repo": source_repo,
                 "source_path": skill.get("path"),
                 "source_url": f"https://github.com/{src.get('owner')}/{src.get('repo')}/blob/HEAD/{skill.get('path')}",
                 "size_bytes": skill.get("size_bytes", 0),
-                # 配套文件元数据 (含 path/size/sha)
                 "files": files_meta,
                 "file_count": len(extra_files),
                 "total_size_bytes": skill.get("size_bytes", 0) + extra_size,
@@ -449,10 +507,30 @@ def refresh_source(owner: str, repo: str, force: bool = False) -> Dict[str, Any]
     return {"ok": True, "count": len(skills), "filtered": sum(1 for s in skills if s.get("quarantined_reason"))}
 
 
+def get_configured_sources() -> List[str]:
+    """返回内置公开社区源与用户源的稳定去重集合。"""
+    return list(dict.fromkeys([
+        *DEFAULT_PUBLIC_SKILL_SOURCES,
+        *(source.strip() for source in settings.marketplace_sources if source.strip()),
+    ]))
+
+
+def ensure_public_sources(force: bool = False) -> Dict[str, Any]:
+    """首次打开市场时填充公开社区缓存；已有缓存时遵循 TTL。"""
+    cache = _load_cache()
+    results: Dict[str, Any] = {}
+    for source in DEFAULT_PUBLIC_SKILL_SOURCES:
+        if not force and source in cache.get("sources", {}) and _is_cache_fresh(cache["sources"][source]):
+            continue
+        owner, repo = source.split("/", 1)
+        results[source] = refresh_source(owner, repo, force=force)
+    return results
+
+
 def refresh_all_sources(force: bool = False) -> Dict[str, Any]:
-    """刷新所有 sources"""
+    """刷新所有内置公开社区源和用户源。"""
     results = {}
-    for src in settings.marketplace_sources:
+    for src in get_configured_sources():
         src = src.strip()
         if "/" not in src:
             continue
@@ -507,6 +585,80 @@ def remove_source(owner_repo: str) -> Dict[str, Any]:
 _MAX_SKILL_BUNDLE_BYTES = 5 * 1024 * 1024  # 5MB
 
 
+def _resolve_skill_in_repo(owner: str, repo: str, skill_id: str) -> Dict[str, Any]:
+    """单个 skill 精准解析 (只调一次 tree API, 不全仓库拉取 SKILL.md)
+
+    skills.sh 的 skillId 与仓库目录名不一定一致, 依次尝试:
+      1. skill 目录名 == skill_id
+      2. SKILL.md frontmatter 的 name == skill_id
+    命中后只解析该 skill 的 SKILL.md, 返回跟 get_marketplace_skill 兼容的 dict。
+    找不到时返回 {ok: False, error, candidates}。
+    """
+    files_map = _list_skill_files_in_repo(owner, repo)
+    if not files_map:
+        return {"ok": False, "error": "list_failed_or_empty_repo", "candidates": []}
+
+    source_id = f"{owner}/{repo}"
+    candidates = sorted({str(PurePosixPath(md).parent.name) for md in files_map})
+
+    # 1) 目录名精确匹配
+    matched_md: Optional[str] = None
+    for md in files_map:
+        if str(PurePosixPath(md).parent.name) == skill_id:
+            matched_md = md
+            break
+
+    # 2) frontmatter name 匹配 (逐个拉, 命中即停)
+    content: Optional[str] = None
+    if matched_md is None:
+        for md in files_map:
+            body = _fetch_skill_content(owner, repo, md)
+            if not body:
+                continue
+            meta, _ = _parse_skill_md(body)
+            if str(meta.get("name", "")).strip() == skill_id:
+                matched_md = md
+                content = body
+                break
+
+    if matched_md is None:
+        return {
+            "ok": False,
+            "error": f"仓库 {source_id} 中找不到 skill '{skill_id}'. 可用: {', '.join(candidates) or '(空)'}",
+            "candidates": candidates,
+        }
+
+    if content is None:
+        content = _fetch_skill_content(owner, repo, matched_md)
+    if not content:
+        return {"ok": False, "error": "拉取远端内容失败", "candidates": candidates}
+
+    threat = _security_scan(content)
+    if threat:
+        return {"ok": False, "error": f"skill 被安全扫描过滤: {threat}", "candidates": candidates}
+
+    meta, _body = _parse_skill_md(content)
+    category = str(meta.get("category", "general")).strip().lower() or "general"
+    if not re.match(r"^[a-z0-9_-]+$", category):
+        category = "general"
+
+    return {
+        "ok": True,
+        "skill": {
+            "name": skill_id,
+            "path": matched_md,
+            "category": category,
+            "description": meta.get("description", ""),
+            "version": str(meta.get("version", "0.0.0")),
+            "quarantined_reason": None,
+            "files": files_map.get(matched_md, []),
+            "source": source_id,
+            "source_repo": source_id,
+            "source_url": f"https://github.com/{owner}/{repo}/blob/HEAD/{matched_md}",
+        },
+    }
+
+
 def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict[str, Any]:
     """把远端 skill 落地到本地 hermes skills 目录
 
@@ -517,13 +669,17 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
     - 同名冲突时整目录备份为 <skill>.bak.<timestamp>/
     - profile 参数预留：多 profile 部署时切换 base_dir
     """
+    owner, repo = source.split("/", 1)
     skill = get_marketplace_skill(name, source=source)
     if not skill:
-        return {"ok": False, "error": f"marketplace 中找不到 skill: {name}@{source}"}
+        # 缓存未命中: 单次解析仓库树, 按 skill_id 精准定位 (不全仓库扫描)
+        resolved = _resolve_skill_in_repo(owner, repo, name)
+        if not resolved.get("ok"):
+            return {"ok": False, "error": resolved.get("error", f"marketplace 中找不到 skill: {name}@{source}")}
+        skill = resolved["skill"]
     if skill.get("quarantined_reason"):
         return {"ok": False, "error": f"skill 被安全扫描过滤: {skill['quarantined_reason']}"}
 
-    owner, repo = source.split("/", 1)
     content = _fetch_skill_content(owner, repo, skill["path"])
     if not content:
         return {"ok": False, "error": "拉取远端内容失败"}
@@ -551,79 +707,75 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
     target_skill_dir = target_dir / name
     target_file = target_skill_dir / "SKILL.md"
 
-    # 备份旧 skill 整目录
-    if target_skill_dir.is_dir():
-        backup = target_skill_dir.with_name(f"{name}.bak.{int(time.time())}")
-        target_skill_dir.rename(backup)
-        logger.info(f"已备份旧 skill 目录: {backup} → {target_skill_dir}")
-    target_skill_dir.mkdir(parents=True, exist_ok=True)
-
-    # 写 SKILL.md
-    target_file.write_text(new_content, encoding="utf-8")
-
-    # 配套下载其他文件
+    # 在同一文件系统的临时目录完整落盘，成功后再原子替换。
+    staging_dir = target_dir / f".{name}.staging.{os.getpid()}.{time.time_ns()}"
+    staging_file = staging_dir / "SKILL.md"
     files_meta = skill.get("files", [])
-    total_size = 0
+    skill_bytes = new_content.encode("utf-8")
+    total_bytes = len(skill_bytes)
     downloaded: List[Dict[str, Any]] = []
-    # W4-13.3 修复: 类型改 Dict (含 reason 字段), 旧 List[str] 无法表达跳过原因
-    skipped: List[Dict[str, str]] = []
-    failed: List[str] = []
+    skill_path = PurePosixPath(str(skill["path"]))
+    skill_dir_remote = skill_path.parent
+    planned: List[Tuple[str, str, int]] = []
+    seen_paths = {"SKILL.md"}
 
-    skill_dir_remote = str(Path(skill["path"]).parent)  # 远端 skill 所在目录
+    try:
+        for file_meta in files_meta:
+            remote_path = str(file_meta.get("path", ""))
+            if remote_path == str(skill_path):
+                continue
+            try:
+                local_rel = str(PurePosixPath(remote_path).relative_to(skill_dir_remote))
+            except ValueError:
+                raise ValueError(f"unsafe or unrelated bundle path: {remote_path}")
+            safe = _safe_rel_path(local_rel)
+            if not safe or safe in seen_paths:
+                raise ValueError(f"unsafe or duplicate bundle path: {remote_path}")
+            seen_paths.add(safe)
+            declared_size = int(file_meta.get("size", 0) or 0)
+            if declared_size < 0:
+                raise ValueError(f"unsafe bundle size: {remote_path}")
+            total_bytes += declared_size
+            if total_bytes > _MAX_SKILL_BUNDLE_BYTES:
+                raise ValueError("bundle size exceeds 5 MiB limit")
+            planned.append((remote_path, safe, declared_size))
 
-    for f in files_meta:
-        rel = f.get("path", "")
-        # 过滤掉 SKILL.md 本体（已经写过了）
-        if rel == skill["path"]:
-            continue
-        # 计算相对 skill 目录的路径
-        if rel.startswith(skill_dir_remote + "/"):
-            local_rel = rel[len(skill_dir_remote) + 1:]
-        elif rel == skill_dir_remote:
-            continue  # 是目录不是文件
-        else:
-            # 不在 skill 目录下的文件, 跳过（安全）
-            skipped.append({"path": rel, "reason": "unrelated_path"})
-            continue
+        staging_dir.mkdir(parents=True, exist_ok=False)
+        staging_file.write_bytes(skill_bytes)
+        actual_total_bytes = len(skill_bytes)
+        for remote_path, safe, _ in planned:
+            payload = _fetch_skill_bytes(owner, repo, remote_path)
+            if payload is None:
+                raise OSError(f"failed to download bundle file: {remote_path}")
+            actual_total_bytes += len(payload)
+            if actual_total_bytes > _MAX_SKILL_BUNDLE_BYTES:
+                raise ValueError("bundle size exceeds 5 MiB limit")
+            local_path = staging_dir / safe
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path.write_bytes(payload)
+            downloaded.append({"path": safe, "size": len(payload)})
 
-        safe = _safe_rel_path(local_rel)
-        if not safe:
-            logger.warning(f"拒绝不安全路径: {rel}")
-            skipped.append({"path": rel, "reason": "unsafe_path"})
-            continue
-
-        size = int(f.get("size", 0) or 0)
-        total_size += size
-        if total_size > _MAX_SKILL_BUNDLE_BYTES:
-            logger.warning(
-                f"skill 配套文件超 {total_size} bytes, 超过 {_MAX_SKILL_BUNDLE_BYTES} 阈值, 停止下载"
-            )
-            skipped.append({"path": rel, "reason": "bundle_too_large"})
-            continue
-
-        # 拉取单个文件
-        fcontent = _fetch_skill_content(owner, repo, rel)
-        if fcontent is None:
-            failed.append(rel)
-            continue
-
-        # 写本地
-        local_path = target_skill_dir / safe
-        # W4-13.3 修复 2026-06-21: 旧实现 skipped.append(rel + " (binary)")
-        # 把 rel 和 tag 拼成一个字符串, 污染 skipped 列表 (设计上是 path 列表).
-        # 当前 _fetch_skill_content 只处理文本, 二进制文件不能正确写入 (raw URL 是
-        # 二进制流不是 base64). 正确做法: 结构化记录跳过原因, 未来支持 base64 /
-        # github API contents (支持二进制) 时可恢复.
-        if any(safe.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf"]):
-            skipped.append({"path": rel, "reason": "binary_not_supported"})
-            continue
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_text(fcontent, encoding="utf-8")
-        downloaded.append({"path": safe, "size": len(fcontent)})
+        backup: Optional[Path] = None
+        if target_skill_dir.exists():
+            backup = target_skill_dir.with_name(f"{name}.bak.{time.time_ns()}")
+            target_skill_dir.replace(backup)
+        try:
+            staging_dir.replace(target_skill_dir)
+        except Exception:
+            if backup is not None and backup.exists() and not target_skill_dir.exists():
+                backup.replace(target_skill_dir)
+            raise
+    except (OSError, ValueError) as exc:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        return {"ok": False, "error": str(exc)}
 
     logger.info(
-        f"marketplace 安装: {source}/{name} → {target_skill_dir} "
-        f"({len(downloaded)} 配套文件, {len(skipped)} 跳过, {len(failed)} 失败)"
+        "marketplace 完整安装: %s/%s → %s (%s files, %s bytes)",
+        source,
+        name,
+        target_skill_dir,
+        len(downloaded) + 1,
+        actual_total_bytes,
     )
 
     # 用相对路径（或绝对路径）回传给前端，避免 relative_to 抛错
@@ -639,7 +791,12 @@ def install_skill(name: str, source: str, profile: Optional[str] = None) -> Dict
         "quarantined": True,
         "skill_type": "external",
         "files": downloaded,
-        "files_skipped": skipped,
-        "files_failed": failed,
-        "total_files": len(downloaded),
+        "files_skipped": [],
+        "files_failed": [],
+        "total_files": len(downloaded) + 1,
+        "total_bytes": actual_total_bytes,
+        "complete": True,
+        "package_type": "full_bundle" if files_meta else "skill_md",
+        "preserved_original_package": True,
+        "source_repo": source,
     }

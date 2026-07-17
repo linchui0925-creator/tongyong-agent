@@ -1,4 +1,3 @@
-from fastapi import FastAPI, Request, HTTPException
 """
 TongYong Agent 主应用模块 (P2-1 W4-22 拆分后)
 
@@ -34,6 +33,7 @@ from app.api import attachments as attachments_api
 from app.api import proxy
 from app.api import contact as contact_api
 from app.api import coze_skills as coze_skills_api
+from app.api import mcp as mcp_api
 from app.api import proxy
 from app.api.stream import router as stream_router
 from app.core.multi_agent.api import router as team_router
@@ -47,6 +47,7 @@ from app.gateway.profile_router import router as profile_gateway_router
 from app.routes.health import router as health_router
 from app.startup import init_agent_engine
 from app.lifespan import lifespan
+from app.paths import data_path
 
 # ── 日志配置 ──
 logging.basicConfig(
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(dreaming_api.router)
     app.include_router(skills_api.router)
     app.include_router(coze_skills_api.router)
+    app.include_router(mcp_api.router)
     app.include_router(marketplace_api.router)
     app.include_router(hub_api.router)
     app.include_router(tool_harness_api.router)
@@ -141,6 +143,7 @@ def create_app() -> FastAPI:
             },
         )
 
+    app.state.agent_engine = agent_engine
     return app
 
 
@@ -151,8 +154,8 @@ def _init_gateway_and_hermes() -> None:
 
     import app.hermes.routes as hermes_routes
     from app.hermes import MemoryFileManager, SkillFileManager
-    hermes_routes.memory_manager = MemoryFileManager(base_dir="./data/hermes")
-    hermes_routes.skill_manager = SkillFileManager(base_dir="./data/hermes")
+    hermes_routes.memory_manager = MemoryFileManager(base_dir=data_path("hermes"))
+    hermes_routes.skill_manager = SkillFileManager(base_dir=data_path("hermes"))
     skills_api.init(hermes_routes.skill_manager)
 
 
@@ -162,7 +165,7 @@ app = create_app()
 
 def get_agent_engine():
     """兼容旧依赖注入路径"""
-    return app.extra.get("agent_engine")
+    return getattr(app.state, "agent_engine", app.extra.get("agent_engine"))
 
 
 # 向后兼容: 11 个 call sites 用 `from app.main import agent_engine` (stream.py / ask.py /
@@ -170,29 +173,4 @@ def get_agent_engine():
 # 这里保留 module-level alias 避免批量改 call sites.
 agent_engine = app.extra.get("agent_engine")
 
-# 全局异常处理，所有错误都返回标准JSON格式，避免前端解析失败
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    import traceback
-    logger.error(f'全局异常: {exc}\n{traceback.format_exc()}')
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=500,
-        content={
-            'success': False,
-            'message': str(exc),
-            'code': 500
-        }
-    )
-# 处理HTTP异常
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            'success': False,
-            'message': exc.detail,
-            'code': exc.status_code
-        }
-    )
+

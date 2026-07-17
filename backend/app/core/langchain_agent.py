@@ -47,7 +47,8 @@ from app.tools.registry import registry as _tool_registry
 # Checkpointer 工厂 (W1-3)
 # ─────────────────────────────────────────────────────────
 
-_CHECKPOINTER_PATH = Path(__file__).parent.parent / "data" / "lg_checkpoint.sqlite"
+from app.paths import data_path
+_CHECKPOINTER_PATH = Path(data_path("lg_checkpoint.sqlite"))
 _CHECKPOINTER_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -69,6 +70,102 @@ def _use_checkpointer():
     return AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTER_PATH))
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_message_tokens(messages: List[Message]) -> int:
+    """粗略估算消息 token 数，供窗口裁剪使用。"""
+    return int(sum(len(m.content or "") for m in messages) * 0.25)
+
+
+def _trim_chat_history_by_budget(chat_history: List[Any], llm: Any) -> List[Any]:
+    """按模型 context 预算保留聊天历史。"""
+    keep_head = 2
+    keep_tail = 20
+    try:
+        from app.llm.model_metadata import get_model_info
+        model_info = get_model_info(getattr(llm, "model", "")) if llm else None
+        context_window = getattr(model_info, "context_window", 0) if model_info else 0
+        max_output = getattr(model_info, "max_output", 0) if model_info else 0
+        if context_window >= 1_000_000:
+            keep_head, keep_tail = 8, 48
+        elif context_window >= 256_000:
+            keep_head, keep_tail = 6, 36
+        elif context_window >= 128_000:
+            keep_head, keep_tail = 4, 28
+        elif context_window >= 64_000:
+            keep_head, keep_tail = 3, 24
+        elif context_window > 0:
+            keep_head, keep_tail = 2, 18
+        if max_output and max_output <= 16_384:
+            keep_tail = max(keep_tail, 24)
+        if max_output and max_output >= 65_536:
+            keep_tail += 8
+    except Exception as exc:
+        logger.warning("[langchain] 读取模型元数据失败，使用保守窗口: %s", exc)
+
+    total_tokens = int(sum(len(getattr(m, "content", "") or "") for m in chat_history) * 0.25)
+    if len(chat_history) <= keep_head + keep_tail and total_tokens <= 12_000:
+        return chat_history
+
+    if len(chat_history) <= keep_head + keep_tail:
+        logger.info(
+            "[langchain] chat_history token 偏高: %d tokens，仍按预算裁剪",
+            total_tokens,
+        )
+
+    dropped = len(chat_history) - keep_head - keep_tail
+    logger.info(
+        "[langchain] 截断 chat_history: %d 条 / %d tokens → 首 %d + 末 %d（丢弃中间 %d 条）",
+        len(chat_history),
+        total_tokens,
+        keep_head,
+        keep_tail,
+        dropped,
+    )
+    return chat_history[:keep_head] + chat_history[-keep_tail:]
+
+
+def _trim_layered_prompt_messages(messages: List[Message], llm: Any) -> List[Message]:
+    """按层级分配 prompt 预算，优先保留系统/记忆，再裁历史。"""
+    system_msgs = [m for m in messages if m.role == "system"]
+    non_system = [m for m in messages if m.role != "system"]
+
+    system_tokens = _estimate_message_tokens(system_msgs)
+    history_tokens = _estimate_message_tokens(non_system)
+
+    try:
+        from app.llm.model_metadata import get_model_info
+        model_info = get_model_info(getattr(llm, "model", "")) if llm else None
+        context_window = getattr(model_info, "context_window", 0) if model_info else 0
+        max_output = getattr(model_info, "max_output", 0) if model_info else 0
+    except Exception:
+        context_window = 128_000
+        max_output = 16_384
+
+    reserved_output = int(max_output or 16_384)
+    available = max(context_window - reserved_output, 8_000) if context_window else 96_000
+
+    layer_budget = {
+        "system": int(available * 0.18),
+        "memory": int(available * 0.22),
+        "history": int(available * 0.60),
+    }
+    # 系统层至少保留 4k，历史层至少保留 12k，避免长文过早碎裂。
+    layer_budget["system"] = max(layer_budget["system"], 4_000)
+    layer_budget["history"] = max(layer_budget["history"], 12_000)
+
+    if system_tokens <= layer_budget["system"] and history_tokens <= layer_budget["history"]:
+        return messages
+
+    trimmed_history = _trim_chat_history_by_budget(non_system, llm)
+    logger.info(
+        "[langchain] layered budget | system=%d/%d tokens, history=%d/%d tokens",
+        system_tokens,
+        layer_budget["system"],
+        history_tokens,
+        layer_budget["history"],
+    )
+    return system_msgs + trimmed_history
 
 
 async def stream_chat_langchain(
@@ -161,31 +258,25 @@ async def stream_chat_langchain(
     #   domain 会按 session 选; 不存在时用 "default" 做兜底。
     if session_id:
         yield _progress(f"加载 session {session_id[:8]}...")
-    # ⚠️ 调用顺序很重要 (W4-8 P0-1 修复 2026-06-21)：
-    #   三个 inject 全部用 messages.insert(0, ...)，最后调用的反而排最前。
-    #   期望 base_prompt 落在位置 0 (LLM 第一眼看到)，所以 base 必须 **最后** 调。
-    #   旧版 (base → memory → domain) 实际让 base 落到最底，与注释相反。
-    #   修正后顺序: domain → memory → base, 最终 = [base, USER, MEMORY, domain]
-    try:
-        await agent_engine._ensure_domain_prompts(session_id or "default")
-    except Exception as e:
-        logger.warning(f"[langchain] 注入 domain 失败: {e}")
-    try:
-        await agent_engine._inject_memory(session_id or "default")
-    except Exception as e:
-        logger.warning(f"[langchain] 注入 memory 失败: {e}")
-    try:
-        agent_engine._inject_base_system_prompt()
-    except Exception as e:
-        logger.warning(f"[langchain] 注入 base system prompt 失败: {e}")
+    await agent_engine._prepare_turn_context(session_id or "default", message, include_history=True, include_env=True)
     yield _progress("上下文装配完成")
 
     # 添加用户消息
-    ctx.add_message("user", message)
 
-    # LangChain 路径也执行真实 summarization 压缩，而不是只做滑动窗口截断。
-    compressor = getattr(agent_engine, "context_compressor", None)
+    # LangChain 路径先按层级预算整理 prompt，再按需要做 summarization 压缩。
     llm = getattr(agent_engine, "llm", None)
+    try:
+        layered_messages = _trim_layered_prompt_messages(ctx.get_messages(), llm)
+        if layered_messages != ctx.get_messages():
+            ctx.messages = layered_messages
+            if hasattr(ctx, "_token_estimate"):
+                ctx._token_estimate = None
+            yield _progress("📐 已按层级预算整理上下文")
+            yield _context_event(ctx.get_messages())
+    except Exception as exc:
+        logger.warning(f"[langchain] 层级预算整理失败，继续原始上下文: {exc}", exc_info=True)
+
+    compressor = getattr(agent_engine, "context_compressor", None)
     if compressor and llm and compressor.should_compress(ctx.get_messages()):
         yield _progress("📦 上下文过长，正在压缩...")
         try:
@@ -248,15 +339,7 @@ async def stream_chat_langchain(
     # 会返回 400 "context window exceeds limit (2013)"，把整轮 agent 调用打挂、
     # SSE 流只 yield done、前端看到空白响应。截断后老 session 也能继续走通。
     # 阈值取保守值 22（首2+末20），给 system prompt + 当前 user 消息留余量。
-    KEEP_HEAD = 2
-    KEEP_TAIL = 20
-    if len(chat_history) > KEEP_HEAD + KEEP_TAIL:
-        dropped = len(chat_history) - KEEP_HEAD - KEEP_TAIL
-        logger.info(
-            f"[langchain] 截断 chat_history: {len(chat_history)} 条 → "
-            f"首 {KEEP_HEAD} + 末 {KEEP_TAIL}（丢弃中间 {dropped} 条）"
-        )
-        chat_history = chat_history[:KEEP_HEAD] + chat_history[-KEEP_TAIL:]
+    chat_history = _trim_chat_history_by_budget(chat_history, llm)
 
     # ── 3. 创建 ReAct Agent ──────────
     # W4-23 P2-3：恢复 checkpointer (W3-B 临时回退已修)
@@ -268,6 +351,13 @@ async def stream_chat_langchain(
     # 注意: is_persistent 仅在 session_id 不为 None 时启用, ephemeral 仍不污染持久化。
     max_iterations = 20
     if hasattr(agent_engine, 'budget'):
+        # 每次请求重置计数，避免跨会话累计 (self-built 路径每次 new 一个 IterationBudget)
+        try:
+            agent_engine.budget.current_round = 0
+            agent_engine.budget.grace_used = 0
+            agent_engine.budget.in_grace_period = False
+        except Exception:
+            pass
         max_iterations = agent_engine.budget.max_rounds
 
     # W1-3: 接 AsyncSqliteSaver, session_id 当 thread_id
@@ -369,6 +459,7 @@ async def stream_chat_langchain(
         think_buf = ""
         text_buf = ""
         in_think = False
+        streamed_any_content = False  # W5-3: on_chat_model_stream 已吐过 content, on_chain_end 跳过补发
         cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
         async for event in agent.astream_events(  # type: ignore[call-overload]
@@ -395,10 +486,12 @@ async def stream_chat_langchain(
                             if m:
                                 if m.start() > pos:
                                     yield _content(text[pos:m.start()])
+                                    streamed_any_content = True
                                 pos = m.end()
                                 in_think = True
                             else:
                                 yield _content(text[pos:])
+                                streamed_any_content = True
                                 pos = len(text)
                         else:
                             m = THINK_CLOSE.search(text, pos)
@@ -480,7 +573,8 @@ async def stream_chat_langchain(
                                 cumulative_usage[k] = cumulative_usage.get(k, 0) + (v or 0)
                         is_ai = True
                     # 只提取 AIMessage 内容，跳过 ToolMessage 等；去重
-                    if is_ai and text and text != last_yielded_text:
+                    # W5-3: 流式路径已吐过 content → chain_end 完全跳过，避免多层 on_chain_end 重复推
+                    if is_ai and text and text != last_yielded_text and not streamed_any_content:
                         should_yield = had_tool_call or not collected_content
                         if should_yield:
                             last_yielded_text = text
@@ -529,6 +623,10 @@ async def stream_chat_langchain(
                 preview = str(output).strip()[:120].replace("\n", " ")
                 if len(str(output).strip()) > 120:
                     preview += "..."
+                _full = str(output) if output is not None else ""
+                _full_trunc = _full[:4000]
+                if len(_full) > 4000:
+                    _full_trunc += "\n…（已截断，剩余 %d 字符）" % (len(_full) - 4000)
                 is_error = str(output).startswith("工具执行失败") if output else False
                 # W2-3: 工具异常推 tool_error (而非 tool_complete, 跟 stream.py 收 11 类对齐)
                 if is_error:
@@ -548,6 +646,7 @@ async def stream_chat_langchain(
                         "type": "tool_complete",
                         "tool_name": tool_name,
                         "result_preview": preview,
+                        "result_full": _full_trunc,
                         "duration": 0,
                         "error": False,
                         "emoji": emoji,

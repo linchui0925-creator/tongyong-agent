@@ -13,10 +13,12 @@ import json
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from app.core.multi_agent.workspace import SUBDIRS, TaskWorkspace
 from app.tools.registry import registry
 from app.tools.runtime_context import get_tool_session_id
+from app.paths import data_path
 
 
 _MAX_READ_CHARS = 100_000
@@ -26,7 +28,7 @@ _MAX_TIMEOUT = 900
 
 
 def _workspace_root() -> str:
-    return os.getenv("TONGYONG_WORKSPACE_ROOT", "./data/workspaces")
+    return os.getenv("TONGYONG_WORKSPACE_ROOT", data_path("workspaces"))
 
 
 def _safe_task_id(session_id: Optional[str] = None, task_id: Optional[str] = None) -> str:
@@ -52,6 +54,20 @@ def _validate_filename(filename: str) -> Optional[str]:
     if p.is_absolute() or ".." in p.parts:
         return "filename 必须是工作区内相对路径，不能是绝对路径或包含 .."
     return None
+
+
+def _artifact_payload(path: str, kind: str, name: Optional[str] = None) -> dict:
+    p = Path(path)
+    encoded = quote(str(p), safe="")
+    preview_url = f"/api/files/serve?path={encoded}" if kind == "image" else f"/api/files/preview?path={encoded}"
+    return {
+        "path": str(p),
+        "name": name or p.name,
+        "kind": kind,
+        "preview_url": preview_url,
+        "open_url": f"/api/files/serve?path={encoded}",
+        "render_mode": "iframe" if kind == "web" else "image",
+    }
 
 
 WORKSPACE_INFO_SCHEMA = {
@@ -191,7 +207,20 @@ async def workspace_read_tool(
     return f"📄 workspace/{subdir}/{filename}（{len(lines)} 行，显示 {start + 1}-{end}）\n{content}"
 
 
-async def workspace_write_tool(
+def _artifact_payload(path: str, kind: str, name: Optional[str] = None) -> dict:
+    encoded = quote(path, safe="")
+    preview_url = f"/api/files/serve?path={encoded}" if kind == "image" else f"/api/files/preview?path={encoded}"
+    return {
+        "path": path,
+        "name": name or Path(path).name,
+        "kind": kind,
+        "preview_url": preview_url,
+        "open_url": f"/api/files/serve?path={encoded}",
+        "render_mode": "iframe" if kind == "web" else "image",
+    }
+
+
+def workspace_write_tool(
     subdir: str,
     filename: str,
     content: str,
@@ -203,7 +232,21 @@ async def workspace_write_tool(
         return err
     ws = _get_workspace(session_id, task_id)
     path = ws.write(subdir, filename, content)
-    return f"✅ 已写入 workspace/{subdir}/{filename}（{len(content)} 字符）\nworkspace_path={ws.base}\nabsolute_path={path}"
+    suffix = Path(filename).suffix.lower()
+    artifact_previews = []
+    if suffix in {".html", ".htm"}:
+        artifact_previews.append(_artifact_payload(str(path), "web", Path(filename).name))
+    elif suffix in {".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+        artifact_previews.append(_artifact_payload(str(path), "image", Path(filename).name))
+    return json.dumps({
+        "message": f"✅ 已写入 workspace/{subdir}/{filename}（{len(content)} 字符）",
+        "workspace_path": str(ws.base),
+        "absolute_path": str(path),
+        "path": str(path),
+        "name": Path(filename).name,
+        "kind": "web" if suffix in {".html", ".htm"} else "image" if suffix in {".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp"} else "file",
+        "artifact_previews": artifact_previews,
+    }, ensure_ascii=False)
 
 
 async def workspace_terminal_tool(
@@ -248,7 +291,23 @@ async def workspace_terminal_tool(
         if len(output) > _MAX_OUTPUT_CHARS:
             output = output[:_MAX_OUTPUT_CHARS] + "\n...（输出过长，已截断）"
         status = "✅" if process.returncode == 0 else "❌"
-        return f"{status} workspace 命令完成（返回码 {process.returncode}，cwd={ws.base}）\n{output}"
+        artifact_previews = []
+        for p in ws.base.rglob("*.html"):
+            artifact_previews.append(_artifact_payload(str(p), "web", p.name))
+            break
+        for ext in ("*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.svg"):
+            if artifact_previews:
+                break
+            for p in ws.base.rglob(ext):
+                artifact_previews.append(_artifact_payload(str(p), "image", p.name))
+                break
+        return json.dumps({
+            "message": f"{status} workspace 命令完成（返回码 {process.returncode}，cwd={ws.base}）",
+            "returncode": process.returncode,
+            "workspace_path": str(ws.base),
+            "stdout": output,
+            "artifact_previews": artifact_previews,
+        }, ensure_ascii=False)
     except Exception as exc:
         return f"❌ workspace 命令执行失败: {exc}"
 

@@ -156,14 +156,20 @@ class OpenAICompatibleLLM(BaseLLM):
 
     # ── 对话 ──────────────────────────────────────────────
 
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> LLMResponse:
+    async def chat(self, messages, tools: Optional[List[Dict]] = None, tool_choice: Optional[str] = None, **kwargs) -> LLMResponse:
+        # 兼容两种入参: Pydantic Message 对象 / 普通 dict (test_connection 等用)
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")
 
+        normalized_input = []
+        for m in messages:
+            if isinstance(m, dict):
+                normalized_input.append({"role": m.get("role", ""), "content": m.get("content", "")})
+            else:
+                normalized_input.append({"role": m.role, "content": m.content})
+
         openai_messages = self._normalize_messages(
-            self._merge_system_messages(
-                [{"role": m.role, "content": m.content} for m in messages]
-            )
+            self._merge_system_messages(normalized_input)
         )
 
         body = {
@@ -174,6 +180,8 @@ class OpenAICompatibleLLM(BaseLLM):
         }
         if tools:
             body["tools"] = tools
+        if tool_choice:
+            body["tool_choice"] = tool_choice
 
         # Debug: 记录发送的消息格式（关键：检查 tool_call_id 是否存在）
         logger.info(f"[LLM Debug] 发送 {len(openai_messages)} 条消息")
@@ -293,10 +301,20 @@ class OpenAICompatibleLLM(BaseLLM):
             )
         )
 
+        request_config = getattr(self, 'request_config', {})
+        api_format = self._detect_api_format(self.api_base, request_config)
+        if api_format != 'chat_completions':
+            logger.warning("stream_chat 非 chat_completions 协议暂走完整响应回退: %s", api_format)
+            response = await self.chat(messages)
+            text = response.content if isinstance(response, LLMResponse) else str(response)
+            for chunk in text:
+                yield chunk
+            return
+
         async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
             async with client.stream(
                 "POST",
-                f"{self.api_base}/chat/completions",
+                f"{self.api_base}/chat/completions" if not str(self.api_base).endswith('/chat/completions') else self.api_base,
                 headers=self._headers(),
                 json={
                     "model": self.model,
@@ -307,17 +325,30 @@ class OpenAICompatibleLLM(BaseLLM):
                 },
             ) as resp:
                 resp.raise_for_status()
+                in_think = False
                 async for line in resp.aiter_lines():
                     if line.startswith("data:") and line != "data: [DONE]":
                         try:
                             data = json.loads(line[5:])
                             choices = data.get("choices", [])
                             if choices:
-                                delta = choices[0].get("delta", {})
-                                if "content" in delta:
-                                    yield delta["content"]
+                                delta = choices[0].get("delta", {}) or {}
+                                reasoning_delta = delta.get("reasoning_content") or ""
+                                content_delta = delta.get("content") or ""
+                                if reasoning_delta:
+                                    if not in_think:
+                                        yield "<think>"
+                                        in_think = True
+                                    yield reasoning_delta
+                                if content_delta:
+                                    if in_think:
+                                        yield "</think>"
+                                        in_think = False
+                                    yield content_delta
                         except json.JSONDecodeError:
                             continue
+                if in_think:
+                    yield "</think>"
 
     # ── 嵌入向量 ──────────────────────────────────────────
 
@@ -510,8 +541,10 @@ class OpenAICompatibleLLM(BaseLLM):
         reasoning_content = message.get("reasoning_content") or ""
 
         # W4-39 修 (a): content 空时用 reasoning_content 兜底
+        # W5-4: 但 reasoning 属于"思考"，前端要折叠显示；用 <think>...</think> 包起来，
+        #   下游 langchain_agent 会把它切成 thinking_delta 事件而不是当正文吐
         if not content.strip() and reasoning_content.strip():
-            content = reasoning_content
+            content = f"<think>{reasoning_content}</think>" 
 
         # 尝试从 content 中提取 <think>...</think> 部分
         thinking_chunks = []

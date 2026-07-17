@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class AskPendingStore:
         store.pop(qid)
     """
 
-    def __init__(self, db_path: str = "./data/ask_pending.db", ttl_seconds: int = DEFAULT_TTL_SECONDS):
+    def __init__(self, db_path: str = data_path("ask_pending.db"), ttl_seconds: int = DEFAULT_TTL_SECONDS):
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
         self._local = threading.local()

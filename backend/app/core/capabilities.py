@@ -204,6 +204,7 @@ class CapabilityManager:
                     "用户：创建一个React组件",
                     "Agent：生成组件代码..."
                 ],
+                limitations="网页/项目/多文件/构建测试任务优先写入 workspace；小改动可直接回答。",
                 requires_confirmation=True,
                 danger_level="warning"
             ),

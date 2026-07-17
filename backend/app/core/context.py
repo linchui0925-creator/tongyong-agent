@@ -47,6 +47,35 @@ class ContextManager:
         self._token_estimate = None  # invalidate cache
         return message
 
+    def add_tool_message(
+        self,
+        tool_name: str,
+        tool_call_id: str,
+        success: bool,
+        content: str,
+        result_full: str = "",
+        error: str = "",
+        error_type: str = "",
+        suggestion: str = "",
+        emoji: str = "",
+        elapsed: float = 0.0,
+        artifact_previews: Optional[list] = None,
+    ) -> Message:
+        payload = {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "emoji": emoji,
+            "success": success,
+            "content": content,
+            "result_full": result_full,
+            "error": error if not success else "",
+            "error_type": error_type if not success else "",
+            "suggestion": suggestion if not success else "",
+            "elapsed": round(float(elapsed or 0.0), 3),
+            "artifact_previews": artifact_previews or [],
+        }
+        return self.add_message("tool", json.dumps(payload, ensure_ascii=False))
+
     def get_messages(self) -> List[Message]:
         # 检查是否需要压缩
         if self._should_compress():

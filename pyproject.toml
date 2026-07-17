@@ -1,3 +1,7 @@
+# 注意 (2026-07-12 依赖收敛):
+# - 后端服务依赖的单一事实源是 backend/requirements.txt (render.yaml / Dockerfile 均用它)。
+# - 本文件仅声明 macOS 本地可选的视觉/多模态额外依赖 (mlx-vlm 等), 由 uv 管理 (uv.lock)。
+#   它不是后端运行所必需的, 部署环境不安装这些。
 [project]
 name = "tongyong-agent"
 version = "0.1.0"

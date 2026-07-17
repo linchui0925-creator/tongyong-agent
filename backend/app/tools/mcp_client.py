@@ -40,6 +40,7 @@ W4-14 (2026-06-22) 修复 (MCP 生命周期 / 跨 loop future 泄漏):
 """
 
 import asyncio
+import httpx
 import json
 import logging
 import subprocess
@@ -50,6 +51,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+_MCP_START_ERRORS: Dict[str, str] = {}
 
 # ── MCP 配置（从 settings 读取）───────────────────────────
 
@@ -82,6 +84,8 @@ class MCPClient:
 
         # 工具注册名 → schema
         self._tools: Dict[str, Dict] = {}
+        self.last_error = ""
+        self._http_session_id = ""
 
     def _next_id(self) -> int:
         with self._lock:
@@ -203,6 +207,8 @@ class MCPClient:
         W4-14 MCP 修复:
           - 把调用方 loop 与 future 一起存, 便于 _handle_message 跨 loop 安全 resolve
         """
+        if self.server_config.get("url"):
+            return await self._send_http_request(method, params)
         req_id = self._next_id()
         msg = {"jsonrpc": "2.0", "id": req_id, "method": method}
         if params:
@@ -226,6 +232,46 @@ class MCPClient:
             self._response_futures.pop(req_id, None)
             raise TimeoutError(f"MCP {self.name} request '{method}' timed out")
 
+    async def _send_http_request(self, method: str, params: Optional[Dict] = None) -> Any:
+        request_id = self._next_id()
+        payload: Dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+        if params is not None:
+            payload["params"] = params
+        headers = self._http_headers()
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            response = await client.post(self.server_config["url"], json=payload, headers=headers)
+        response.raise_for_status()
+        if response.headers.get("mcp-session-id"):
+            self._http_session_id = response.headers["mcp-session-id"]
+        if "text/event-stream" in response.headers.get("content-type", ""):
+            messages = [json.loads(line[5:].strip()) for line in response.text.splitlines() if line.startswith("data:")]
+            body = next((item for item in messages if item.get("id") == request_id), messages[-1] if messages else {})
+        else:
+            body = response.json() if response.content else {}
+        if body.get("error"):
+            error = body["error"]
+            raise RuntimeError(error.get("message") if isinstance(error, dict) else str(error))
+        return body.get("result")
+
+    def _http_headers(self) -> Dict[str, str]:
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            **(self.server_config.get("headers") or {}),
+        }
+        if self._http_session_id:
+            headers["Mcp-Session-Id"] = self._http_session_id
+        return headers
+
+    async def _send_http_notification(self, method: str) -> None:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.post(
+                self.server_config["url"],
+                json={"jsonrpc": "2.0", "method": method},
+                headers=self._http_headers(),
+            )
+        response.raise_for_status()
+
     async def initialize(self) -> bool:
         """初始化 MCP 会话，返回是否成功
 
@@ -234,6 +280,17 @@ class MCPClient:
         后续 _handle_message 都在此 loop 上调度
         """
         try:
+            if self.server_config.get("url"):
+                self._running = True
+                result = await self._send_request("initialize", {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "tongyong-agent", "version": "1.0.0"},
+                })
+                logger.info("MCP %s initialized over HTTP: %s", self.name, result)
+                await self._send_http_notification("notifications/initialized")
+                await self._load_tools()
+                return True
             # 启动进程
             cmd = self.server_config.get("command", "")
             args = self.server_config.get("args", [])
@@ -246,6 +303,8 @@ class MCPClient:
 
             startup_timeout = self.server_config.get("startup_timeout", 30)
 
+            if not cmd:
+                raise ValueError("当前客户端尚不支持没有 command 的 MCP 配置")
             self.process = subprocess.Popen(
                 [cmd] + args,
                 stdin=subprocess.PIPE,
@@ -268,13 +327,15 @@ class MCPClient:
             # 等待进程启动
             await asyncio.sleep(0.5)
             if self.process.poll() is not None:
-                stderr = self.process.stderr.read().decode("utf-8", errors="replace") if self.process.stderr else ""
+                stderr = self.process.stderr.read() if self.process.stderr else ""
+                self.last_error = stderr.strip() or f"process exited with code {self.process.returncode}"
                 logger.error(f"MCP {self.name} process exited immediately: {stderr[:500]}")
                 return False
 
             # 发送 initialize
             result = await self._send_request("initialize", {
                 "protocolVersion": "2024-11-05",
+                "capabilities": {},
                 "clientInfo": {
                     "name": "tongyong-agent",
                     "version": "1.0.0",
@@ -290,6 +351,7 @@ class MCPClient:
             return True
 
         except Exception as e:
+            self.last_error = str(e)
             logger.error(f"MCP {self.name} initialization failed: {e}")
             self.close()
             return False
@@ -313,8 +375,12 @@ class MCPClient:
         """将 MCP 工具注册到 registry"""
         from app.tools.registry import registry
 
-        name = tool_def.get("name", "")
-        description = tool_def.get("description", "")
+        remote_name = tool_def.get("name", "")
+        name = f"mcp__{self.name}__{remote_name}"
+        description = (
+            f"[MCP server: {self.name}; remote tool: {remote_name}] "
+            f"{tool_def.get('description', '')}"
+        ).strip()
         input_schema = tool_def.get("inputSchema", {})
 
         # 包装 handler
@@ -326,17 +392,23 @@ class MCPClient:
             arguments.pop("task_id", None)
             try:
                 result = await self._send_request("tools/call", {
-                    "name": name,
+                    "name": remote_name,
                     "arguments": arguments,
                 })
                 if isinstance(result, dict):
                     content = result.get("content", [])
+                    artifact_previews = result.get("artifact_previews") if isinstance(result.get("artifact_previews"), list) else []
                     if isinstance(content, list):
                         texts = []
                         for c in content:
                             if isinstance(c, dict) and c.get("type") == "text":
                                 texts.append(c.get("text", ""))
-                        return "\n".join(texts)
+                        payload = {"content": "\n".join(texts)}
+                        if artifact_previews:
+                            payload["artifact_previews"] = artifact_previews
+                        return json.dumps(payload, ensure_ascii=False)
+                    if artifact_previews:
+                        result["artifact_previews"] = artifact_previews
                     return json.dumps(result, ensure_ascii=False)
                 return str(result)
             except Exception as e:
@@ -372,6 +444,13 @@ class MCPClient:
         # 1. 先 fail pending — 必须在 kill 进程前, 否则 read loop 退出时
         #    跨 loop future 状态不一致
         self._fail_pending("client closed")
+        try:
+            from app.tools.registry import registry
+            for tool_name in list(self._tools):
+                registry.deregister(tool_name)
+            self._tools.clear()
+        except Exception as exc:
+            logger.debug("MCP %s 注销工具失败: %s", self.name, exc)
         # 2. 置位让 _read_loop 退出
         self._running = False
         # 3. kill 进程
@@ -396,6 +475,10 @@ _mcp_loop: Optional[asyncio.AbstractEventLoop] = None
 _mcp_thread: Optional[threading.Thread] = None
 
 _async_mcp_clients: Dict[str, MCPClient] = {}
+
+_MCP_DISCOVERY_CACHE: Dict[str, Dict[str, Any]] = {}
+_MCP_DISCOVERY_CACHE_TS: float = 0.0
+_MCP_DISCOVERY_TTL_SECONDS = 300
 
 
 def _run_mcp_loop(loop: asyncio.AbstractEventLoop):
@@ -422,7 +505,7 @@ async def _discover_mcp_async_in_loop(client_dict: Dict[str, MCPClient]):
             logger.warning(f"MCP server '{server_name}' failed to initialize, skipping")
 
 
-async def discover_mcp_tools_async():
+async def discover_mcp_tools_async(force_refresh: bool = False):
     """异步入口: 推荐在 FastAPI lifespan 里调用
 
     W4-14 新增: 与 discover_mcp_tools() 区别:
@@ -431,20 +514,69 @@ async def discover_mcp_tools_async():
       - 进程 crash 时 _fail_pending 让调用方立即拿到 ConnectionError
         而不是等 60s wait_for
     """
+    global _MCP_DISCOVERY_CACHE_TS
+    now = time.time()
+    if not force_refresh and _async_mcp_clients and (now - _MCP_DISCOVERY_CACHE_TS) < _MCP_DISCOVERY_TTL_SECONDS:
+        logger.debug("MCP tools already discovered (async cached), skipping")
+        return
+    if force_refresh:
+        await shutdown_mcp_tools_async()
     if _async_mcp_clients:
-        # 幂等: 已初始化过, 跳过 (便于 lifespan 重入)
         logger.debug("MCP tools already discovered (async), skipping")
         return
     await _discover_mcp_async_in_loop(_async_mcp_clients)
+    _MCP_DISCOVERY_CACHE_TS = time.time()
     logger.info(f"MCP discovery (async) complete: {len(_async_mcp_clients)} servers")
 
 
 async def shutdown_mcp_tools_async():
     """异步入口的关闭: 在 FastAPI lifespan teardown 调用"""
-    global _async_mcp_clients
+    global _async_mcp_clients, _MCP_DISCOVERY_CACHE_TS
     for client in _async_mcp_clients.values():
         client.close()
     _async_mcp_clients.clear()
+    _MCP_DISCOVERY_CACHE_TS = 0.0
+
+
+def get_mcp_status() -> List[Dict[str, Any]]:
+    """返回当前进程内 MCP Server 与已发现工具状态，供管理 API/diagnostic 使用。"""
+    clients = {**_mcp_clients, **_async_mcp_clients}
+    config = _get_mcp_config()
+    return [
+        {
+            "id": server_name,
+            "configured": True,
+            "connected": bool(client and client._running and (server_config.get("url") or (client.process and client.process.poll() is None))),
+            "transport": "stdio" if server_config.get("command") else "http",
+            "command": server_config.get("command", ""),
+            "tool_count": len(client._tools) if client else 0,
+            "tools": sorted(client._tools) if client else [],
+        }
+        for server_name, server_config in sorted(config.items())
+        for client in [clients.get(server_name)]
+    ]
+
+
+async def restart_mcp_server(server_name: str) -> bool:
+    """重启单个 MCP Server，并原子更新其动态工具集合。"""
+    config = _get_mcp_config()
+    server_config = config.get(server_name)
+    if not server_config:
+        return False
+    old_client = _async_mcp_clients.pop(server_name, None)
+    if old_client:
+        old_client.close()
+    client = MCPClient(server_name, server_config)
+    if not await client.initialize():
+        _MCP_START_ERRORS[server_name] = client.last_error or "MCP initialize failed"
+        return False
+    _MCP_START_ERRORS.pop(server_name, None)
+    _async_mcp_clients[server_name] = client
+    return True
+
+
+def get_mcp_start_error(server_name: str) -> str:
+    return _MCP_START_ERRORS.get(server_name, "")
 
 
 def discover_mcp_tools():

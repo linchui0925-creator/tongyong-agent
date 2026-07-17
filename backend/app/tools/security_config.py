@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List
 
 from app.config import settings
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,8 @@ _WHITELIST_FILE = Path(settings.database_url).parent / "terminal_whitelist.txt"
 _BLACKLIST_FILE = Path(settings.database_url).parent / "terminal_blacklist.txt"
 # 上面用了 database_url (./data/tongyong.db) 反推 data 目录. 兜底:
 if not _WHITELIST_FILE.parent.exists():
-    _WHITELIST_FILE = Path("./data/terminal_whitelist.txt")
-    _BLACKLIST_FILE = Path("./data/terminal_blacklist.txt")
+    _WHITELIST_FILE = Path(data_path("terminal_whitelist.txt"))
+    _BLACKLIST_FILE = Path(data_path("terminal_blacklist.txt"))
 
 
 def _load_extra_list(path: Path) -> List[str]:

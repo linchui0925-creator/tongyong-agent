@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional
 import sqlite3
 import json
 import logging
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class DreamingConfig:
     jaccard_threshold: float = 0.9
     
     # 数据库路径
-    db_path: str = "./data/tongyong.db"
+    db_path: str = data_path("tongyong.db")
     
     # 缓存的配置
     _config_cache: Dict[str, str] = field(default_factory=dict, repr=False)

@@ -24,18 +24,10 @@ from app.core.multi_agent.message import TeamMessage, new_message
 from app.core.multi_agent.role import TeamRole, RoleContext
 from app.core.multi_agent.environment import EventBusEnvironment
 from app.core.multi_agent.scheduler import Scheduler
+from app.core.multi_agent.team_utils import decompose_idea, sort_roles_by_debate_position
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
-
-
-# W4-9 P1-2 修复 (2026-06-21): 按辩位排序, judge 固定末尾, 未填 position 的兜底为 99
-# 抽成 module-level helper 便于单测 (不依赖 Team/EventBusEnvironment fixture)
-_DEBATE_POSITION_ORDER = {"first": 0, "second": 1, "third": 2, "fourth": 3, "judge": 4}
-
-
-def sort_roles_by_debate_position(roles: List[TeamRole]) -> List[TeamRole]:
-    """辩论模式按辩位排序: first < second < third < fourth < judge < (未填)"""
-    return sorted(roles, key=lambda r: _DEBATE_POSITION_ORDER.get(r.debate_position, 99))
 
 
 class Team(BaseModel):
@@ -75,7 +67,7 @@ class Team(BaseModel):
     _idle_count: int = PrivateAttr(default=0)
     _session_id: str = PrivateAttr(default="default")
 
-    def __init__(self, session_id: str = "default", db_path: str = "./data/team_sessions.db", **data):
+    def __init__(self, session_id: str = "default", db_path: str = data_path("team_sessions.db"), **data):
         super().__init__(**data)
         # v2: EventBusEnvironment（替代旧的 in-memory Environment）
         object.__setattr__(self, "_env", EventBusEnvironment(session_id=session_id, db_path=db_path, team=self))
@@ -177,7 +169,7 @@ class Team(BaseModel):
             return
 
         self.status = "running"
-        # Pydantic v2 fix (W4-27): PrivateAttr 重赋值必须用 object.__setattr__
+        # PrivateAttr 需要用 object.__setattr__ 设置，避免 Pydantic v2 的静默失败。
         self._set("_round", 0)
         self._set("_result_messages", [])
         self._set("_idle_count", 0)
@@ -255,7 +247,7 @@ class Team(BaseModel):
             idle_this_round = True
 
             for role in roles_this_round:
-                # Pydantic v2 fix + Bug fix (W4-27): 单角色异常不能杀全队
+                # 单角色异常不应中断全队；把错误降级为 system message，保持队伍继续运行。
                 try:
                     msg = await role.run(self._round)
                 except Exception as e:
@@ -328,7 +320,7 @@ class Team(BaseModel):
             return
 
         self.status = "running"
-        # Pydantic v2 fix
+        # PrivateAttr 需要用 object.__setattr__ 设置，避免 Pydantic v2 的静默失败。
         self._set("_round", 0)
         self._set("_result_messages", [])
         self._set("_idle_count", 0)
@@ -360,9 +352,8 @@ class Team(BaseModel):
         for role_name in self._roles:
             self._env.mark_read(role_name, seq=current_seq)
 
-        # W4-27 fix: 分解 idea 为多个任务 (旧实现只入队 1 个 root task)
-        # 简单分句分解: 按 . / ; / \n 拆, 每句 1 个 task; 如果只有 1 句, 用整段
-        sub_ideas = self._decompose_idea(idea)
+        # 将高层目标拆成多个子任务，避免 Scheduler 一次吞入过大的单块任务。
+        sub_ideas = decompose_idea(idea)
         logger.info(f"[TEAM v2] idea 分解: 1 → {len(sub_ideas)} 个子任务")
 
         # 第一个子任务是 root, 后续是依赖 root 的 subtask
@@ -549,25 +540,6 @@ class Team(BaseModel):
         sch = object.__getattribute__(self, "_scheduler") if hasattr(self, "_scheduler") else None
         if sch is not None:
             sch.stop()
-
-    @staticmethod
-    def _decompose_idea(idea: str) -> List[str]:
-        """
-        简单分句分解 idea → 子任务列表 (W4-27 引入)
-
-        规则:
-        - 按句号 . / 分号 ; / 问号 ? / 感叹号 ! / 换行 \n 拆
-        - 过滤空段 / 长度 < 5 的噪音
-        - 至少返回 1 个 (整段作为 1 个任务)
-
-        未来可替换为 LLM decompose (用 LLM 把 idea 拆成有序子任务)
-        """
-        import re
-        if not idea or not idea.strip():
-            return ["(empty)"]
-        parts = re.split(r"[.。;；?？！!\n]+", idea)
-        parts = [p.strip() for p in parts if p.strip() and len(p.strip()) >= 3]
-        return parts if parts else [idea.strip()]
 
     def summary(self) -> str:
         return (

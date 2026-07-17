@@ -1,8 +1,6 @@
-"""
-应用生命周期 (P2-1 W4-22)
+"""应用生命周期管理。
 
-替代 main.py 的 @app.on_event("startup") / @app.on_event("shutdown") 装饰器.
-用现代 lifespan context manager (FastAPI 推荐).
+替代 main.py 的 startup/shutdown 装饰器，使用 FastAPI lifespan context manager。
 """
 
 import logging
@@ -95,6 +93,7 @@ async def _startup_hub(app: FastAPI) -> None:
     from app.config import settings
     if not getattr(settings, "community_hub_sync_on_startup", True):
         logger.info("[skip] HubScheduler 启动期同步已禁用 (community_hub_sync_on_startup=False)")
+        return
     try:
         from app.core.community_hub import HubScheduler, sync_all_sources, scrape_browse_layers
 
@@ -106,20 +105,17 @@ async def _startup_hub(app: FastAPI) -> None:
             sync_body=None,
         )
 
-        # 注入 sync body — catalog only, 不 install
+        # 注入 sync body — catalog + browse layer 同步
         async def _sync_body():
-            result = await sync_all_sources(force=False)
-            # scrape 是同步函数, 在 executor 跑
-            import asyncio
-            loop = asyncio.get_running_loop()
-            scrape_result = await loop.run_in_executor(
-                None, _sync_scrape_sync, None
-            )
+            catalog_result = await sync_all_sources(force=False)
+            scrape_result = await scrape_browse_layers()
             return {
-                "ok": result.get("ok", False) and scrape_result.get("ok", True),
-                "count": result.get("count", 0),
+                "ok": catalog_result.get("ok", False) and scrape_result.get("ok", True),
+                "count": catalog_result.get("count", 0),
+                "catalog": catalog_result,
                 "scrape": scrape_result,
             }
+
         sched.install_sync_body(_sync_body)
         app.state.hub = sched
         global _HUB_SCHEDULER_REF
@@ -161,8 +157,13 @@ async def _shutdown_hub() -> None:
 async def _startup_im_gateway(app: FastAPI) -> None:
     """启动 IM Gateway (飞书/企业微信/微信)"""
     try:
-        from app.gateway.im import im_gateway_manager, inject_agent_engine, IMPlatform, IMPlatformConfig
         from app.config import settings as app_settings
+
+        try:
+            from app.gateway.im import im_gateway_manager, inject_agent_engine, IMPlatform, IMPlatformConfig
+        except Exception:
+            logger.info("IM Gateway 模块不可用, 跳过启动")
+            return
 
         engine = app.extra.get("agent_engine")
         if engine:

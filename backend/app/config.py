@@ -7,10 +7,27 @@ import re
 from typing import Any, Dict, List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 运行时数据路径统一走 app.paths (单一事实源, 与 cwd 解耦)。
+from app.paths import data_path as _data_path
+
 
 def load_mcp_servers_from_env() -> Dict[str, Dict[str, Any]]:
-    """从环境变量加载MCP服务器配置"""
-    mcp_servers = {}
+    """合并本地持久化配置与环境变量配置（环境变量优先）。"""
+    mcp_servers: Dict[str, Dict[str, Any]] = {}
+    config_path = _data_path("mcp_servers.json")
+    # 内置常用 MCP 服务器默认配置 (可通过环境变量或本地文件覆盖)
+    if os.environ.get("ENABLE_GIT_MCP", "").lower() in {"1", "true", "yes", "on"}:
+        mcp_servers.setdefault("git", {
+            "command": os.environ.get("GIT_MCP_COMMAND", "uvx"),
+            "args": json.loads(os.environ.get("GIT_MCP_ARGS", '["mcp-server-git"]')),
+            "env": json.loads(os.environ.get("GIT_MCP_ENV", "{}")),
+        })
+    try:
+        if os.path.isfile(config_path):
+            payload = json.loads(open(config_path, encoding="utf-8").read())
+            mcp_servers.update(payload if isinstance(payload, dict) else {})
+    except (OSError, json.JSONDecodeError):
+        pass
     pattern = re.compile(r'^MCP_SERVERS_([A-Z0-9_]+)_(COMMAND|ARGS|ENV)$', re.IGNORECASE)
     
     for key, value in os.environ.items():
@@ -41,8 +58,8 @@ def load_mcp_servers_from_env() -> Dict[str, Dict[str, Any]]:
 class Settings(BaseSettings):
     app_name: str = "TongYong Agent"
     debug: bool = True
-    database_url: str = "sqlite:///./data/tongyong.db"
-    chroma_persist_directory: str = "./data/chroma"
+    database_url: str = f"sqlite:///{_data_path('tongyong.db')}"
+    chroma_persist_directory: str = _data_path("chroma")
     default_llm_provider: str = "edgefn"  # W5-2: 默认 edgefn
     default_llm_model: str = "GLM-4.5V"   # W5-2: 默认 GLM-4.5V
     
@@ -63,14 +80,14 @@ class Settings(BaseSettings):
     # W5-2 (2026-07-09): 默认硬编码 edgefn API Key。
     # 部署不配 EDGEFN_API_KEY 环境变量 / .env 时使用该值。
     # ⚠️  该 key 已经写在 git 历史里, 公开仓库前请先在 edgefn 控制台 rotate。
-    edgefn_api_key: str = "sk-HJVebvMXb0dEQc2RAe92EeAc2fAc4aF89910D38871016217"
+    edgefn_api_key: str = "sk-pWRWl6rai5RUlOVU22B0Cd05AfC44fF8AaFb560c874d4d79"
     
     memory_top_k: int = 10
     compress_threshold: int = 5000
     
     hermes_enabled: bool = False
-    hermes_memory_dir: str = "./data/hermes"
-    hermes_skills_dir: str = "./data/hermes/skills"
+    hermes_memory_dir: str = _data_path("hermes")
+    hermes_skills_dir: str = _data_path("hermes", "skills")
     
     dreaming_enabled: bool = False
     dreaming_frequency: str = "0 3 * * *"

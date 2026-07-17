@@ -14,6 +14,7 @@ from uuid import uuid4
 import re
 
 from app.skills.models import Skill, SkillDraft, SkillUsageLog, TaskResult, SkillStatus
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class SkillManager:
         self,
         memory_storage=None,
         llm=None,
-        db_path: str = "./data/tongyong.db"
+        db_path: str = data_path("tongyong.db")
     ):
         """初始化技能管理器"""
         self.memory_storage = memory_storage

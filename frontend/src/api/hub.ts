@@ -70,6 +70,21 @@ export interface HubInfo {
     updated_at: string | null
 }
 
+export interface HubSearchResult {
+    id: string
+    skill_id: string
+    name: string
+    source: string
+    installs: number
+}
+
+export interface HubSearchResponse {
+    ok: boolean
+    query: string
+    skills: HubSearchResult[]
+    total: number
+}
+
 // ── API ──────────────────────────────────────────
 
 export const hubApi = {
@@ -122,9 +137,15 @@ export const hubApi = {
         return r.data
     },
 
+    /** 实时搜索 Community Skills */
+    search: async (q: string, limit = 10): Promise<HubSearchResponse> => {
+        const r = await api.get('/search', { params: { q, limit } })
+        return r.data
+    },
+
     /** install — 唯一 install path (用户主动触发) */
-    install: async (slug: string) => {
-        const r = await api.post('/install', { slug })
+    install: async (slug: string, source?: string) => {
+        const r = await api.post('/install', { slug, ...(source ? { source } : {}) })
         return r.data
     },
 

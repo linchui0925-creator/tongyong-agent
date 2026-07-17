@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.multi_agent.state_machine import TaskState, TaskEvent, StateMachine
 from app.core.multi_agent.event_bus import get_event_bus, Event
 from app.core.multi_agent.workspace import TaskWorkspace, get_workspace
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class TaskExecutionContext:
         agent_name: str,
         llm: Any,
         tool_mgr: Any,
-        db_path: str = "./data/team_sessions.db",
+        db_path: str = data_path("team_sessions.db"),
         max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
     ) -> "TaskExecutionContext":
         """

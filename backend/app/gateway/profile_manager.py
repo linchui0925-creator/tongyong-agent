@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.gateway.config import Profile, GatewaySettings
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
 # 默认profile数据根目录
-DEFAULT_PROFILE_BASE = Path("./data/hermes/profiles")
+DEFAULT_PROFILE_BASE = Path(data_path("hermes", "profiles"))
 
 
 class ProfileManager:

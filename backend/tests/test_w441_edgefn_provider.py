@@ -11,10 +11,10 @@ def test_edgefn_registered():
 
 
 def test_edgefn_default_endpoint_and_model():
-    """edgefn 默认 api_base 是 edgefn.net, 默认模型是 GLM-5.2"""
+    """edgefn 默认 api_base 是 edgefn.net, 默认模型是 GLM-4.5V (W5-2 起)"""
     llm = EdgeFnLLM(api_key="test")
     assert llm.api_base == "https://api.edgefn.net/v1"
-    assert llm.model == "GLM-5.2"
+    assert llm.model == "GLM-4.5V"
 
 
 def test_edgefn_custom_model():

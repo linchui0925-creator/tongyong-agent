@@ -19,6 +19,7 @@ import logging
 import uuid
 import os
 from datetime import datetime
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,11 @@ class VectorStore:
     def __init__(self, persist_directory: str = None, profile_id: str = "default"):
         # 支持profile_id参数化路径
         if profile_id and profile_id != "default" and persist_directory is None:
-            self.persist_directory = f"./data/hermes/profiles/{profile_id}/chroma"
+            self.persist_directory = data_path("hermes", "profiles", profile_id, "chroma")
         elif persist_directory:
             self.persist_directory = persist_directory
         else:
-            self.persist_directory = "./data/chroma"
+            self.persist_directory = data_path("chroma")
         self.profile_id = profile_id
         os.makedirs(self.persist_directory, exist_ok=True)
         self.client = None
@@ -69,7 +70,7 @@ class VectorStore:
 
         try:
             self.client = chromadb.PersistentClient(
-                path=persist_directory,
+                path=self.persist_directory,
                 settings=settings
             )
         except BaseException as e:

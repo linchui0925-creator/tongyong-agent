@@ -108,6 +108,7 @@ class LLMFullConfig(BaseModel):
     default_provider: str
     available_providers: List[ProviderInfo]
     current: Dict[str, Any]
+    runtime: Dict[str, Any]
     api_keys: Dict[str, bool]
 
 
@@ -172,6 +173,7 @@ async def get_llm_config():
         default_provider=settings.default_llm_provider,
         available_providers=[ProviderInfo(**p) for p in providers],
         current=llm_manager.get_current_config(),
+        runtime=llm_manager.get_current_runtime_config(),
         api_keys=api_keys,
     )
 
@@ -261,13 +263,24 @@ async def test_provider_profile(provider_id: str, config: CustomProviderTestConf
         provider["request_config"] = config.request_config
     if config.base_url:
         provider["base_url"] = config.base_url
-    result = await llm_manager.test_connection(
-        provider=provider_id,
-        api_key=config.api_key,
-        model=config.model,
-        api_endpoint=config.base_url,
-    )
-    return result
+    try:
+        llm = llm_manager._custom_provider_to_llm(
+            provider,
+            api_key=config.api_key,
+            model=config.model,
+            api_endpoint=config.base_url,
+        )
+        from app.core.base import Message
+        response = await llm.chat([Message(role="user", content="hi，只回复ok")])
+        return {
+            "success": True,
+            "message": "连接测试成功",
+            "response": response.content,
+            "model": llm.model,
+        }
+    except Exception as e:
+        logger.warning("测试供应商失败: %s", e)
+        return {"success": False, "message": f"连接测试失败: {e}"}
 
 
 @router.post("/provider-profiles/{provider_id}/test-tools")
@@ -383,19 +396,6 @@ async def test_llm_connection(config: ModelConfig):
 async def switch_model(config: ModelConfig):
     """切换模型（配置 + 可选连接测试）"""
     try:
-        if not config.skip_test:
-            test_result = await llm_manager.test_connection(
-                provider=config.provider,
-                api_key=config.api_key,
-                model=config.model,
-                api_endpoint=config.api_endpoint,
-            )
-            if not test_result["success"]:
-                return {
-                    "success": False,
-                    "message": f"连接测试失败: {test_result.get('message', '')}",
-                }
-
         kwargs = {}
         if config.temperature is not None:
             kwargs["temperature"] = config.temperature
@@ -406,17 +406,36 @@ async def switch_model(config: ModelConfig):
         if config.api_endpoint is not None:
             kwargs["api_endpoint"] = config.api_endpoint
 
+        # 先切换，再按需测试。这样用户可快速切换本地已知可用的配置。
         ok = llm_manager.switch_model(
             provider=config.provider,
             api_key=config.api_key,
             model=config.model,
             **kwargs,
         )
+        if not ok:
+            return {"success": False, "message": f"切换到 {config.provider} 失败"}
+
+        test_summary = None
+        if not config.skip_test:
+            test_result = await llm_manager.test_connection(
+                provider=config.provider,
+                api_key=config.api_key,
+                model=config.model,
+                api_endpoint=config.api_endpoint,
+            )
+            test_summary = test_result.get("message", "")
+            if not test_result["success"]:
+                return {
+                    "success": False,
+                    "message": f"已切换，但连接测试失败: {test_summary}",
+                    "config": llm_manager.get_current_config(),
+                }
 
         return {
-            "success": ok,
-            "message": f"已切换到 {config.provider} / {config.model or '(默认模型)'}",
-            "config": llm_manager.get_current_config() if ok else None,
+            "success": True,
+            "message": f"已切换到 {config.provider} / {config.model or '(默认模型)'}" + (f" · {test_summary}" if test_summary else ""),
+            "config": llm_manager.get_current_config(),
         }
     except Exception as e:
         logger.error(f"切换模型失败: {e}", exc_info=True)

@@ -424,9 +424,10 @@ function shouldShowTime(msgs: Message[], idx: number): boolean {
 
 interface ModernChatPanelProps {
   initialSessionId?: string;
+  onSessionCreated?: (sessionId: string) => void;
 }
 
-function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
+function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanelProps) {
   const [currentSessionId, setCurrentSessionId] = useState<string>(initialSessionId || '');
   const [inputValue, setInputValue] = useState('');
   const [waitingAnswer, setWaitingAnswer] = useState('');
@@ -436,17 +437,23 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
 
   // Sync session from parent
   useEffect(() => {
-    if (initialSessionId) setCurrentSessionId(initialSessionId);
+    setCurrentSessionId(initialSessionId || '');
   }, [initialSessionId]);
 
   // 状态机: 全部从 hook 拿
   const {
-    messages, isStreaming, isLoading, errorMessage, progressText, elapsed,
-    currentTool, toolElapsed, tokenUsage, contextInfo, isCompressing, savedFlash,
+    messages, isStreaming, isLoading, errorMessage, progressText,
+    currentTool, toolElapsed, contextInfo, isCompressing, savedFlash,
     expandedThinkingMsgId, waitingQuestion, pendingContinue,
     setErrorMessage, handleSend, handleStop, handleCompress, handleDelete,
     handleToggleThinking, handleClarifyAnswer, handleContinue,
-  } = useStreamChat({ sessionId: currentSessionId });
+  } = useStreamChat({
+    sessionId: currentSessionId,
+    onSessionCreated: (sessionId) => {
+      setCurrentSessionId(sessionId);
+      onSessionCreated?.(sessionId);
+    },
+  });
 
   // Tab title
   useEffect(() => {
@@ -639,34 +646,6 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 工具执行仪表板 */}
-      {currentTool && (
-        <div className="chat-tools-dashboard">
-          <div className="tool-item tool-item--running">
-            <span className="tool-emoji">{currentTool.emoji || '⚙'}</span>
-            <span className="tool-name">{currentTool.name}</span>
-            <span className="tool-spinner"><span /><span /><span /></span>
-            <span className="tool-duration tool-duration--live">{(toolElapsed / 1000).toFixed(1)}s</span>
-          </div>
-        </div>
-      )}
-      {/* 进度提示 */}
-      {isStreaming && !currentTool && (
-        <div className="chat-statusbar">
-          <span className="chat-statusbar-dot" />
-          <span className="chat-statusbar-text">{progressText || '思考中...'}</span>
-          {tokenUsage && <span className="chat-statusbar-token">⏱ {tokenUsage.total}</span>}
-          <span className="chat-statusbar-elapsed">{(elapsed / 1000).toFixed(1)}s</span>
-        </div>
-      )}
-      {isStreaming && currentTool && tokenUsage && (
-        <div className="chat-statusbar">
-          <span className="chat-statusbar-dot" />
-          <span className="chat-statusbar-text">{progressText || '执行中...'}</span>
-          <span className="chat-statusbar-token">⏱ {tokenUsage.total}</span>
-          <span className="chat-statusbar-elapsed">{(elapsed / 1000).toFixed(1)}s</span>
-        </div>
-      )}
       {!isStreaming && pendingContinue && (
         <div className="chat-statusbar chat-statusbar--continue">
           <span className="chat-statusbar-dot" />

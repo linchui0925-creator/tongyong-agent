@@ -1,7 +1,6 @@
-"""
-Skill 市场 API（/api/marketplace/*）
+"""Skill 市场 API。
 
-跟 multi_agent 的 /api/multi_agent/marketplace/* 区分开
+与 multi_agent 的 /api/multi_agent/marketplace/* 区分开
 （那个是 Agent 模板市场；本路由管 SKILL.md 资源）
 
 接口：
@@ -67,7 +66,9 @@ async def list_skills(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    """列出 marketplace 中的 skill（不刷新缓存）"""
+    """列出公开社区 Skill；首次访问自动同步公开 GitHub 源。"""
+    if not mp.list_marketplace_skills():
+        mp.ensure_public_sources()
     all_skills = mp.list_marketplace_skills(
         category=category, search=search, source=source,
     )
@@ -173,7 +174,7 @@ async def list_sources():
     """
     cache = mp._load_cache()
     registry_sources = list(cache.get("sources", {}).keys())
-    settings_sources = list(settings.marketplace_sources)
+    settings_sources = mp.get_configured_sources()
     # 合并去重, settings 优先
     seen = set()
     merged = []

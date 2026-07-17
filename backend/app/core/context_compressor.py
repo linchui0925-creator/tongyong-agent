@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 class ContextCompressor:
     """自动上下文压缩引擎"""
 
-    DEFAULT_THRESHOLD_PERCENT = 0.50   # 50% context 满触发压缩
-    DEFAULT_PROTECT_FIRST = 3          # 前 N 条消息不压缩
-    DEFAULT_PROTECT_LAST = 20          # 后 N 条消息不压缩
+    DEFAULT_THRESHOLD_PERCENT = 0.65   # 默认到 65% 再压缩，避免过早稀释长任务上下文
+    DEFAULT_PROTECT_FIRST = 4          # 保护更多前置系统/身份消息
+    DEFAULT_PROTECT_LAST = 24          # 保护更多最近消息，减少长回复被摘要打断的概率
     MIN_COMPRESS_CHARS = 30000          # 不足 30000 字符不压缩（约 7500 tokens）；50% threshold=64000 tokens 时，30K 字符 ≈ 7500 tokens，两者匹配
 
     def __init__(

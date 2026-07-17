@@ -82,6 +82,12 @@ def _resolve_path(path_str: str) -> Path:
     if "\x00" in path_str:
         raise HTTPException(400, "path 含非法字符")
 
+    if path_str.startswith(("http://", "https://", "file://", "//")):
+        raise HTTPException(
+            400,
+            f"请直接打开远程链接，不要通过文件预览代理: {path_str}",
+        )
+
     p = Path(path_str)
     if not p.is_absolute():
         # bare filename 或相对路径 → 锚定到 backend cwd

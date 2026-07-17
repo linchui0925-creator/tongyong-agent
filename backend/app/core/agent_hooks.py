@@ -63,6 +63,9 @@ def register_hook(event: HookEvent, callback: Callable) -> None:
         raise ValueError(
             f"Unknown hook event: {event!r}. Valid: {list(HOOKS.keys())}"
         )
+    if callback in HOOKS[event]:
+        logger.debug(f"hook {callback.__name__!r} already registered for event {event!r}")
+        return
     HOOKS[event].append(callback)
     logger.debug(f"registered hook {callback.__name__!r} for event {event!r}")
 
@@ -216,9 +219,14 @@ def setup_default_hooks(get_time: Callable[[], float] = None) -> None:
             final_reply = re.sub(r'<think>[\s\S]*?</think>', '', final_reply, flags=re.DOTALL).strip()
             final_reply = re.sub(r'<think>[\s\S]*?</think>', '', final_reply, flags=re.DOTALL).strip()
             final_reply = re.sub(r'<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>', '', final_reply).strip()
+            tool_meta = {
+                "tools_used": list(dict.fromkeys(ctx.get("tools_used") or [])),
+                "commands_executed": list(dict.fromkeys(ctx.get("commands_executed") or [])),
+            }
+            final_reply_with_meta = f"{final_reply}\n\n<<<TOOL_META_JSON>>>" + __import__("json").dumps(tool_meta, ensure_ascii=False) + "<<<TOOL_META_JSON_END>>>"
             try:
                 await memory_storage.add_message(session_id, "user", message)
-                await memory_storage.add_message(session_id, "assistant", final_reply)
+                await memory_storage.add_message(session_id, "assistant", final_reply_with_meta)
             except Exception as e:
                 logger.warning(f"memory save failed: {e}")
 

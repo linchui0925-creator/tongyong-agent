@@ -56,10 +56,13 @@ def _scan_skill_dirs() -> Dict[str, Dict]:
                 continue
             name = skill_dir.name
             meta = _read_frontmatter(skill_md)
+            if bool(meta.get("quarantined", False)) or not bool(meta.get("enabled", True)):
+                continue
             result[name] = {
                 "path": str(skill_md),
                 "category": category,
                 "name": name,
+                "display_name": meta.get("name", name),
                 "description": meta.get("description", ""),
                 "version": meta.get("version", "1.0"),
                 "platforms": meta.get("platforms", []),
@@ -82,16 +85,18 @@ def _read_frontmatter(path: Path) -> Dict:
 
 
 def _get_index_mtime() -> float:
-    """获取 skill 目录的最近修改时间"""
+    """获取 Skill 树中目录和文件的最近修改时间。"""
     skills_dir = _get_skills_dir()
     if not skills_dir.is_dir():
         return 0.0
     latest = 0.0
-    for cat_dir in skills_dir.iterdir():
-        if cat_dir.is_dir():
-            m = cat_dir.stat().st_mtime
-            if m > latest:
-                latest = m
+    for root, _, files in os.walk(skills_dir):
+        paths = [Path(root), *(Path(root) / filename for filename in files)]
+        for path in paths:
+            try:
+                latest = max(latest, path.stat().st_mtime)
+            except OSError:
+                continue
     return latest
 
 
@@ -146,6 +151,12 @@ def skill_view(name: str) -> str:
     if skill_md is None:
         available = _build_available_skills_index()
         return f"[error] Skill '{name}' 未找到。\n\n可用 skill 列表：\n{available}"
+
+    meta = _read_frontmatter(skill_md)
+    if bool(meta.get("quarantined", False)):
+        return f"[error] Skill '{name}' 仍处于隔离状态，不能加载。"
+    if not bool(meta.get("enabled", True)):
+        return f"[error] Skill '{name}' 已停用，不能加载。"
 
     try:
         content = skill_md.read_text(encoding="utf-8")

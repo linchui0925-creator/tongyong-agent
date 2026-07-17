@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import logging
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def get_evaluation_service():
     global _evaluation_service
     if _evaluation_service is None:
         from app.evaluation.service import EvaluationService
-        db_path = os.environ.get("DATABASE_PATH", "./data/tongyong.db")
+        db_path = os.environ.get("DATABASE_PATH", data_path("tongyong.db"))
         _evaluation_service = EvaluationService(db_path=db_path)
     return _evaluation_service
 

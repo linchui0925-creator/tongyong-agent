@@ -19,6 +19,7 @@ from app.core.base import Session, Message, Memory
 import os
 import json
 import logging
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +27,17 @@ class MemoryStorage:
     def __init__(self, db_path: str = None, profile_id: str = "default"):
         # 支持profile_id参数化路径
         if profile_id and profile_id != "default" and db_path is None:
-            self.db_path = f"./data/hermes/profiles/{profile_id}/tongyong.db"
+            self.db_path = data_path("hermes", "profiles", profile_id, "tongyong.db")
         elif db_path:
             self.db_path = db_path
         else:
-            self.db_path = "./data/tongyong.db"
+            self.db_path = data_path("tongyong.db")
         self.profile_id = profile_id
-        os.makedirs(os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else "./data", exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path) or data_path(), exist_ok=True)
         self.init_tables()
 
     def init_tables(self):
-        db_dir = os.path.dirname(self.db_path) if self.db_path != "./data/tongyong.db" else "./data"
+        db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         

@@ -14,6 +14,7 @@ import json
 import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class REMBackfill:
     """REM 回填处理器"""
 
-    def __init__(self, dreams_dir: str = "./data/dreams"):
+    def __init__(self, dreams_dir: str = data_path("dreams")):
         self.dreams_dir = dreams_dir
         self.diary_dir = os.path.join(dreams_dir, "diary")
         self.dreams_path = os.path.join(dreams_dir, "DREAMS.md")

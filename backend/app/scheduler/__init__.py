@@ -9,6 +9,7 @@ import logging
 import threading
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ async def scheduled_skill_refinement():
     try:
         from app.skills import SkillManager
         
-        manager = SkillManager(db_path="./data/tongyong.db")
+        manager = SkillManager(db_path=data_path("tongyong.db"))
         
         skills = await manager.get_all_skills()
         
@@ -191,7 +192,7 @@ async def scheduled_cleanup():
         import sqlite3
         import os
         
-        db_path = "./data/tongyong.db"
+        db_path = data_path("tongyong.db")
         
         if not os.path.exists(db_path):
             return

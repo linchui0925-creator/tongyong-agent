@@ -1,7 +1,3 @@
-"""
-browser - 浏览器控制工具
-
-支持两种模式：
 1. playwright（默认）：Playwright headless，服务端运行，用户不可见
 2. cdp：有头模式，通过 Chrome DevTools Protocol 连接用户本地 Chrome，
    用户可以看到真实浏览器窗口
@@ -14,8 +10,10 @@ import logging
 import os
 import threading
 import asyncio
+import json
 from typing import Optional
 from pathlib import Path
+from urllib.parse import quote
 
 from app.tools.registry import registry
 
@@ -231,33 +229,51 @@ class BrowserMode:
     async def navigate(self, url: str) -> str:
         if self._cdp:
             await self._cdp.navigate(url)
-            return f"已导航到: {url}"
+            title = url
+            return json.dumps({"message": f"已导航到: {url}", "title": title, "url": url}, ensure_ascii=False)
         await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
         title = await self._page.title()
-        return f"已打开: {url}\n页面标题: {title}"
+        return json.dumps({"message": f"已打开: {url}", "title": title, "url": url}, ensure_ascii=False)
 
     async def click(self, selector: str) -> str:
         if self._cdp:
             await self._cdp.click(selector)
-            return f"已点击: {selector}"
+            return json.dumps({"message": f"已点击: {selector}", "selector": selector}, ensure_ascii=False)
         await self._page.click(selector, timeout=10000)
-        return f"已点击: {selector}"
+        return json.dumps({"message": f"已点击: {selector}", "selector": selector}, ensure_ascii=False)
 
     async def type_text(self, selector: str, text: str) -> str:
         if self._cdp:
             await self._cdp.type_text(selector, text)
-            return f"已在 {selector} 输入: {text}"
+            return json.dumps({"message": f"已在 {selector} 输入: {text}", "selector": selector}, ensure_ascii=False)
         await self._page.fill(selector, text, timeout=10000)
-        return f"已在 {selector} 输入: {text}"
+        return json.dumps({"message": f"已在 {selector} 输入: {text}", "selector": selector}, ensure_ascii=False)
 
     async def screenshot(self, path: str) -> str:
         if self._cdp:
             img_bytes = await self._cdp.screenshot()
             with open(path, "wb") as f:
                 f.write(img_bytes)
-            return f"截图已保存: {os.path.abspath(path)}"
-        await self._page.screenshot(path=path, full_page=False)
-        return f"截图已保存: {os.path.abspath(path)}"
+        else:
+            await self._page.screenshot(path=path, full_page=False)
+        abs_path = os.path.abspath(path)
+        encoded = quote(abs_path, safe="")
+        return json.dumps({
+            "message": f"截图已保存: {abs_path}",
+            "path": abs_path,
+            "name": Path(path).name,
+            "kind": "image",
+            "preview_url": f"/api/files/serve?path={encoded}",
+            "open_url": f"/api/files/serve?path={encoded}",
+            "artifact_previews": [{
+                "path": abs_path,
+                "name": Path(path).name,
+                "kind": "image",
+                "preview_url": f"/api/files/serve?path={encoded}",
+                "open_url": f"/api/files/serve?path={encoded}",
+                "render_mode": "image",
+            }],
+        }, ensure_ascii=False)
 
     async def get_text(self, selector: str) -> str:
         if self._cdp:

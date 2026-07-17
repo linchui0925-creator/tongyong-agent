@@ -20,12 +20,13 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/contact", tags=["contact"])
 
-_DB_PATH = Path(os.getenv("CONTACT_DB", "./data/contact.db")).resolve()
+_DB_PATH = Path(os.getenv("CONTACT_DB", data_path("contact.db"))).resolve()
 _DEFAULT_EMAIL_TO = "xiying236848@gmail.com"
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")

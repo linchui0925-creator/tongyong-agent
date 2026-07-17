@@ -43,7 +43,7 @@ export async function listMCPServers() {
   return response.data as { servers: MCPInstalledServer[]; total: number };
 }
 
-export async function installMCPServer(config: { server_id: string; command: string; args: string[]; env: Record<string, string> }) {
+export async function installMCPServer(config: { server_id: string; package?: MCPPackage; remote?: { type: string; url: string }; env: Record<string, string> }) {
   const response = await api.post('/servers/install', config);
   return response.data;
 }

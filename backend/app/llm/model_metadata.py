@@ -493,6 +493,12 @@ def get_model_info(model_id: str) -> Optional[ModelInfo]:
     return None
 
 
+# 默认启用视觉能力的模型族（用于附件策略回退）
+_DEFAULT_VISION_MODELS = (
+    "vision", "omni", "image", "gpt-4o", "gpt-5", "gemini", "claude", "grok", "glm-4.5v", "glm-5v", "mimo-v2-omni"
+)
+
+
 def _get_context_length(model: str) -> int:
     """获取模型的 context length"""
     normalized = _normalize_model_id(model)
@@ -559,3 +565,12 @@ def is_model_supported(provider: str, model: str) -> bool:
     models = get_provider_models(provider)
     normalized_model = model.lower()
     return any(m.lower() == normalized_model for m in models)
+
+
+def model_supports_vision(model_id: str) -> bool:
+    """根据模型元数据判断是否支持视觉/图片输入。"""
+    info = get_model_info(model_id)
+    if info is not None:
+        return bool(info.vision)
+    normalized = _normalize_model_id(model_id)
+    return any(keyword in normalized for keyword in _DEFAULT_VISION_MODELS)

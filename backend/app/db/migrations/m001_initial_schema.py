@@ -8,6 +8,7 @@ import sqlite3
 import os
 import logging
 from datetime import datetime
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -438,7 +439,7 @@ def insert_default_tools(conn: sqlite3.Connection):
     logger.info("默认工具注册完成")
 
 
-def run_migration(db_path: str = "./data/tongyong.db"):
+def run_migration(db_path: str = data_path("tongyong.db")):
     """运行迁移"""
     os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else "./data", exist_ok=True)
     
@@ -460,7 +461,7 @@ def run_migration(db_path: str = "./data/tongyong.db"):
         conn.close()
 
 
-def rollback_migration(db_path: str = "./data/tongyong.db"):
+def rollback_migration(db_path: str = data_path("tongyong.db")):
     """回滚迁移"""
     conn = get_connection(db_path)
     cursor = conn.cursor()
@@ -500,7 +501,7 @@ if __name__ == "__main__":
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    db_path = sys.argv[1] if len(sys.argv) > 1 else "./data/tongyong.db"
+    db_path = sys.argv[1] if len(sys.argv) > 1 else data_path("tongyong.db")
     
     if len(sys.argv) > 2 and sys.argv[2] == "rollback":
         rollback_migration(db_path)

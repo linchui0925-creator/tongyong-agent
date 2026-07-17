@@ -206,6 +206,10 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W5-6 | Skill 安装 no_source_mapping / 找不到 skill 修复: 显式 source 安装改单次仓库树解析 (按目录名→frontmatter name 精准定位, 不再全仓库扫描), _http_get 加 SSL/URLError 指数退避重试, skillId≠目录名时明确报错并列出可用 skill; 前端透传后端 detail.error |
+| (pending) | W5-5 | 会话 HTML 预览修复: browser 导航远程 `.html/.htm/.xhtml` 不再误当本地文件路径, 直接使用原始 URL 预览/打开; `/api/files/*` 明确拒绝远程 URL 走本地文件代理; MCP 市场为全部条目补中文说明并支持中文搜索 |
+| (pending) | W5-3 | 会话压缩状态 + MCP Registry 安装修复: 新流式请求先创建持久会话, 前端接收 `done.session_id` 并刷新 context stats; Registry 安装保留 runtime arguments, 支持 remote-only HTTP server, 启动失败回滚配置 |
+| (pending) | W5-4 | 实时全局 Skill 搜索 + 完整原子安装: 搜索代理 `skills.sh/api/search`, 结果不写本地 catalog; 安装支持 `source` 显式传入, 完整下载配套文件(含二进制/嵌套目录), 5MB 限制, 失败回滚保留原安装; 前端 400ms 防抖搜索 + 上游结果卡片直接 install |
 | (pending) | W5-2 | edgefn/GLM-4.5V 硬编码部署默认: edgefn.py HARDCODED_API_KEY + config.py edgefn_api_key 默认值 + llm_manager._default_model() 兜底, 全新部署不配 .env / llm_config.json 也跑 GLM-4.5V; .env + llm_config.json 同步切到 edgefn/GLM-4.5V; ⚠️ API key 明文进 git, public repo 前先在 edgefn 控制台 rotate |
 | (pending) | W5-1 | Skill Community Hub: catalog sync 跟 install 严格分离; browse layer (.lol/.cn) active mapping miner; UI 3rd sub-tab "✨ Community (Hub)"; 4 种卡片状态 (Available/Installed/Updated/Browse-Only); install 必须用户主动 + 二次确认 toast; default whitelist 2 个 (anthropics + ComposioHQ), 待 linc 跑 HEAD probe 验证真假后再扩 |
 | (pending) | W4-51 | 会话附件渲染层 MVP: 上传/安全 serve/图片直显/文件卡片/拖拽粘贴/stream attachment_ids |
@@ -239,6 +243,58 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W5-6: Skill 安装 no_source_mapping / 找不到 skill 修复
+
+- **现象**: 从实时搜索结果点 Install 报 `⚠️ 无 source repo 映射. Click ↗ View 或 contribute mapping.`, 或后台大量 `SSL: UNEXPECTED_EOF_WHILE_READING` 后报 `marketplace 中找不到 skill`。
+- **三层根因**:
+  1. `_http_get` 对 GitHub raw/api 偶发 SSL `UNEXPECTED_EOF` / URLError **无重试**, 一断就整单失败。
+  2. 显式 `source` 安装走 `refresh_source` **全仓库扫描** (逐个拉 22 个 SKILL.md), 慢且放大 SSL 失败概率。
+  3. skills.sh 的 `skillId` 与仓库真实目录名 **不一定一致** (如 `native-data-fetching` 仓库里其实是 `expo-data-fetching`), 目录名匹配不到就报笼统错误。
+- **修法** (`backend/app/core/marketplace.py`):
+  - `_http_get` 加 `_HTTP_MAX_RETRIES=3` 指数退避 (HTTPError 不重试, URLError/SSLError/timeout/OSError 重试); `urllib` 提到模块级便于测试。
+  - 新增 `_resolve_skill_in_repo(owner, repo, skill_id)`: 只调一次 tree API, 先按目录名匹配, 再按 SKILL.md frontmatter `name` 匹配, 命中后只解析该 skill。
+  - `install_skill` 缓存未命中时调 `_resolve_skill_in_repo` 而非 `refresh_source`; 找不到时报错列出全部可用 skill 目录名。
+- **前端** (`CommunityHubView.tsx`): install 失败时优先透传后端 `detail.error` (含可用 skill 列表), 不再只显示通用 axios message。
+- **端到端验证** (升级权限真连 GitHub): `expo-router` 完整安装 8 文件 (嵌套 `references/` + `agents/` 全保留); `native-data-fetching` 明确报"仓库中找不到 + 列出 21 个可用 skill" (upstream 索引与仓库目录不一致, 非本地 bug)。
+- **测试**: `tests/test_w53_complete_skill_install.py` 加 3 个 (直接解析/找不到列候选/HTTP 重试), 焦点回归 52 passed; 前端 `npm run build` 通过。
+
+### W5-5: 会话 HTML 预览远程 URL 误判 + MCP 中文说明
+
+- **场景**: browser 工具打开 `http://gold.qqday.com/silver.htm` 后, 会话 artifact 卡片把 URL 截成 `//gold.qqday.com/silver.htm`, 再送入 `/api/files/preview`, 最终报"路径不在白名单内"。同时 MCP 市场条目缺少中文说明, 中文关键词无法检索。
+- **根因**: `delivery_gate._artifact_preview_from_write_result()` 对 browser 导航 JSON 继续走本地路径正则兜底, 且模块漏导入 `json`, 结构化分支异常被宽泛捕获；MCP 搜索直接把中文 query 发给只含英文元数据的官方 registry。
+- **修法**: 对结构化 browser 导航的远程 HTML URL 直接返回原始 `preview_url/open_url`; `/api/files/_resolve_path()` 防御性拒绝远程 URL; MCP 市场始终拉取列表后在前端中英文过滤, 专有映射与分类兜底保证每个条目都有中文说明。
+- **测试**: `tests/test_w5_artifact_preview_urls.py` 4 passed; 前端 `npm run build` 通过。相邻 W4-50 回归有 3 个既存接口漂移失败, 与本次改动无关。
+
+### W5-3: 会话压缩状态与 MCP Registry 安装链
+
+- **压缩状态根因**: 无 `session_id` 的流式请求进入 LangChain 临时会话, 且前端忽略 `done.session_id`, 导致压缩按钮持续查询空会话并显示 0。
+- **压缩状态修法**: stream 入口统一先创建持久会话；`useStreamChat` 接收后端返回的 session id、同步到页面/侧栏，并按真实 session 刷新 context stats。
+- **MCP 安装根因**: 前端自行拼装启动命令时遗漏 Registry `runtimeArguments`; remote-only 条目被误判为“无安装包”; 后端在验证启动前保存坏配置且只返回笼统错误。
+- **MCP 安装修法**: 安装 API 接收 Registry package/remote 元数据并在后端构建启动配置；支持 Streamable HTTP JSON-RPC MCP；启动失败回滚配置并透传 stderr/初始化错误。
+- **测试**: `tests/test_w5_chat_session_and_mcp_install.py` 覆盖持久会话、npm 参数、remote-only 配置和失败回滚；同时回归 MCP client/lifespan 与前端 build。
+
+### W5-4: 实时全局 Skill 搜索 + 完整原子安装
+
+- **场景**: 用户要求实现实时搜索社区 Skill（不依赖本地 catalog 同步），以及完整下载 Skill 配套文件（二进制/嵌套目录，不丢文件）。
+- **核心决策**:
+  1. 搜索上游: `https://skills.sh/api/search?q=<query>&limit=<limit>` — 实时查询，不写本地 catalog
+  2. 搜索结果不自动 install，必须用户主动点击
+  3. 搜索结果的 install 传 `source: owner/repo`，不写 slug_mappings
+  4. 完整安装: 递归下载所有配套文件，SKILL.md 重写（UTF-8 + quarantined 元数据），其他文件保持原始字节
+  5. 原子替换: 在同一分区的 staging 目录完整落盘后原子替换，失败回滚，保留原安装
+  6. 安全: 拒绝隐藏路径/遍历路径/5MB 总大小限制
+- **新增文件**:
+  - `backend/app/core/skill_search.py` — 搜索服务，可注入 fetcher 用于测试
+  - `backend/tests/test_w53_realtime_search.py` — 搜索 9 个测试（空白查询/上游错误/502 映射）
+  - `backend/tests/test_w53_complete_skill_install.py` — 安装 5 个测试（二进制保留/嵌套路径/失败回滚/超限/不安全路径）
+- **修改文件**:
+  - `backend/app/api/hub.py` — `GET /api/hub/search` + `/api/hub/install` 接受可选 `source`
+  - `backend/app/core/community_hub.py` — `install_from_slug(..., source=None)` 支持显式 source
+  - `backend/app/core/marketplace.py` — 完整 bundle 安装: staging/原子替换/备份/安全路径/5MB 限制
+  - `frontend/src/api/hub.ts` — 搜索类型 + API
+  - `frontend/src/components/Skills/CommunityHubView.tsx` — 400ms 防抖全局搜索，上游结果卡片显示
+- **测试**: 29 passed（搜索 9 + 完整安装 6 + hub install 14），均用 injectable fetcher 不依赖网络
 
 ### W5-2: edgefn/GLM-4.5V 硬编码部署默认 (明文 API Key 进 git)
 

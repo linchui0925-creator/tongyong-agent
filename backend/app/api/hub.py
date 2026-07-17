@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app.core import community_hub as hub_mod
+from app.core import skill_search
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,19 @@ def _validate_owner_repo(s: str) -> tuple:
 
 
 # ── info ────────────────────────────────────────────────────────
+
+@router.get("/search")
+async def search_skills(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=50)):
+    """实时代理 skills.sh 搜索，不写入本地 catalog。"""
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="q 不能为空")
+    try:
+        skills = await asyncio.to_thread(skill_search.search_skills, query, limit)
+    except skill_search.SkillSearchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "query": query, "skills": skills, "total": len(skills)}
+
 
 @router.get("/info")
 async def info(request: Request):
@@ -261,7 +275,7 @@ async def toggle_browse_layer(layer_id: str, payload: Dict[str, Any] = Body(defa
 
 @router.post("/install")
 async def install_skill(payload: Dict[str, Any] = Body(...)):
-    """用户主动 install 入口 — body: {slug: "seo-audit", profile?: "linc"}
+    """用户主动 install 入口 — body: {slug, source?, profile?}
 
     - 查 slug_mappings[slug] → 无映射返回 404 + view_url
     - 走 marketplace.install_skill (默认 quarantined=true, skill_type=external)
@@ -271,7 +285,10 @@ async def install_skill(payload: Dict[str, Any] = Body(...)):
     if not slug:
         raise HTTPException(status_code=400, detail="slug 必填")
     profile = payload.get("profile")
-    result = await hub_mod.install_from_slug(slug, profile=profile)
+    source = (payload.get("source") or "").strip()
+    if source:
+        _validate_owner_repo(source)
+    result = await hub_mod.install_from_slug(slug, profile=profile, source=source or None)
     if not result.get("ok"):
         err = result.get("error", "install failed")
         if err == "no_source_mapping":

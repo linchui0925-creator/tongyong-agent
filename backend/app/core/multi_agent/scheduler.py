@@ -49,6 +49,7 @@ from app.core.multi_agent.task_queue import TaskQueue, TaskRecord, DEFAULT_CLAIM
 from app.core.multi_agent.workspace import get_workspace, WorkspaceManager
 from app.core.multi_agent.execution_context import TaskExecutionContext
 from app.core.multi_agent.role import TeamRole
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class Scheduler:
     
         scheduler = Scheduler(
             session_id="s_001",
-            db_path="./data/team_sessions.db",
+            db_path=data_path("team_sessions.db"),
         )
         
         # 注册 Agent
@@ -125,7 +126,7 @@ class Scheduler:
     def __init__(
         self,
         session_id: str,
-        db_path: str = "./data/team_sessions.db",
+        db_path: str = data_path("team_sessions.db"),
         max_concurrent: int = MAX_CONCURRENT_AGENTS,
         claim_ttl_seconds: int = DEFAULT_CLAIM_TTL_SECONDS,
     ):

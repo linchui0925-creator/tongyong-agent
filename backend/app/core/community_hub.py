@@ -46,6 +46,11 @@ SCHEMA_VERSION = 2
 # 真伪待 user 验证; 不存在则从 whitelist 删除。
 # 顺序 = 优先级 (小 -> 大)
 DEFAULT_HUB_REPOS: List[Tuple[str, str, str]] = [
+    ("cline",                 "cline",                 "Cline bot skills"),
+    ("cline",                 "awesome-cline-skills",  "Cline community skills"),
+    ("continuedev",           "continue",              "Continue.dev assistant skills"),
+    ("sourcegraph",           "awesome-cody-skills",   "Sourcegraph Cody skills"),
+    ("JetBrains",             "awesome-ai-ide-skills", "JetBrains AI assistant skills"),
     ("anthropics",            "skills",                "Anthropic official skills"),
     ("ComposioHQ",            "awesome-claude-skills", "Composio curated"),
 ]
@@ -569,6 +574,7 @@ async def install_from_slug(
     slug: str,
     config_path: Optional[Path] = None,
     profile: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """用户主动 install 路径 (spec §7)
 
@@ -585,18 +591,20 @@ async def install_from_slug(
     if not slug:
         return {"ok": False, "error": "slug 不能为空"}
 
-    cfg = load_hub_config(config_path)
-    mappings = cfg.get("slug_mappings", {})
-    mapping = mappings.get(slug)
-    if not mapping:
-        return {
-            "ok": False,
-            "error": "no_source_mapping",
-            "slug": slug,
-            "view_url": f"https://skillhub.lol/skills/{slug}",  # best-effort 引导
-        }
+    source = (source or "").strip()
+    if not source:
+        cfg = load_hub_config(config_path)
+        mappings = cfg.get("slug_mappings", {})
+        mapping = mappings.get(slug)
+        if not mapping:
+            return {
+                "ok": False,
+                "error": "no_source_mapping",
+                "slug": slug,
+                "view_url": f"https://skillhub.lol/skills/{slug}",
+            }
+        source = str(mapping.get("source") or "").strip()
 
-    source = mapping.get("source")
     if not source or "/" not in source:
         return {
             "ok": False,

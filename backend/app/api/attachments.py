@@ -7,6 +7,7 @@ MVP scope:
 - Return metadata the frontend can render inside chat bubbles.
 """
 from __future__ import annotations
+from app.paths import data_path
 
 import hashlib
 import json
@@ -30,8 +31,8 @@ from app.api.attachment_processor import (
 
 router = APIRouter(prefix="/api/chat/attachments", tags=["chat-attachments"])
 
-_BASE_DIR = Path(os.getenv("ATTACHMENTS_DIR", "./data/attachments")).resolve()
-_DB_PATH = Path(os.getenv("ATTACHMENTS_DB", "./data/attachments.db")).resolve()
+_BASE_DIR = Path(os.getenv("ATTACHMENTS_DIR", data_path("attachments"))).resolve()
+_DB_PATH = Path(os.getenv("ATTACHMENTS_DB", data_path("attachments.db"))).resolve()
 _MAX_FILE_SIZE = int(os.getenv("ATTACHMENTS_MAX_BYTES", str(25 * 1024 * 1024)))
 _CHUNK_SIZE = 1024 * 1024
 

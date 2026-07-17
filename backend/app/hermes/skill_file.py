@@ -14,6 +14,7 @@ import yaml
 import logging
 import shutil
 from typing import List, Dict, Optional, Tuple
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ _SKILL_THREAT_PATTERNS = [
 class SkillFileManager:
     """技能平文件管理器"""
 
-    def __init__(self, base_dir: str = "./data/hermes"):
+    def __init__(self, base_dir: str = data_path("hermes")):
         self.skills_dir = os.path.join(base_dir, "skills")
         os.makedirs(self.skills_dir, exist_ok=True)
         logger.info(f"SkillFileManager 初始化: {self.skills_dir}")

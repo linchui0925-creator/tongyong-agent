@@ -32,6 +32,7 @@ function looksLikeExecutionClaim(content: string): boolean {
 export interface UseStreamChatOptions {
   sessionId: string;
   onError?: (err: string) => void;
+  onSessionCreated?: (sessionId: string) => void;
 }
 
 export interface UseStreamChatReturn {
@@ -63,7 +64,7 @@ export interface UseStreamChatReturn {
   refreshContextStats: () => Promise<void>;
 }
 
-export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): UseStreamChatReturn {
+export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStreamChatOptions): UseStreamChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -205,7 +206,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
         }
 
         const trace = toolMeta ? [{
-          kind: (toolMeta.success === false ? 'tool_error' : 'tool_result') as const,
+          kind: toolMeta.success === false ? 'tool_error' as const : 'tool_result' as const,
           tool_name: toolMeta.tool_name,
           preview: toolMeta.content,
           result_full: toolMeta.result_full,
@@ -462,6 +463,17 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
         setIsStreaming(false);
         setIsLoading(false);
         abortRef.current = null;
+
+        if (data.session_id) {
+          if (data.session_id !== sessionId) onSessionCreated?.(data.session_id);
+          getContextStats(data.session_id).then((stats) => {
+            if (!stats.error && stats.chars !== undefined && stats.estimated_tokens !== undefined
+              && stats.threshold_tokens !== undefined && stats.percent !== undefined
+              && stats.approaching !== undefined) {
+              setContextInfo(stats as ContextInfo);
+            }
+          }).catch(() => undefined);
+        }
 
         if (data.session_id && data.tools_used && data.tools_used.length > 0) {
           createEvaluation({

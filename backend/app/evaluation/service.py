@@ -9,12 +9,13 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from uuid import uuid4
 import logging
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
 
 class EvaluationService:
-    def __init__(self, db_path: str = "./data/tongyong.db"):
+    def __init__(self, db_path: str = data_path("tongyong.db")):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else "./data", exist_ok=True)
         self._init_tables()

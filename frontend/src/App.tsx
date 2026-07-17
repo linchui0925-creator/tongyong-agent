@@ -191,7 +191,13 @@ function App() {
           {renderTitleBar()}
           <ErrorBoundary>
             {view === 'chat' && (
-              <ModernChatPanel initialSessionId={currentSessionId} />
+              <ModernChatPanel
+                initialSessionId={currentSessionId}
+                onSessionCreated={(sessionId) => {
+                  setCurrentSessionId(sessionId)
+                  refreshSessions()
+                }}
+              />
             )}
             {view === 'team' && <TeamPanel />}
             {view === 'mcp' && <MCPMarketplace />}

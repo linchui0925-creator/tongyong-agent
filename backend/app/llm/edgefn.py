@@ -1,6 +1,6 @@
 """EdgeFn.net 代理 provider (智谱 GLM / DeepSeek 等多模型聚合)
 
-W4-41 (2026-06-30): 用户提供 edgefn.net 代理 sk-HJVebvMXb0dEQc2RAe92EeAc2fAc4aF89910D38871016217
+W4-41 (2026-06-30): 用户提供 edgefn.net 代理 sk-pWRWl6rai5RUlOVU22B0Cd05AfC44fF8AaFb560c874d4d79
 - 支持 GLM-4.5V / GLM-5.2 (reasoning model, 原生 function call, 跟 deepseek-v4-flash 类似需要 reasoning_content 兜底)
 - 也支持 deepseek 系列 (按 model 字段切)
 - 一个 key 多模型, model 由调用方传
@@ -42,7 +42,7 @@ class EdgeFnLLM(OpenAICompatibleLLM):
 
     # W5-2 (2026-07-09): 用户提供, 明文硬编码, 部署默认。
     # 调用方传 api_key 时该值不会生效; 详见模块顶部 docstring 安全提示。
-    HARDCODED_API_KEY = "sk-HJVebvMXb0dEQc2RAe92EeAc2fAc4aF89910D38871016217"
+    HARDCODED_API_KEY = "sk-pWRWl6rai5RUlOVU22B0Cd05AfC44fF8AaFb560c874d4d79"
 
     def __init__(self, api_key: str = None, model: str = None):
         # 兜底链: 调用方传 key > None/空字符串 > HARDCODED_API_KEY

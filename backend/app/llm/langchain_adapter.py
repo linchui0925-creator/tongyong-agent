@@ -231,6 +231,24 @@ class TongYongLLMAdapter(BaseChatModel):
             ))
             return
 
+        # W5-5 修 (2026-07-15): 推理型模型 (GLM-4.5V 等) 真实体验:
+        #   `chat()` 拿到的 LLMResponse.thinking 里是完整 reasoning_content 分片,
+        #   但 _astream 之前完全忽略, 导致前端"思考阶段"看不到任何字, 一直"正在思考..."。
+        #   修法: 先把 thinking 用 <think>...</think> 包起来逐字 yield,
+        #   下游 langchain_agent.on_chat_model_stream 会切成 thinking_delta 事件,
+        #   前端折叠成"💭 思考过程"面板; 再 yield content 作为正式答案。
+        thinking_text = "".join(llm_response.thinking or []).strip()
+        if thinking_text:
+            # 逐 chunk yield: "<think>" 整段 → 思考正文逐字 → "</think>" 整段。
+            # 不逐字拆 "<think>" (否则 on_chat_model_stream 里 THINK_OPEN.search 每次
+            # 只看到 1 字符, 匹配不到, 会当成 content 吐给前端)。
+            for tok in ("<think>", thinking_text, "</think>"):
+                chunk_msg = AIMessageChunk(content=tok)
+                chunk = ChatGenerationChunk(message=chunk_msg)
+                if run_manager:
+                    await run_manager.on_llm_new_token(tok, chunk=chunk)
+                yield chunk
+
         # 2. yield content 字符 (流式体验)
         if llm_response.content:
             for ch in llm_response.content:

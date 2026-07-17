@@ -13,6 +13,7 @@ import re
 import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class MemoryFileManager:
     MEMORY_LIMIT = 2200    # MEMORY.md 字符上限
     USER_LIMIT = 1375      # USER.md 字符上限
 
-    def __init__(self, base_dir: str = "./data/hermes", profile_id: str = "default"):
+    def __init__(self, base_dir: str = data_path("hermes"), profile_id: str = "default"):
         # 支持per-profile目录
         if profile_id and profile_id != "default":
             self.base_dir = f"{base_dir}/profiles/{profile_id}"

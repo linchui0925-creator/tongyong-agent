@@ -36,7 +36,6 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             question_id: data.question_id,
             commands_executed: data.commands_executed,
             artifact_previews: data.artifact_previews,
-            tools_used: data.tools_used,
             processing_time: data.processing_time,
             usage: data.usage,
             round: data.round,

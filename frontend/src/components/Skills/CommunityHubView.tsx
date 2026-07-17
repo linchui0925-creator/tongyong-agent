@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
-import { hubApi, HubInfo, BrowseLayer } from '../../api/hub'
+import { hubApi, HubInfo, BrowseLayer, HubSearchResult } from '../../api/hub'
 
 // ── 样式 ──────────────────────────────────────────
 
@@ -66,6 +66,7 @@ type CardStatus = 'available' | 'installed' | 'updated' | 'browse-only'
 
 interface HubSkill {
     name: string
+    install_slug?: string
     description: string
     source: string
     source_repo: string
@@ -94,11 +95,45 @@ export const CommunityHubView: React.FC = () => {
 
     // Filters
     const [search, setSearch] = useState('')
+    const [searchResults, setSearchResults] = useState<HubSearchResult[]>([])
+    const [searchingGlobal, setSearchingGlobal] = useState(false)
+    const [searchError, setSearchError] = useState<string | null>(null)
     const [statusFilter, setStatusFilter] = useState<'all' | CardStatus>('all')
     const [sourceFilter, setSourceFilter] = useState<string>('all')
 
     // Detail modal
     const [detailSkill, setDetailSkill] = useState<HubSkill | null>(null)
+
+    // 防抖全局搜索 (调用后端 /api/hub/search)
+    useEffect(() => {
+        const q = search.trim()
+        let active = true
+        if (!q) {
+            setSearchResults([])
+            setSearchError(null)
+            setSearchingGlobal(false)
+            return () => { active = false }
+        }
+        const timer = setTimeout(async () => {
+            setSearchingGlobal(true)
+            setSearchError(null)
+            try {
+                const res = await hubApi.search(q, 10)
+                if (active) setSearchResults(res.skills)
+            } catch (e: any) {
+                if (active) {
+                    setSearchResults([])
+                    setSearchError(e?.response?.data?.detail || e?.message || '实时搜索失败')
+                }
+            } finally {
+                if (active) setSearchingGlobal(false)
+            }
+        }, 400)
+        return () => {
+            active = false
+            clearTimeout(timer)
+        }
+    }, [search])
 
     const refresh = useCallback(async () => {
         setLoading(true)
@@ -114,9 +149,9 @@ export const CommunityHubView: React.FC = () => {
             // 把后端 diff 输出转成 HubSkill[]
             // 后端 /api/hub/diff 返回 MarketplaceSkill 列表 (source 来自 registry)
             // mapping 是否存在由 info.slug_mappings_count 总数判断; 单卡 has_mapping 需要查 mapping
-            const mappingData = await hubApi.listMappings()
-            const mappingKeys = new Set(Object.keys(mappingData.mappings))
-            setSkills((d.skills || []).map((s: any) => ({
+        const mappingData = await hubApi.listMappings()
+        const mappingKeys = new Set(Object.keys(mappingData.mappings))
+        setSkills((d.skills || []).map((s: any) => ({
                 name: s.name,
                 description: s.description || '',
                 source: s.source || '',
@@ -173,6 +208,32 @@ export const CommunityHubView: React.FC = () => {
         const set = new Set(skills.map(s => s.source_repo).filter(Boolean))
         return ['all', ...Array.from(set).sort()]
     }, [skills])
+
+    // 全局搜索结果的 HubSkill 转换
+    const globalSearchSkills = useMemo(() => {
+        return searchResults.map(r => ({
+            name: r.name,
+            install_slug: r.skill_id,
+            description: '',
+            source: r.source,
+            source_repo: r.source,
+            source_url: `https://github.com/${r.source}/blob/HEAD/SKILL.md`,
+            category: 'general',
+            version: '0.0.0',
+            installed: false,
+            has_mapping: true,
+            file_count: 0,
+            size_bytes: 0,
+        } as HubSkill))
+    }, [searchResults])
+
+    // 合并展示的 skills: 先全局搜索结果, 再本地 catalog
+    const displaySkills = useMemo(() => {
+        if (search.trim() && searchResults.length > 0) {
+            return globalSearchSkills
+        }
+        return filteredSkills
+    }, [search, searchResults, globalSearchSkills, filteredSkills])
 
     return (
         <div style={{
@@ -270,16 +331,30 @@ export const CommunityHubView: React.FC = () => {
             {/* 4. Skill Grid */}
             <div style={panel}>
                 <div style={panelTitle}>
-                    <span>Community Skills ({filteredSkills.length})</span>
+                    <span>Community Skills ({displaySkills.length})</span>
                 </div>
-                {loading && skills.length === 0 ? (
+                {loading && skills.length === 0 && searchResults.length === 0 ? (
                     <div style={{
                         padding: '32px 16px', textAlign: 'center',
                         color: 'var(--text-tertiary)', fontSize: '13px',
                     }}>
                         加载中…
                     </div>
-                ) : filteredSkills.length === 0 ? (
+                ) : searchError ? (
+                    <div style={{
+                        padding: '32px 16px', textAlign: 'center',
+                        color: 'var(--error)', fontSize: '13px',
+                    }}>
+                        实时搜索失败：{searchError}
+                    </div>
+                ) : search.trim() && searchResults.length === 0 && !searchingGlobal ? (
+                    <div style={{
+                        padding: '32px 16px', textAlign: 'center',
+                        color: 'var(--text-tertiary)', fontSize: '13px',
+                    }}>
+                        ✨ 未找到匹配结果
+                    </div>
+                ) : displaySkills.length === 0 ? (
                     <div style={{
                         padding: '32px 16px', textAlign: 'center',
                         color: 'var(--text-tertiary)', fontSize: '13px',
@@ -292,7 +367,7 @@ export const CommunityHubView: React.FC = () => {
                         gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
                         gap: '12px',
                     }}>
-                        {filteredSkills.map((s, index) => (
+                        {displaySkills.map((s, index) => (
                             <SkillCard
                                 key={`${s.name}-${s.source_repo || 'unknown'}-${s.version || '0.0.0'}-${index}`}
                                 skill={s}
@@ -308,7 +383,7 @@ export const CommunityHubView: React.FC = () => {
                 fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center',
                 padding: '12px 0', display: 'flex', justifyContent: 'center', gap: '12px',
             }}>
-                <span><kbd style={kbdStyle}>/</kbd> 搜索</span>
+                <span><kbd style={kbdStyle}>/</kbd> 搜索 (实时全局)</span>
                 <span><kbd style={kbdStyle}>i</kbd> 在卡片上 install</span>
                 <span><kbd style={kbdStyle}>Esc</kbd> 关模态</span>
             </div>
@@ -474,7 +549,8 @@ const SkillDetailModal: React.FC<{ skill: HubSkill; onClose: () => void }> = ({ 
     const handleInstall = async () => {
         setInstalling(true)
         try {
-            const r = await hubApi.install(skill.name)
+            const source = skill.source_repo || undefined
+            const r = await hubApi.install(skill.install_slug || skill.name, source)
             setInstallResult({ kind: 'success', message: r.instructions || '已下载 (quarantined). 去 Local Tab 解 quarantine.' })
         } catch (e: any) {
             const detail = e?.response?.data?.detail
@@ -482,6 +558,10 @@ const SkillDetailModal: React.FC<{ skill: HubSkill; onClose: () => void }> = ({ 
                 setInstallResult({ kind: 'no-source', message: '无 source repo 映射. Click ↗ View 或 contribute mapping.' })
             } else if (typeof detail === 'object' && (detail?.error || '').includes('安全')) {
                 setInstallResult({ kind: 'security', message: detail.error })
+            } else if (typeof detail === 'object' && detail?.error) {
+                setInstallResult({ kind: 'error', message: detail.error })
+            } else if (typeof detail === 'string') {
+                setInstallResult({ kind: 'error', message: detail })
             } else {
                 setInstallResult({ kind: 'error', message: e?.message || 'Install 失败' })
             }
@@ -558,12 +638,12 @@ const SkillDetailModal: React.FC<{ skill: HubSkill; onClose: () => void }> = ({ 
                             ↗ GitHub
                         </a>
                     )}
-                    {computeStatus(skill) !== 'browse-only' && (
-                        <button
-                            onClick={() => setConfirmStep(true)}
-                            disabled={installing || installResult?.kind === 'success'}
-                            style={buttonStyle('primary', installing)}
-                        >
+            {computeStatus(skill) !== 'browse-only' && (
+                <button
+                    onClick={() => setConfirmStep(true)}
+                    disabled={installing || installResult?.kind === 'success'}
+                    style={buttonStyle('primary', installing)}
+                >
                             {installing ? '下载中…' : '⬇ Install'}
                         </button>
                     )}

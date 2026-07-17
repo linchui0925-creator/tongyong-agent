@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from app.core.multi_agent.message import TeamMessage
 from app.core.multi_agent.role import TeamRole
 from app.core.multi_agent.tool_permission import ToolPermission
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class TeamSessionStore:
     使用线程局部长连接，避免每次操作创建/销毁连接。
     """
 
-    def __init__(self, db_path: str = "./data/team_sessions.db"):
+    def __init__(self, db_path: str = data_path("team_sessions.db")):
         self.db_path = db_path
         self._local = threading.local()
         os.makedirs(Path(db_path).parent, exist_ok=True)

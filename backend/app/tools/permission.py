@@ -12,6 +12,7 @@ import json
 import logging
 import sqlite3
 from uuid import uuid4
+from app.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ class SessionPermission:
 class PermissionManager:
     """权限管理器"""
     
-    def __init__(self, db_path: str = "./data/tongyong.db"):
+    def __init__(self, db_path: str = data_path("tongyong.db")):
         """
         初始化权限管理器
         

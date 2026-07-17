@@ -15,6 +15,7 @@ TaskQueue — 多智能体 SQLite 任务队列
 """
 
 import json
+from app.paths import data_path
 import logging
 import sqlite3
 import threading
@@ -99,7 +100,7 @@ class TaskQueue:
     - 不实现调度（由 Scheduler 处理）
     """
 
-    def __init__(self, db_path: str = "./data/team_sessions.db"):
+    def __init__(self, db_path: str = data_path("team_sessions.db")):
         self.db_path = db_path
         self._lock = threading.Lock()
         self._local = threading.local()

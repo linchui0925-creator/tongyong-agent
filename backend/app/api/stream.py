@@ -140,6 +140,8 @@ class StreamChatRequest(BaseModel):
     clarify_question_id: Optional[str] = Field(None)
     clarify_answer: Optional[str] = Field(None)
     attachment_ids: list[str] = Field(default_factory=list, max_length=20)
+    thinking_mode: Optional[str] = Field(None, description="off/auto/always")
+    reasoning_effort: Optional[str] = Field(None, description="low/medium/high")
 
     @field_validator("message")
     @classmethod
@@ -164,20 +166,32 @@ class StreamChatRequest(BaseModel):
         return cleaned
 
 
-def _message_with_attachment_context(message: str, attachment_ids: list[str]) -> str:
+def _message_with_attachment_context(message: str, attachment_ids: list[str], model_name: Optional[str] = None) -> str:
     if not attachment_ids:
         return message
     try:
         from app.api.attachments import get_attachments_metadata
         from app.api.attachment_processor import format_attachment_context
+        from app.llm.model_metadata import model_supports_vision
         attachments = get_attachments_metadata(attachment_ids)
     except Exception as exc:
         logger.warning("[attachments] 读取附件元数据失败: %s", exc)
         attachments = []
+        model_supports_vision = lambda _model_name: False  # type: ignore
     if not attachments:
         return message
 
+    image_count = sum(1 for item in attachments if str(item.get("kind") or "") == "image")
+    vision_required = any(bool((item.get("extraction_meta") or {}).get("vision_required")) for item in attachments)
+    model_can_see = bool(model_name and model_supports_vision(model_name))
+
     lines = ["", "", "[用户上传附件]", format_attachment_context(attachments)]
+    if image_count:
+        lines.append("[附件处理说明] 图片附件已准备好；若模型支持视觉输入，请直接结合图片与正文回答。")
+    if vision_required and not model_can_see:
+        lines.append("[附件处理说明] 当前模型不支持视觉输入，只能基于 OCR 文本或元数据回答；若要完整理解图片，请切换支持视觉的模型。")
+    elif vision_required and model_can_see:
+        lines.append("[附件处理说明] 当前模型支持视觉输入，可结合图片内容、OCR 结果与附件摘要综合回答。")
     lines.append("需要更多附件正文时调用 attachment_read；没有 extracted_text 时不要假装读过内容。")
     return message + "\n".join(lines)
 
@@ -191,6 +205,8 @@ async def generate_stream_response(
     use_langchain: bool = False,
     langchain_rollout_override: Optional[bool] = None,
     attachment_ids: Optional[list[str]] = None,
+    thinking_mode: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ):
     """
     生成流式响应
@@ -202,6 +218,8 @@ async def generate_stream_response(
     """
     # W3-2 埋点: 在 try 外先初始化 (兜底用, 避免 except 报 unbound)
     metrics: Optional["_StreamMetrics"] = None
+    prelude_t0 = time.time()
+    prelude_marks: dict[str, float] = {}
     try:
         from app.main import agent_engine
         if agent_engine is None:
@@ -214,6 +232,9 @@ async def generate_stream_response(
                 })
             }
             return
+
+        if not session_id:
+            session_id = await agent_engine._get_or_create_session()
 
         # W3 切流量: 决策是否走 langchain (显式 > 默认 > 灰度)
         effective_use_langchain = _should_use_langchain(
@@ -241,10 +262,45 @@ async def generate_stream_response(
             "event": "start",
             "data": json.dumps({"type": "start", "timestamp": time.time()})
         }
+        prelude_marks["start_sent"] = time.time()
+        # 尽早让前端收到首个可见事件，避免等到上下文整理结束才显示。
+        yield {
+            "event": "progress",
+            "data": json.dumps({
+                "type": "progress",
+                "content": "正在初始化...",
+                "timestamp": time.time(),
+            })
+        }
 
-        effective_message = _message_with_attachment_context(message, attachment_ids or [])
+        current_model_name = None
+        current_provider = None
+        api_format = None
+        runtime_config = {}
+        try:
+            from app.services.llm_manager import get_llm_manager
+            llm_manager = get_llm_manager()
+            runtime_config = llm_manager.get_current_runtime_config()
+            current_model_name = runtime_config.get('model')
+            current_provider = runtime_config.get('provider')
+            api_format = runtime_config.get('api_format')
+        except Exception:
+            current_model_name = None
+            current_provider = None
+            api_format = None
+        effective_message = _message_with_attachment_context(message, attachment_ids or [], current_model_name)
+        first_event_sent = False
+        prelude_marks["runtime_ready"] = time.time()
+        logger.info("[stream] 当前模型运行时配置: %s", json.dumps({
+            "provider": current_provider,
+            "model": current_model_name,
+            "api_format": api_format,
+            "stream_mode": runtime_config.get('stream_mode'),
+            "api_base": runtime_config.get('api_base'),
+        }, ensure_ascii=False))
 
         # 选择 agent 实现
+        prelude_marks["before_agent_select"] = time.time()
         if effective_use_langchain:
             from app.core.langchain_agent import stream_chat_langchain
             agent_stream = stream_chat_langchain(
@@ -265,6 +321,7 @@ async def generate_stream_response(
             )
 
         full_response = ""
+        prelude_marks["agent_built"] = time.time()
         try:
             async for item in agent_stream:
                 # 兼容旧的纯字符串 yield
@@ -284,6 +341,7 @@ async def generate_stream_response(
                 event_type = item.get("type", "content")
 
                 if event_type == "progress":
+                    first_event_sent = True
                     yield {
                         "event": "progress",
                         "data": json.dumps({
@@ -303,6 +361,7 @@ async def generate_stream_response(
                     }
 
                 elif event_type == "thinking_delta":
+                    first_event_sent = True
                     yield {
                         "event": "thinking_delta",
                         "data": json.dumps({
@@ -378,6 +437,7 @@ async def generate_stream_response(
                     }
 
                 elif event_type == "content":
+                    first_event_sent = True
                     chunk = item.get("content", "")
                     full_response += chunk
                     yield {
@@ -438,6 +498,26 @@ async def generate_stream_response(
             }
             return
 
+        if not first_event_sent:
+            yield {
+                "event": "progress",
+                "data": json.dumps({
+                    "type": "progress",
+                    "content": "正在生成回复...",
+                    "timestamp": time.time(),
+                })
+            }
+        prelude_marks["first_visible_event"] = time.time()
+        logger.info(
+            "[stream] prelude_ms=%s",
+            json.dumps({
+                "total": round((time.time() - prelude_t0) * 1000, 1),
+                "start_to_runtime_ready": round((prelude_marks.get("runtime_ready", time.time()) - prelude_t0) * 1000, 1),
+                "runtime_ready_to_agent_select": round((prelude_marks.get("before_agent_select", time.time()) - prelude_marks.get("runtime_ready", prelude_t0)) * 1000, 1),
+                "agent_build_ms": round((prelude_marks.get("agent_built", time.time()) - prelude_marks.get("before_agent_select", prelude_t0)) * 1000, 1),
+                "first_visible_event_ms": round((prelude_marks.get("first_visible_event", time.time()) - prelude_t0) * 1000, 1),
+            }, ensure_ascii=False)
+        )
         # W3-2 埋点: 成功收尾打 metrics 日志
         metrics.log_success()
         logger.info(f"流式聊天完成，响应长度: {len(full_response)}")
@@ -480,6 +560,8 @@ async def stream_chat(request: StreamChatRequest):
             clarify_question_id=request.clarify_question_id,
             clarify_answer=request.clarify_answer,
             attachment_ids=request.attachment_ids,
+            thinking_mode=request.thinking_mode,
+            reasoning_effort=request.reasoning_effort,
         )
     )
 
@@ -488,16 +570,39 @@ async def stream_chat(request: StreamChatRequest):
 async def test_stream():
     """测试流式输出端点"""
     async def test_generator():
+        yield {
+            "event": "start",
+            "data": json.dumps({
+                "type": "start",
+                "timestamp": time.time(),
+            })
+        }
         for i in range(10):
             yield {
-                "event": "message",
+                "event": "progress",
                 "data": json.dumps({
-                    "type": "test",
-                    "message": f"测试消息 {i+1}",
+                    "type": "progress",
+                    "content": f"测试消息 {i+1}",
+                    "timestamp": time.time()
+                })
+            }
+            yield {
+                "event": "content",
+                "data": json.dumps({
+                    "type": "content",
+                    "content": f"测试消息 {i+1}",
+                    "full_content": f"测试消息 {i+1}",
                     "timestamp": time.time()
                 })
             }
             await asyncio.sleep(0.1)
+        yield {
+            "event": "done",
+            "data": json.dumps({
+                "type": "done",
+                "timestamp": time.time(),
+            })
+        }
         
         yield {
             "event": "done",

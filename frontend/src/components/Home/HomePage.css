@@ -72,7 +72,10 @@
 }
 
 .home-brand-text {
-  font-family: var(--font);
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
 }
 
 .home-nav-links {
@@ -169,14 +172,15 @@
 }
 
 .home-hero-title {
-  font-size: clamp(64px, 12vw, 160px);
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  line-height: 0.95;
-  margin: 0 0 18px;
+  font-family: var(--font-display);
+  font-size: clamp(96px, 18vw, 240px);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 0.9;
+  margin: 0 0 24px;
   color: #ffffff;
   text-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.55),
+    0 4px 32px rgba(0, 0, 0, 0.55),
     0 1px 3px rgba(0, 0, 0, 0.4);
   background: linear-gradient(180deg, #ffffff 0%, #fef3c7 100%);
   -webkit-background-clip: text;

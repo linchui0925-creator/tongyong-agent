@@ -50,10 +50,11 @@
 }
 
 .model-hub-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 400;
   color: var(--text-primary);
-  letter-spacing: 0;
+  letter-spacing: 0.1em;
 }
 
 .model-hub-settings,

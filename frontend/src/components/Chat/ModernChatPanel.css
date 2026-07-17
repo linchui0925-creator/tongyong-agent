@@ -141,23 +141,28 @@
   font-weight: 400;
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 2px;
   margin: 0;
-  line-height: 1;
-  letter-spacing: 0.12em;
+  line-height: 0.9;
+  letter-spacing: 0.04em;
   user-select: none;
 }
 .chat-empty-mark {
-  font-size: 128px;
+  font-size: 220px;
   color: var(--accent);
   letter-spacing: 0;
-  font-weight: 500;
+  font-weight: 400;
+  /* '维' 微旋 — 草书飞扬 */
+  display: inline-block;
+  transform: translateY(6px) rotate(-3deg);
 }
 .chat-empty-name {
-  font-size: 128px;
+  font-size: 200px;
   color: var(--text-primary);
   letter-spacing: 0;
   font-weight: 400;
+  display: inline-block;
+  transform: translateY(4px);
 }
 
 .chat-empty-title {

@@ -29,8 +29,16 @@ export interface ThemeTokens {
   tokens: Record<string, string>;
 }
 
-// 飘逸 + 狂草 display stack (优先行楷/草书/魏碑, 再回退楷书/宋书)
+// 维知 狂草 + 飘逸 display stack
+// 优先 Google Fonts 真草书 (刘建毛草 / 龙藏), 然后 macOS 系统的行楷/魏碑/楷书, 最后降级宋书。
+// 'Liu Jian Mao Cao' = 草书毛笔, 字形连绵飘逸, 用于侧栏 + 空状态 wordmark
+// 'Long Cang'        = 狂草, 笔触更奔放, 用于 Hero 大标题
+// 'Ma Shan Zheng'    = 楷书毛笔, 备用, 退而求其次的毛笔感
 const displayFontFamily = [
+  '"Long Cang"',
+  '"Liu Jian Mao Cao"',
+  '"Ma Shan Zheng"',
+  '"ZCOOL XiaoWei"',
   '"马善政体"',
   '"方正狂草"',
   '"方正行楷"',

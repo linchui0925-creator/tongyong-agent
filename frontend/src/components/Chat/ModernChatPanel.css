@@ -148,13 +148,13 @@
   user-select: none;
 }
 .chat-empty-mark {
-  font-size: 96px;
+  font-size: 128px;
   color: var(--accent);
   letter-spacing: 0;
   font-weight: 500;
 }
 .chat-empty-name {
-  font-size: 96px;
+  font-size: 128px;
   color: var(--text-primary);
   letter-spacing: 0;
   font-weight: 400;

@@ -29,20 +29,29 @@ export interface ThemeTokens {
   tokens: Record<string, string>;
 }
 
-// 飘逸 + 大气 display stack
+// 飘逸 + 狂草 display stack (优先行楷/草书/魏碑, 再回退楷书/宋书)
 const displayFontFamily = [
   '"马善政体"',
-  '"方正清刻本悦宋"',
-  '"方正宋刻本悦宋"',
+  '"方正狂草"',
+  '"方正行楷"',
+  '"华文行楷"',
+  '"STXingkai"',
+  '"Xingkai SC"',
+  '"Xingkai"',
+  '"STXinwei"',
+  '"Xinwei SC"',
+  '"STCaiyun"',
+  '"华文新魏"',
+  '"BiauKai"',
+  '"DFKai-SB"',
+  '"Hannotate SC"',
   '"STKaiti"',
   '"Kaiti SC"',
   '"Kaiti"',
-  '"Hannotate SC"',
   '"Hiragino Mincho ProN"',
   '"Songti SC"',
   '"Source Han Serif SC"',
   '"Noto Serif SC"',
-  'STZhongsong',
   '"PingFang SC"',
   '"Microsoft YaHei"',
   'serif',

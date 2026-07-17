@@ -18,7 +18,7 @@ import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
 const AGENT_NAME = '维知';
-const USER_INITIAL = 'U';
+
 
 // ── Helpers ─────────────────────────────────────────
 function formatTime(ts: number): string {
@@ -214,50 +214,7 @@ function InlineImagePreviews({ text }: { text: string }) {
   );
 }
 
-// ── Avatar ─────────────────────────────────────────
-function Avatar({ isUser, size = 40 }: { isUser: boolean; size?: number }) {
-  if (isUser) {
-    return (
-      <div className="chat-avatar chat-avatar--user" style={{ width: size, height: size }}>
-        <span>{USER_INITIAL}</span>
-      </div>
-    );
-  }
-  // 维知: agent 头像用一个简洁的"墨点"或 SVG 圆环
-  return (
-    <div className="chat-avatar chat-avatar--agent" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 24 24" width={size * 0.55} height={size * 0.55} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M7 14c1.5-1 3.5-1.5 5-1.5s3.5.5 5 1.5" />
-      </svg>
-    </div>
-  );
-}
-
-// ── Typing Indicator ─────────────────────────────────────────
-function TypingIndicator({ currentTool, toolElapsed, progressText }: {
-  currentTool: { name: string; emoji: string; startTime: number } | null;
-  toolElapsed: number;
-  progressText: string;
-}) {
-  return (
-    <div className="chat-typing">
-      <Avatar isUser={false} size={36} />
-      <div className="chat-typing-content">
-        <div className="chat-typing-dots">
-          <span /><span /><span />
-        </div>
-        <span className="chat-typing-label">
-          {currentTool
-            ? `${currentTool.emoji || '⚙'} ${currentTool.name} 执行中… (${(toolElapsed / 1000).toFixed(1)}s)`
-            : progressText || '正在思考…'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ── Token Usage Bar ─────────────────────────────────────────
+// ── Token Usage Bar ───────────────────────────────────────────────────
 function TokenUsageRing({ contextInfo, isCompressing, savedFlash, onCompress }: {
   contextInfo: ContextInfo | null;
   isCompressing: boolean;
@@ -680,7 +637,6 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
                 </div>
               );
             })}
-            {isStreaming && <TypingIndicator currentTool={currentTool} toolElapsed={toolElapsed} progressText={progressText} />}
           </>
         )}
         <div ref={messagesEndRef} />

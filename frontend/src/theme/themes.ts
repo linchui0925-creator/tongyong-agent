@@ -1,39 +1,64 @@
 /**
- * Theme definitions — 绿色四季 (W5-3 UI 重构)
+ * Theme definitions — 维知 四材 (W5-3 材质感主题)
  *
- * 4 套主题对应春夏秋冬的绿:
- *   spring  (原 key: dark-stone)     嫩芽黄绿, 明亮清新
- *   summer  (原 key: light-clean)    浓郁翠绿, 生机勃勃
- *   autumn  (原 key: sepia-warm)     苔绿 + 暖金, 沉静温润
- *   winter  (原 key: midnight-blue)  松柏墨绿, 深邃静谧
+ * 4 套主题对应四种"材质":
+ *   ink-paper   (key: dark-stone)      墨·朱砂, 纸白底 + 赭红 + 蓝/黄/紫三态
+ *   paper-cinnabar (key: light-clean)  纸·朱砂, 暖白宣纸 + 朱砂红 + 墨/靛/琥珀
+ *   oxide       (key: sepia-warm)     铜·锈, 暖铜氧化棕 + 铜橙
+ *   night-cyan  (key: midnight-blue)  夜·电青, 深墨色 + 亮青电光
  *
- * key 名保留旧值以兼容 localStorage / 类型, 显示名/配色全部换成绿色系。
- * 每套新增 `season` 字段供枝桠背景 (BranchCanopy) 取色。
+ * key 名保留旧值以兼容 localStorage / 类型, 显示名/配色全部换成材质系。
+ * 每套材质新增多 accent 字段 (--accent / --accent-2 / --accent-3 / --accent-4)
+ * 供拓扑线场 (AmbientScene) 取色分层。
+ *
+ * 字体: 飘逸 + 大气 — display 用楷体/宋体轻量栈, body 用无衬线系统栈。
  */
 
 export type ThemeId = 'dark-stone' | 'light-clean' | 'sepia-warm' | 'midnight-blue';
-export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
+export type Material = 'ink-paper' | 'paper-cinnabar' | 'oxide' | 'night-cyan';
 
 export interface ThemeTokens {
   id: ThemeId;
+  /** 显示名 (中文, 用于 ThemeSwitcher) */
   name: string;
-  emoji: string;
+  /** 中文单字标记, 用于侧栏紧凑按钮 (墨/纸/铜/夜) */
+  glyph: string;
   description: string;
   isDark: boolean;
-  season: Season;
+  material: Material;
   tokens: Record<string, string>;
 }
 
-const baseFontFamily = [
-  '"Plus Jakarta Sans"',
-  '"Noto Sans SC"',
-  '"Nunito"',
-  '-apple-system',
-  'BlinkMacSystemFont',
+// 飘逸 + 大气 display stack
+// 优先级: 系统里若有方正/华文楷体/STKaiti, 直接用; 否则 fallback 到
+// PingFang/思源宋体/Hiragino Mincho; 没有则用系统中文字符 generic 兜底。
+const displayFontFamily = [
+  '"马善政体"',
+  '"方正清刻本悦宋"',
+  '"方正宋刻本悦宋"',
+  '"STKaiti"',
+  '"Kaiti SC"',
+  '"Kaiti"',
+  '"Hannotate SC"',
+  '"Hiragino Mincho ProN"',
+  '"Songti SC"',
+  '"Source Han Serif SC"',
+  '"Noto Serif SC"',
+  'STZhongsong',
   '"PingFang SC"',
   '"Microsoft YaHei"',
-  '"Hiragino Sans GB"',
+  'serif',
+].join(', ');
+
+// body 用冷静无衬线系统栈, 不引 Google Fonts (sandbox 不能外网)
+const baseFontFamily = [
+  '"Inter"',
+  '"SF Pro Text"',
   '"Noto Sans SC"',
+  '"PingFang SC"',
+  '"Hiragino Sans GB"',
+  '-apple-system',
+  'BlinkMacSystemFont',
   '"Helvetica Neue"',
   'Helvetica',
   'Arial',
@@ -51,6 +76,7 @@ const monoFontFamily = [
 
 const baseTokens = {
   '--font': baseFontFamily,
+  '--font-display': displayFontFamily,
   '--font-mono': monoFontFamily,
   '--font-size-base': '15px',
   '--line-height-base': '1.7',
@@ -64,111 +90,117 @@ const baseTokens = {
 };
 
 export const themes: Record<ThemeId, ThemeTokens> = {
-  // ── 春 · 嫩芽 (明亮浅绿) ──
+  // ── 墨·朱砂 (浅纸底, 赭红主调) ──
   'dark-stone': {
     id: 'dark-stone',
-    name: '春·嫩芽',
-    emoji: '🌱',
-    description: '嫩芽黄绿, 明亮清新的初春气息',
+    name: '墨·朱砂',
+    glyph: '墨',
+    description: '纸白底, 朱砂红点睛, 端庄大气',
     isDark: false,
-    season: 'spring',
+    material: 'ink-paper',
     tokens: {
       ...baseTokens,
-      '--bg-primary':   '#f3f8ec',
-      '--bg-secondary': 'rgba(233, 243, 219, 0.72)',
-      '--bg-tertiary':  'rgba(214, 232, 190, 0.72)',
-      '--bg-card':      'rgba(249, 252, 242, 0.78)',
-      '--bg-hover':     'rgba(132, 204, 22, 0.12)',
-      '--bg-inset':     'rgba(226, 238, 208, 0.7)',
-      '--bg-glass':     'rgba(247, 251, 238, 0.64)',
+      '--bg-primary':   '#f4ede0',
+      '--bg-secondary': 'rgba(232, 220, 200, 0.72)',
+      '--bg-tertiary':  'rgba(216, 200, 174, 0.7)',
+      '--bg-card':      'rgba(248, 242, 230, 0.82)',
+      '--bg-hover':     'rgba(192, 57, 43, 0.10)',
+      '--bg-inset':     'rgba(222, 207, 184, 0.7)',
+      '--bg-glass':     'rgba(245, 237, 224, 0.66)',
 
-      '--accent':        '#4d9a2a',
-      '--accent-hover':  '#5fb536',
-      '--accent-subtle': 'rgba(132, 204, 22, 0.16)',
-      '--accent-border': 'rgba(77, 154, 42, 0.4)',
+      '--accent':        '#b8302a',
+      '--accent-2':      '#2a4d8f',
+      '--accent-3':      '#c69a3a',
+      '--accent-4':      '#6b3d8e',
+      '--accent-hover':  '#c93c34',
+      '--accent-subtle': 'rgba(184, 48, 42, 0.12)',
+      '--accent-border': 'rgba(184, 48, 42, 0.38)',
 
-      '--text-primary':   '#22331a',
-      '--text-secondary': '#3c5230',
-      '--text-tertiary':  '#5c7049',
-      '--text-muted':     '#87996f',
+      '--text-primary':   '#1f1c18',
+      '--text-secondary': '#3a342c',
+      '--text-tertiary':  '#6a6055',
+      '--text-muted':     '#938878',
 
-      '--success': '#4d9a2a',
-      '--success-subtle': 'rgba(77, 154, 42, 0.12)',
+      '--success': '#3d8a3d',
+      '--success-subtle': 'rgba(61, 138, 61, 0.12)',
       '--warning': '#c98a1a',
       '--warning-subtle': 'rgba(201, 138, 26, 0.15)',
-      '--danger': '#c2410c',
-      '--danger-subtle': 'rgba(194, 65, 12, 0.12)',
+      '--danger': '#b8302a',
+      '--danger-subtle': 'rgba(184, 48, 42, 0.12)',
 
-      '--border':       'rgba(60, 82, 48, 0.14)',
-      '--border-hover': 'rgba(60, 82, 48, 0.26)',
-      '--border-light': 'rgba(60, 82, 48, 0.07)',
+      '--border':       'rgba(31, 28, 24, 0.14)',
+      '--border-hover': 'rgba(31, 28, 24, 0.26)',
+      '--border-light': 'rgba(31, 28, 24, 0.07)',
 
-      '--bubble-user-bg-start': '#6bbf3a',
-      '--bubble-user-bg-end':   '#4d9a2a',
-      '--bubble-user-text':     '#ffffff',
-      '--bubble-agent-bg':      'rgba(249, 252, 242, 0.9)',
-      '--bubble-agent-border':  'rgba(60, 82, 48, 0.1)',
-      '--bubble-agent-text':    '#22331a',
-      '--avatar-user-start':    '#8bd450',
-      '--avatar-user-end':      '#4d9a2a',
-      '--avatar-agent-start':   '#a3d977',
-      '--avatar-agent-end':     '#5fb536',
+      '--bubble-user-bg-start': '#b8302a',
+      '--bubble-user-bg-end':   '#8a1f1c',
+      '--bubble-user-text':     '#fff8ec',
+      '--bubble-agent-bg':      'rgba(248, 242, 230, 0.92)',
+      '--bubble-agent-border':  'rgba(31, 28, 24, 0.10)',
+      '--bubble-agent-text':    '#1f1c18',
+      '--avatar-user-start':    '#d35445',
+      '--avatar-user-end':      '#8a1f1c',
+      '--avatar-agent-start':   '#1f1c18',
+      '--avatar-agent-end':     '#4a3f33',
 
-      '--shadow-sm': '0 1px 2px rgba(45, 70, 30, 0.08)',
-      '--shadow-md': '0 6px 20px rgba(45, 70, 30, 0.12)',
-      '--shadow-lg': '0 16px 48px rgba(45, 70, 30, 0.16)',
+      '--shadow-sm': '0 1px 2px rgba(31, 28, 24, 0.10)',
+      '--shadow-md': '0 6px 20px rgba(31, 28, 24, 0.14)',
+      '--shadow-lg': '0 16px 48px rgba(31, 28, 24, 0.18)',
     },
   },
 
-  // ── 夏 · 浓翠 (深色饱和绿) ──
+  // ── 纸·朱砂 (深色墨底, 朱砂亮) ──
   'light-clean': {
     id: 'light-clean',
-    name: '夏·浓翠',
-    emoji: '🌿',
-    description: '浓郁翠绿, 生机勃勃的盛夏林荫',
+    name: '纸·朱砂',
+    glyph: '纸',
+    description: '墨底朱砂, 纸面浮出一点绛红',
     isDark: true,
-    season: 'summer',
+    material: 'paper-cinnabar',
     tokens: {
       ...baseTokens,
-      '--bg-primary':   '#0c1a0f',
-      '--bg-secondary': 'rgba(18, 38, 24, 0.72)',
-      '--bg-tertiary':  'rgba(30, 58, 38, 0.72)',
-      '--bg-card':      'rgba(16, 34, 22, 0.7)',
-      '--bg-hover':     'rgba(74, 222, 128, 0.12)',
-      '--bg-inset':     'rgba(9, 22, 14, 0.7)',
-      '--bg-glass':     'rgba(14, 30, 20, 0.62)',
+      '--bg-primary':   '#0e0d0c',
+      '--bg-secondary': 'rgba(26, 23, 22, 0.78)',
+      '--bg-tertiary':  'rgba(40, 35, 32, 0.78)',
+      '--bg-card':      'rgba(22, 20, 18, 0.74)',
+      '--bg-hover':     'rgba(216, 75, 64, 0.12)',
+      '--bg-inset':     'rgba(8, 7, 7, 0.74)',
+      '--bg-glass':     'rgba(18, 16, 15, 0.66)',
 
-      '--accent':        '#34d058',
-      '--accent-hover':  '#5ee87b',
-      '--accent-subtle': 'rgba(52, 208, 88, 0.16)',
-      '--accent-border': 'rgba(52, 208, 88, 0.4)',
+      '--accent':        '#d84b40',
+      '--accent-2':      '#4d7fc4',
+      '--accent-3':      '#e0b056',
+      '--accent-4':      '#9c6dc7',
+      '--accent-hover':  '#e86757',
+      '--accent-subtle': 'rgba(216, 75, 64, 0.16)',
+      '--accent-border': 'rgba(216, 75, 64, 0.4)',
 
-      '--text-primary':   '#eafff0',
-      '--text-secondary': '#c2e8cd',
-      '--text-tertiary':  '#8bbf9a',
-      '--text-muted':     '#5f8a6d',
+      '--text-primary':   '#f5ecdc',
+      '--text-secondary': '#d3c5ad',
+      '--text-tertiary':  '#9a8c75',
+      '--text-muted':     '#6d614f',
 
-      '--success': '#34d058',
-      '--success-subtle': 'rgba(52, 208, 88, 0.14)',
+      '--success': '#5fb55f',
+      '--success-subtle': 'rgba(95, 181, 95, 0.14)',
       '--warning': '#e5b135',
       '--warning-subtle': 'rgba(229, 177, 53, 0.15)',
-      '--danger': '#f87171',
-      '--danger-subtle': 'rgba(248, 113, 113, 0.12)',
+      '--danger': '#d84b40',
+      '--danger-subtle': 'rgba(216, 75, 64, 0.14)',
 
-      '--border':       'rgba(120, 200, 150, 0.12)',
-      '--border-hover': 'rgba(120, 200, 150, 0.22)',
-      '--border-light': 'rgba(120, 200, 150, 0.06)',
+      '--border':       'rgba(216, 197, 173, 0.10)',
+      '--border-hover': 'rgba(216, 197, 173, 0.20)',
+      '--border-light': 'rgba(216, 197, 173, 0.05)',
 
-      '--bubble-user-bg-start': '#34d058',
-      '--bubble-user-bg-end':   '#15803d',
-      '--bubble-user-text':     '#04140a',
-      '--bubble-agent-bg':      'rgba(20, 40, 27, 0.9)',
-      '--bubble-agent-border':  'rgba(120, 200, 150, 0.1)',
-      '--bubble-agent-text':    '#dcf5e4',
-      '--avatar-user-start':    '#5ee87b',
-      '--avatar-user-end':      '#15803d',
-      '--avatar-agent-start':   '#34d058',
-      '--avatar-agent-end':     '#0d9488',
+      '--bubble-user-bg-start': '#d84b40',
+      '--bubble-user-bg-end':   '#a03228',
+      '--bubble-user-text':     '#fff5e8',
+      '--bubble-agent-bg':      'rgba(22, 20, 18, 0.92)',
+      '--bubble-agent-border':  'rgba(216, 197, 173, 0.10)',
+      '--bubble-agent-text':    '#f5ecdc',
+      '--avatar-user-start':    '#e86757',
+      '--avatar-user-end':      '#a03228',
+      '--avatar-agent-start':   '#f5ecdc',
+      '--avatar-agent-end':     '#5c4f3d',
 
       '--shadow-sm': '0 1px 2px rgba(0,0,0,0.4)',
       '--shadow-md': '0 6px 20px rgba(0,0,0,0.5)',
@@ -176,111 +208,117 @@ export const themes: Record<ThemeId, ThemeTokens> = {
     },
   },
 
-  // ── 秋 · 苔金 (暖调低饱和绿) ──
+  // ── 铜·锈 (氧化铜棕, 哑光暖) ──
   'sepia-warm': {
     id: 'sepia-warm',
-    name: '秋·苔金',
-    emoji: '🍃',
-    description: '苔绿 + 暖金, 沉静温润的深秋',
+    name: '铜·锈',
+    glyph: '铜',
+    description: '氧化铜棕, 哑光铜橙',
     isDark: false,
-    season: 'autumn',
+    material: 'oxide',
     tokens: {
       ...baseTokens,
-      '--bg-primary':   '#eef0df',
-      '--bg-secondary': 'rgba(226, 229, 205, 0.74)',
-      '--bg-tertiary':  'rgba(206, 210, 178, 0.74)',
-      '--bg-card':      'rgba(244, 246, 228, 0.8)',
-      '--bg-hover':     'rgba(120, 140, 60, 0.12)',
-      '--bg-inset':     'rgba(219, 223, 194, 0.7)',
-      '--bg-glass':     'rgba(240, 242, 224, 0.64)',
+      '--bg-primary':   '#ece2cf',
+      '--bg-secondary': 'rgba(222, 209, 188, 0.74)',
+      '--bg-tertiary':  'rgba(204, 188, 160, 0.72)',
+      '--bg-card':      'rgba(238, 229, 213, 0.82)',
+      '--bg-hover':     'rgba(168, 91, 42, 0.12)',
+      '--bg-inset':     'rgba(216, 199, 174, 0.7)',
+      '--bg-glass':     'rgba(236, 226, 207, 0.66)',
 
-      '--accent':        '#6d8b2f',
-      '--accent-hover':  '#809f3c',
-      '--accent-subtle': 'rgba(109, 139, 47, 0.14)',
-      '--accent-border': 'rgba(109, 139, 47, 0.34)',
+      '--accent':        '#a85b2a',
+      '--accent-2':      '#7c4222',
+      '--accent-3':      '#c98a1a',
+      '--accent-4':      '#4f3520',
+      '--accent-hover':  '#b96935',
+      '--accent-subtle': 'rgba(168, 91, 42, 0.14)',
+      '--accent-border': 'rgba(168, 91, 42, 0.36)',
 
-      '--text-primary':   '#2f3320',
-      '--text-secondary': '#4a4f33',
-      '--text-tertiary':  '#6b704f',
-      '--text-muted':     '#93976f',
+      '--text-primary':   '#2c1f12',
+      '--text-secondary': '#473522',
+      '--text-tertiary':  '#6f5536',
+      '--text-muted':     '#917a55',
 
-      '--success': '#6d8b2f',
-      '--success-subtle': 'rgba(109, 139, 47, 0.12)',
-      '--warning': '#c07d1e',
-      '--warning-subtle': 'rgba(192, 125, 30, 0.15)',
-      '--danger': '#b3492a',
-      '--danger-subtle': 'rgba(179, 73, 42, 0.1)',
+      '--success': '#7c4222',
+      '--success-subtle': 'rgba(124, 66, 34, 0.12)',
+      '--warning': '#c98a1a',
+      '--warning-subtle': 'rgba(201, 138, 26, 0.15)',
+      '--danger': '#a83a2a',
+      '--danger-subtle': 'rgba(168, 58, 42, 0.12)',
 
-      '--border':       'rgba(47, 51, 32, 0.13)',
-      '--border-hover': 'rgba(47, 51, 32, 0.22)',
-      '--border-light': 'rgba(47, 51, 32, 0.06)',
+      '--border':       'rgba(44, 31, 18, 0.14)',
+      '--border-hover': 'rgba(44, 31, 18, 0.26)',
+      '--border-light': 'rgba(44, 31, 18, 0.07)',
 
-      '--bubble-user-bg-start': '#8ba33f',
-      '--bubble-user-bg-end':   '#6d8b2f',
-      '--bubble-user-text':     '#fbfced',
-      '--bubble-agent-bg':      'rgba(244, 246, 228, 0.9)',
-      '--bubble-agent-border':  'rgba(47, 51, 32, 0.1)',
-      '--bubble-agent-text':    '#2f3320',
-      '--avatar-user-start':    '#a8bf5e',
-      '--avatar-user-end':      '#6d8b2f',
-      '--avatar-agent-start':   '#c9a227',
-      '--avatar-agent-end':     '#809f3c',
+      '--bubble-user-bg-start': '#a85b2a',
+      '--bubble-user-bg-end':   '#7c4222',
+      '--bubble-user-text':     '#fbeed7',
+      '--bubble-agent-bg':      'rgba(238, 229, 213, 0.92)',
+      '--bubble-agent-border':  'rgba(44, 31, 18, 0.10)',
+      '--bubble-agent-text':    '#2c1f12',
+      '--avatar-user-start':    '#c98a4a',
+      '--avatar-user-end':      '#7c4222',
+      '--avatar-agent-start':   '#2c1f12',
+      '--avatar-agent-end':     '#4f3520',
 
-      '--shadow-sm': '0 1px 2px rgba(60, 64, 30, 0.1)',
-      '--shadow-md': '0 6px 20px rgba(60, 64, 30, 0.14)',
-      '--shadow-lg': '0 16px 48px rgba(60, 64, 30, 0.18)',
+      '--shadow-sm': '0 1px 2px rgba(44, 31, 18, 0.10)',
+      '--shadow-md': '0 6px 20px rgba(44, 31, 18, 0.14)',
+      '--shadow-lg': '0 16px 48px rgba(44, 31, 18, 0.18)',
     },
   },
 
-  // ── 冬 · 松墨 (深邃墨绿) ──
+  // ── 夜·电青 (深墨蓝绿, 冷峻) ──
   'midnight-blue': {
     id: 'midnight-blue',
-    name: '冬·松墨',
-    emoji: '🌲',
-    description: '松柏墨绿, 深邃静谧的寒冬',
+    name: '夜·电青',
+    glyph: '夜',
+    description: '深墨夜色, 一道电青划过',
     isDark: true,
-    season: 'winter',
+    material: 'night-cyan',
     tokens: {
       ...baseTokens,
-      '--bg-primary':   '#0a1512',
-      '--bg-secondary': 'rgba(16, 30, 26, 0.74)',
-      '--bg-tertiary':  'rgba(26, 46, 40, 0.74)',
-      '--bg-card':      'rgba(14, 28, 24, 0.72)',
-      '--bg-hover':     'rgba(45, 212, 191, 0.1)',
-      '--bg-inset':     'rgba(7, 18, 15, 0.72)',
-      '--bg-glass':     'rgba(12, 26, 22, 0.64)',
+      '--bg-primary':   '#0a1416',
+      '--bg-secondary': 'rgba(16, 28, 32, 0.76)',
+      '--bg-tertiary':  'rgba(26, 44, 50, 0.76)',
+      '--bg-card':      'rgba(14, 26, 30, 0.74)',
+      '--bg-hover':     'rgba(59, 212, 200, 0.10)',
+      '--bg-inset':     'rgba(7, 18, 20, 0.74)',
+      '--bg-glass':     'rgba(12, 24, 28, 0.66)',
 
-      '--accent':        '#2fb391',
-      '--accent-hover':  '#4bd0ad',
-      '--accent-subtle': 'rgba(47, 179, 145, 0.15)',
-      '--accent-border': 'rgba(47, 179, 145, 0.36)',
+      '--accent':        '#3bd4c8',
+      '--accent-2':      '#5a8aab',
+      '--accent-3':      '#d4b45a',
+      '--accent-4':      '#9c6dc7',
+      '--accent-hover':  '#56e2d6',
+      '--accent-subtle': 'rgba(59, 212, 200, 0.14)',
+      '--accent-border': 'rgba(59, 212, 200, 0.36)',
 
-      '--text-primary':   '#e4f5ee',
-      '--text-secondary': '#bcdccf',
-      '--text-tertiary':  '#84a89a',
-      '--text-muted':     '#587569',
+      '--text-primary':   '#e4f5f3',
+      '--text-secondary': '#bcd8d6',
+      '--text-tertiary':  '#84a8a6',
+      '--text-muted':     '#58736f',
 
-      '--success': '#2fb391',
-      '--success-subtle': 'rgba(47, 179, 145, 0.13)',
-      '--warning': '#d1a43a',
-      '--warning-subtle': 'rgba(209, 164, 58, 0.15)',
+      '--success': '#3bd4c8',
+      '--success-subtle': 'rgba(59, 212, 200, 0.13)',
+      '--warning': '#d4b45a',
+      '--warning-subtle': 'rgba(212, 180, 90, 0.15)',
       '--danger': '#f08a7a',
       '--danger-subtle': 'rgba(240, 138, 122, 0.12)',
 
-      '--border':       'rgba(120, 190, 170, 0.12)',
-      '--border-hover': 'rgba(120, 190, 170, 0.22)',
-      '--border-light': 'rgba(120, 190, 170, 0.06)',
+      '--border':       'rgba(120, 190, 200, 0.12)',
+      '--border-hover': 'rgba(120, 190, 200, 0.22)',
+      '--border-light': 'rgba(120, 190, 200, 0.06)',
 
-      '--bubble-user-bg-start': '#2fb391',
-      '--bubble-user-bg-end':   '#0f766e',
-      '--bubble-user-text':     '#ffffff',
-      '--bubble-agent-bg':      'rgba(18, 34, 29, 0.9)',
-      '--bubble-agent-border':  'rgba(120, 190, 170, 0.1)',
+      '--bubble-user-bg-start': '#3bd4c8',
+      '--bubble-user-bg-end':   '#1a8a82',
+      '--bubble-user-text':     '#04201e',
+      '--bubble-agent-bg':      'rgba(18, 34, 38, 0.92)',
+      '--bubble-agent-border':  'rgba(120, 190, 200, 0.10)',
       '--bubble-agent-text':    '#dcefe7',
-      '--avatar-user-start':    '#4bd0ad',
-      '--avatar-user-end':      '#0f766e',
-      '--avatar-agent-start':   '#2fb391',
-      '--avatar-agent-end':     '#3b7a6b',
+      '--avatar-user-start':    '#56e2d6',
+      '--avatar-user-end':      '#1a8a82',
+      '--avatar-agent-start':   '#3bd4c8',
+      '--avatar-agent-end':     '#1a8a82',
 
       '--shadow-sm': '0 1px 2px rgba(0,0,0,0.4)',
       '--shadow-md': '0 6px 20px rgba(0,0,0,0.5)',

@@ -110,7 +110,7 @@ export default function SettingsView({
             <div className="set-card">
               <ToggleRow
                 title="自动审核"
-                desc="TongYong 可以自动审查工具的额外访问请求；自动审查可能会出错。"
+                desc="维知 可以自动审查工具的额外访问请求；自动审查可能会出错。"
                 value={autoReview}
                 onChange={setAutoReview}
               />
@@ -134,7 +134,7 @@ export default function SettingsView({
               <div className="set-divider" />
               <ToggleRow
                 title="在菜单栏中显示"
-                desc="关闭主窗口后仍在系统菜单栏中保留 TongYong。"
+                desc="关闭主窗口后仍在系统菜单栏中保留 维知。"
                 value={menuBar}
                 onChange={setMenuBar}
               />
@@ -160,7 +160,7 @@ export default function SettingsView({
                       background: `linear-gradient(135deg, ${t.tokens['--accent']} 0%, ${t.tokens['--bg-primary']} 100%)`,
                     }}
                   />
-                  <span className="set-theme-name">{t.emoji} {t.name}</span>
+                  <span className="set-theme-name"><span className="set-theme-name-glyph">{t.glyph}</span>{t.name}</span>
                   <span className="set-theme-desc">{t.description}</span>
                   {t.id === theme && <span className="set-theme-check">✓</span>}
                 </button>

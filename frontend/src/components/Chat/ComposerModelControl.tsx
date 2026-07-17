@@ -20,8 +20,8 @@ import './ComposerModelControl.css';
 export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ThinkingMode = 'off' | 'auto' | 'always';
 
-const EFFORT_KEY = 'tongyong.reasoning_effort';
-const THINKING_KEY = 'tongyong.thinking_mode';
+const EFFORT_KEY = 'weizhi.reasoning_effort';
+const THINKING_KEY = 'weizhi.thinking_mode';
 
 const EFFORT_OPTS: { id: ReasoningEffort; label: string; desc: string }[] = [
   { id: 'low', label: '轻度', desc: '更快, 适合简单任务' },
@@ -36,11 +36,11 @@ const THINKING_OPTS: { id: ThinkingMode; label: string; desc: string }[] = [
 ];
 
 export function getReasoningEffort(): ReasoningEffort {
-  const v = localStorage.getItem(EFFORT_KEY);
+  const v = localStorage.getItem(EFFORT_KEY) || localStorage.getItem('tongyong.reasoning_effort');
   return v === 'low' || v === 'medium' || v === 'high' ? v : 'medium';
 }
 export function getThinkingMode(): ThinkingMode {
-  const v = localStorage.getItem(THINKING_KEY);
+  const v = localStorage.getItem(THINKING_KEY) || localStorage.getItem('tongyong.thinking_mode');
   return v === 'off' || v === 'auto' || v === 'always' ? v : 'auto';
 }
 

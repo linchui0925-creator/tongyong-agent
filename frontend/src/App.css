@@ -1,21 +1,27 @@
+/**
+ * App.css — 维知 · The Thinking Loom (W5-3)
+ *
+ * Layout: 居中聊天 + 左侧控制脊柱 + 顶部会话标题栏 + AmbientScene 拓扑线场
+ * Sidebar 256px, Main 列交给 ModernChatPanel 自身 max-width
+ */
+
+/* ========== Body ========== */
 body {
   font-family: var(--font);
-  font-size: 14.5px;
+  font-size: var(--font-size-base, 15px);
   font-weight: 400;
   color: var(--text-primary);
-  background:
-    radial-gradient(circle at 15% -5%, var(--accent-subtle), transparent 40%),
-    radial-gradient(circle at 85% 105%, var(--accent-subtle), transparent 42%),
-    var(--bg-primary);
+  background: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  line-height: 1.55;
+  line-height: var(--line-height-base, 1.7);
   transition: background 0.25s ease, color 0.25s ease;
 }
 
 /* ========== Layout ========== */
 .glass-panel { background: var(--bg-glass); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid transparent; box-shadow: var(--shadow-md); transition: border-color var(--t-normal), box-shadow var(--t-normal); }
 .glass-panel:hover { border-color: var(--border); }
+
 .app {
   display: flex;
   height: 100vh;
@@ -26,9 +32,7 @@ body {
 
 /* 设置为独立整页: 铺满视口, 用不透明背景遮住会话层 */
 .app--settings {
-  background:
-    radial-gradient(circle at 12% -8%, var(--accent-subtle), transparent 42%),
-    var(--bg-primary);
+  background: var(--bg-primary);
 }
 
 .app-container { display:flex; flex:1; min-height:0; position:relative; z-index:10; width:100%; }
@@ -38,72 +42,132 @@ body {
   min-width: 0;
   min-height: 0;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+  position: relative;
 }
 
+/* ========== Ambient Scene (Thinking Loom backdrop) ========== */
+.ambient-loom {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 0.6s ease;
+}
+.app[data-theme="midnight-blue"] .ambient-loom,
+.app[data-theme="light-clean"] .ambient-loom {
+  opacity: 0.7;
+}
+.ambient-loom canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ========== Sidebar (左侧控制脊柱) ========== */
 .app-sidebar {
-  width: 286px;
+  width: 256px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 94%, white 6%) 0%, var(--bg-primary) 100%);
+  background: color-mix(in srgb, var(--bg-primary) 90%, transparent 10%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-right: 1px solid var(--border-light);
   overflow: hidden;
+  position: relative;
+  z-index: 11;
 }
 
+/* 侧栏 Brand: 维知 飘逸 wordmark */
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 60px;
-  padding: 16px 16px 10px 18px;
+  min-height: 64px;
+  padding: 18px 16px 12px 18px;
   flex-shrink: 0;
 }
-.brand-text { flex: 1; min-width: 0; }
+
+.brand-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; }
 .brand-text h1 {
-  font-size: 18px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
   color: var(--text-primary);
-  letter-spacing: -.03em;
-  line-height: 1.15;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.brand-text h1 .brand-mark {
+  font-size: 26px;
+  color: var(--accent);
+}
+.brand-text .brand-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.22em;
+  margin-top: 4px;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
-.sidebar-divider { height: 1px; background: var(--border-light); margin: 10px 14px; flex-shrink: 0; }
+.sidebar-divider { height: 1px; background: var(--border-light); margin: 4px 14px; flex-shrink: 0; }
 
-/* 顶部操作区: 新建对话 + 团队 */
+/* 顶部操作区: 新建对话 + 团队 + MCP */
 .sidebar-actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 10px 4px;
+  gap: 2px;
+  padding: 4px 10px;
   flex-shrink: 0;
 }
 
-/* 新建对话 — 更接近 Codex 的简约按钮风格 */
 .sidebar-newchat {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 9px 12px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: .01em;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   cursor: pointer;
   flex-shrink: 0;
   transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+  font-family: var(--font);
 }
 .sidebar-newchat:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-light); }
 
-/* 团队 — 次级入口 */
+.sidebar-nav-index {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  min-width: 18px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: color var(--t-fast), opacity var(--t-fast);
+}
+.sidebar-newchat:hover .sidebar-nav-index { color: var(--accent); opacity: 1; }
+.sidebar-newchat.is-active .sidebar-nav-index { color: var(--accent); opacity: 1; }
+
+/* 团队 / MCP — 次级入口 */
 .sidebar-newchat--ghost {
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid transparent;
+  font-weight: 500;
 }
 .sidebar-newchat--ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
 .sidebar-newchat--ghost.is-active { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent-border); }
@@ -112,17 +176,18 @@ body {
 .sidebar-foot-item {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  gap: 10px;
   padding: 13px 18px;
   border: none;
   border-top: 1px solid var(--border-light);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 500;
   cursor: pointer;
   flex-shrink: 0;
   transition: background var(--t-fast), color var(--t-fast);
+  font-family: var(--font);
 }
 .sidebar-foot-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .sidebar-foot-item.is-active { color: var(--accent); background: var(--accent-subtle); }
@@ -132,4 +197,121 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* ========== 顶部 Title Bar (居中, 可编辑会话名) ========== */
+.app-titlebar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 24px 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--border-light);
+  position: relative;
+  min-height: 56px;
+}
+
+.app-titlebar-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(100%, 860px);
+  position: relative;
+}
+
+.app-titlebar-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: text;
+  transition: background var(--t-fast), border-color var(--t-fast);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.app-titlebar-name:hover { background: var(--bg-hover); }
+.app-titlebar-name:focus {
+  outline: none;
+  background: var(--bg-secondary);
+  border-color: var(--accent-border);
+  cursor: text;
+}
+.app-titlebar-name.is-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.app-titlebar-name[contenteditable="true"]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+}
+
+.app-titlebar-left,
+.app-titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-titlebar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: default;
+}
+.app-titlebar-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 流式生成进度条: 标题栏底部的 1px 横扫 */
+.app-titlebar-progress {
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: transparent;
+  overflow: hidden;
+}
+.app-titlebar-progress::after {
+  content: '';
+  position: absolute;
+  left: -30%;
+  top: 0;
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: titlebarProgress 1.8s ease-in-out infinite;
+  opacity: 0.8;
+}
+@keyframes titlebarProgress {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(430%); }
+}
+
+/* ========== 视口断点 ========== */
+@media (max-width: 860px) {
+  .app-sidebar { width: 220px; }
+  .app-titlebar { padding: 10px 16px 8px; }
 }

@@ -99,7 +99,7 @@ export default function HomePage() {
               <path d="M2 12l10 5 10-5"/>
             </svg>
           </span>
-          <span className="home-brand-text">TongYong</span>
+          <span className="home-brand-text">维知</span>
         </a>
 
         <nav className="home-nav-links">
@@ -119,8 +119,8 @@ export default function HomePage() {
       <main className="home-main">
         <section className="home-hero">
           <div className="home-hero-text">
-            <div className="home-hero-eyebrow">TongYong Agent · 通用 AI 工作台</div>
-            <h1 className="home-hero-title">TongYong</h1>
+            <div className="home-hero-eyebrow">维知 · 通用 AI 工作台</div>
+            <h1 className="home-hero-title">维知</h1>
             <p className="home-hero-lead dx-text">
               <DecryptedText
                 text="多模型 · 多 Agent · 可记忆的通用 AI 助手"
@@ -171,7 +171,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="ai-showcase" aria-label="TongYong AI 助手示意图">
+          <div className="ai-showcase" aria-label="维知 AI 助手示意图">
             <div className="ai-showcase-corner">
               <span className="dot" aria-hidden="true" />
               <span>在线</span>
@@ -230,7 +230,7 @@ export default function HomePage() {
               </svg>
               联系我们
             </span>
-            <h2 id="home-contact-title" className="home-contact-title">想把 TongYong 用到团队场景里？</h2>
+            <h2 id="home-contact-title" className="home-contact-title">想把 维知 用到团队场景里？</h2>
             <p className="home-contact-sub">
               合作落地、技术支持、功能建议，都欢迎告诉我们 — 留下邮箱，1–2 个工作日内回信。
             </p>

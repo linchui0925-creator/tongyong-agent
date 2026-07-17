@@ -22,7 +22,7 @@ export default function AIAssistant({ size = 360, className }: AIAssistantProps)
       className={className}
       xmlns="http://www.w3.org/2000/svg"
       role="img"
-      aria-label="TongYong AI 助手"
+      aria-label="维知 AI 助手"
     >
       <defs>
         {/* Soft halo behind the head */}

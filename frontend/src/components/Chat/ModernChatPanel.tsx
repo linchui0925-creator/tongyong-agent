@@ -1,14 +1,10 @@
 /**
- * ModernChatPanel — Chat UI (W4-29 redesign)
+ * ModernChatPanel — 维知 (W5-3 重设计)
  *
- * 视觉参考 WeChat / iMessage / Telegram: 人物分明, 清晰头像 + 名称
- * - 顶部 chat header: agent 头像 + 名称 + 在线状态
- * - 每条消息: 头像 (40px 圆) + 名称 + 气泡 + 时间
- * - 配色: 用户主色蓝, AI 中性深灰, 整体保持深色 app 协调
- * - 字体: 系统字体栈, 14.5px 正文, 12px 时间, 13px 名称
- *
- * 状态机 (messages / isStreaming / heartbeat / compress / clarify) 抽到
- * useStreamChat hook, 这里只负责渲染 + 输入处理 + 列表滚动。
+ * 居中聊天: max-width 980px, 消息气泡 760px
+ * 顶部不再有 chat-header (由 App.tsx 顶部标题栏承担)
+ * 空状态: 维知 飘逸 wordmark + 一句引导 + 3-4 个快捷入口
+ * 流式生成时通过 weizhi:streaming CustomEvent 让顶部标题栏出现 1px 横扫
  */
 
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
@@ -21,7 +17,7 @@ import ComposerModelControl from './ComposerModelControl';
 import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
-const AGENT_NAME = 'AI 助手';
+const AGENT_NAME = '维知';
 const USER_INITIAL = 'U';
 
 // ── Helpers ─────────────────────────────────────────
@@ -227,12 +223,12 @@ function Avatar({ isUser, size = 40 }: { isUser: boolean; size?: number }) {
       </div>
     );
   }
+  // 维知: agent 头像用一个简洁的"墨点"或 SVG 圆环
   return (
     <div className="chat-avatar chat-avatar--agent" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 24 24" width={size * 0.55} height={size * 0.55} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-        <line x1="12" y1="19" x2="12" y2="22" />
+      <svg viewBox="0 0 24 24" width={size * 0.55} height={size * 0.55} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M7 14c1.5-1 3.5-1.5 5-1.5s3.5.5 5 1.5" />
       </svg>
     </div>
   );
@@ -253,7 +249,7 @@ function TypingIndicator({ currentTool, toolElapsed, progressText }: {
         </div>
         <span className="chat-typing-label">
           {currentTool
-            ? `${currentTool.emoji} ${currentTool.name} 执行中… (${(toolElapsed / 1000).toFixed(1)}s)`
+            ? `${currentTool.emoji || '⚙'} ${currentTool.name} 执行中… (${(toolElapsed / 1000).toFixed(1)}s)`
             : progressText || '正在思考…'}
         </span>
       </div>
@@ -476,7 +472,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
 
   // Tab title
   useEffect(() => {
-    const baseTitle = 'TongYong Agent';
+    const baseTitle = '维知 · Weizhi';
     if (isStreaming) {
       const stage = progressText || '思考中…';
       document.title = `⏳ ${stage} - ${baseTitle}`;
@@ -487,6 +483,28 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
     }
     return () => { document.title = baseTitle; };
   }, [isStreaming, progressText, errorMessage]);
+
+  // 流式状态广播给 App.tsx 顶部标题栏 (用于 1px 横扫进度)
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('weizhi:streaming', { detail: { streaming: isStreaming } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('weizhi:streaming', { detail: { streaming: false } }));
+    };
+  }, [isStreaming]);
+
+  // 全局监听: 拖动取消/点击空白 都清掉 isDraggingFile
+  useEffect(() => {
+    if (!isDraggingFile) return;
+    const clearDragging = () => setIsDraggingFile(false);
+    // dragend: 用户在任何地方松开 (ESC 或 拖到面板外释放)
+    window.addEventListener('dragend', clearDragging);
+    // 兜底: 用户在拖动状态下点击空白区域 (没真的 drop) 也清掉
+    window.addEventListener('mousedown', clearDragging);
+    return () => {
+      window.removeEventListener('dragend', clearDragging);
+      window.removeEventListener('mousedown', clearDragging);
+    };
+  }, [isDraggingFile]);
 
   // Auto-scroll refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -590,7 +608,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
     <div
       className={`chat-panel ${isDraggingFile ? 'is-dragging-file' : ''}`}
       onDragOver={(e) => { e.preventDefault(); setIsDraggingFile(true); }}
-      onDragLeave={(e) => { if (e.currentTarget === e.target) setIsDraggingFile(false); }}
+      onDragLeave={() => { setIsDraggingFile(false); }}
       onDrop={handleDrop}
     >
       {errorMessage && (
@@ -602,7 +620,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
 
       <div className="chat-toolbar">
         <button className="btn btn-ghost" onClick={() => setShowHelp(!showHelp)}>
-          {showHelp ? '收起帮助' : '帮助'}
+          {showHelp ? '收起帮助' : '使用提示'}
         </button>
       </div>
 
@@ -610,15 +628,16 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         <div className="chat-help">
           <div className="chat-help-section">
             <strong>对话</strong>
-            <p>在这里与 AI 助手进行交流。会结合上下文、记忆和技能回应你的问题。</p>
+            <p>在这里与 维知 交流。会结合上下文、记忆和技能回应你的问题。</p>
           </div>
           <div className="chat-help-section">
             <strong>使用说明</strong>
             <ul>
               <li><strong>发送</strong> — 输入内容按 <kbd>Enter</kbd> 发送</li>
               <li><strong>换行</strong> — 按 <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</li>
-              <li><strong>停止</strong> — Agent 回复时点击输入框旁的停止按钮可中断</li>
+              <li><strong>停止</strong> — 维知 回复时点击输入框旁的停止按钮可中断</li>
               <li><strong>删除</strong> — 鼠标悬停消息可删除单条记录</li>
+              <li><strong>附件</strong> — 拖拽或粘贴图片/PDF/文档到对话窗口</li>
             </ul>
           </div>
         </div>
@@ -627,9 +646,18 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       <div className="chat-messages" ref={messagesRef} onScroll={handleScroll}>
         {messages.length === 0 ? (
           <div className="chat-empty">
-            <Avatar isUser={false} size={64} />
-            <p className="chat-empty-title">开始新对话</p>
-            <span className="chat-empty-hint">Enter 发送 · Shift+Enter 换行</span>
+            <h2 className="chat-empty-wordmark">
+              <span className="chat-empty-mark">维</span>
+              <span className="chat-empty-name">知</span>
+            </h2>
+            <p className="chat-empty-title">今天想完成什么？</p>
+            <span className="chat-empty-hint">Enter 发送 · Shift+Enter 换行 · 拖拽文件以附加</span>
+            <div className="chat-empty-shortcuts">
+              <span className="chat-empty-shortcut">新建对话</span>
+              <span className="chat-empty-shortcut">团队协作</span>
+              <span className="chat-empty-shortcut">浏览 MCP</span>
+              <span className="chat-empty-shortcut">设置</span>
+            </div>
           </div>
         ) : (
           <>
@@ -662,7 +690,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       {currentTool && (
         <div className="chat-tools-dashboard">
           <div className="tool-item tool-item--running">
-            <span className="tool-emoji">{currentTool.emoji}</span>
+            <span className="tool-emoji">{currentTool.emoji || '⚙'}</span>
             <span className="tool-name">{currentTool.name}</span>
             <span className="tool-spinner"><span /><span /><span /></span>
             <span className="tool-duration tool-duration--live">{(toolElapsed / 1000).toFixed(1)}s</span>
@@ -764,7 +792,7 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
             onChange={handleInput}
             onKeyDown={handleKey}
             onPaste={handlePaste}
-            placeholder={`给 ${AGENT_NAME} 发消息…`}
+            placeholder={`与 ${AGENT_NAME} 聊聊…`}
             disabled={isLoading && !isStreaming}
             rows={1}
           />

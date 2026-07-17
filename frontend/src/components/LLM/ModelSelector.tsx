@@ -326,7 +326,7 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
       <div className="model-hub-brand">
         <button className="model-brand-pill" onClick={() => setShowManager(true)} title="模型连接管理">
           <span className="model-brand-mark">TY</span>
-          <span className="model-hub-title">TongYong</span>
+          <span className="model-hub-title">维知</span>
         </button>
         <button className="model-hub-settings" onClick={() => setShowManager(true)} title="模型连接管理">⚙</button>
       </div>

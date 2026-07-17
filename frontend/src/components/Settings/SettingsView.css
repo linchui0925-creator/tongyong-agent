@@ -222,7 +222,8 @@
 .set-theme-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
 .set-theme-card.is-active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
 .set-theme-swatch { height: 52px; border-radius: var(--r-lg); }
-.set-theme-name { font-size: 14.5px; font-weight: 700; color: var(--text-primary); }
+.set-theme-name { font-size: 14.5px; font-weight: 700; color: var(--text-primary); display: inline-flex; align-items: baseline; gap: 6px; }
+.set-theme-name-glyph { font-family: var(--font-display); font-size: 18px; font-weight: 400; color: var(--accent); line-height: 1; }
 .set-theme-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
 .set-theme-check {
   position: absolute;

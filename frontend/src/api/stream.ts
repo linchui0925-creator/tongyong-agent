@@ -126,8 +126,8 @@ export function streamChat(
 
     // 构建请求数据
     // 推理强度 / 思考模式 (TongYong 新增, 存 localStorage; 后端不识别也不影响)
-    const reasoningEffort = (typeof localStorage !== 'undefined' && localStorage.getItem('tongyong.reasoning_effort')) || undefined;
-    const thinkingMode = (typeof localStorage !== 'undefined' && localStorage.getItem('tongyong.thinking_mode')) || undefined;
+    const reasoningEffort = (typeof localStorage !== 'undefined' && localStorage.getItem('weizhi.reasoning_effort') || localStorage.getItem('tongyong.reasoning_effort')) || undefined;
+    const thinkingMode = (typeof localStorage !== 'undefined' && localStorage.getItem('weizhi.thinking_mode') || localStorage.getItem('tongyong.thinking_mode')) || undefined;
 
     const requestData = {
         message: message.trim(),

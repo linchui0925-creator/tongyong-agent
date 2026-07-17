@@ -19,6 +19,24 @@ interface AddModelDialogProps {
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail';
 
+type ProviderFormat = 'auto' | 'openai_compatible' | 'chat_completions' | 'openai_responses' | 'anthropic';
+
+const FORMAT_OPTIONS: Array<{ id: ProviderFormat; label: string; hint: string }> = [
+  { id: 'auto', label: '自动识别', hint: '推荐：系统根据 Base URL / 运行时能力自动判断协议' },
+  { id: 'openai_compatible', label: 'OpenAI 兼容', hint: '常见兼容网关、转发服务、Ollama /v1 风格' },
+  { id: 'chat_completions', label: 'Chat Completions', hint: '标准 OpenAI Chat Completions 接口' },
+  { id: 'openai_responses', label: 'OpenAI Responses', hint: 'Responses API，新版 OpenAI 风格' },
+  { id: 'anthropic', label: 'Anthropic Messages', hint: 'Claude / Anthropic Messages 接口' },
+];
+
+function inferFormatFromBaseUrl(baseUrl: string): ProviderFormat {
+  const lower = baseUrl.toLowerCase();
+  if (lower.includes('anthropic')) return 'anthropic';
+  if (lower.includes('/responses')) return 'openai_responses';
+  if (lower.includes('/chat/completions')) return 'chat_completions';
+  return 'openai_compatible';
+}
+
 // 完全对齐cc源码的预设供应商配置，所有地址/名称/说明100%对应
 const TEMPLATE_OPTIONS = [
   // 🔥 星标推荐源，和截图顺序完全一致
@@ -33,7 +51,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'sheng_suan_yun',
     name: '🟣 胜算云',
-    endpoint: 'https://router.shengsuanyun.com/api',
+    endpoint: 'https://router.shengsuanyun.com/api/v1',
     model: 'sheng-suan-7b',
     notes: '胜算云模型接口。',
     star: true,
@@ -105,7 +123,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'dmxapi',
     name: '⚪ DMXAPI',
-    endpoint: 'https://www.dmxapi.cn',
+    endpoint: 'https://www.dmxapi.cn/v1',
     model: 'dmx-v1',
     notes: 'DMXAPI模型接口。',
     star: true,
@@ -113,7 +131,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'packycode',
     name: '⚫ PackyCode',
-    endpoint: 'https://www.packyapi.com',
+    endpoint: 'https://www.packyapi.com/v1',
     model: 'packy-coder-v1',
     notes: 'PackyCode代码大模型接口。',
     star: true,
@@ -177,7 +195,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'cubence',
     name: '⬛ Cubence',
-    endpoint: 'https://api.cubence.com',
+    endpoint: 'https://api.cubence.com/v1',
     model: 'cubence-v1',
     notes: 'Cubence模型接口。',
     star: true,
@@ -217,7 +235,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'sssaicode',
     name: '⬛ SSSAiCode',
-    endpoint: 'https://node-hk.sssaicode.com/api',
+    endpoint: 'https://node-hk.sssaicode.com/api/v1',
     model: 'sssaicode-v1',
     notes: 'SSSAiCode代码模型接口。',
     star: true,
@@ -241,7 +259,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'micu',
     name: '🔵 Micu',
-    endpoint: 'https://www.openclaudecode.cn',
+    endpoint: 'https://www.openclaudecode.cn/v1',
     model: 'micu-v1',
     notes: 'Micu大模型接口。',
     star: true,
@@ -249,7 +267,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'ctok',
     name: '🔵 CTok.ai',
-    endpoint: 'https://api.ctok.ai',
+    endpoint: 'https://api.ctok.ai/v1',
     model: 'ctok-v1',
     notes: 'CTok.ai模型接口。',
     star: true,
@@ -411,7 +429,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'aihubmix',
     name: '⚪ AiHubMix',
-    endpoint: 'https://aihubmix.com',
+    endpoint: 'https://aihubmix.com/v1',
     model: 'aihubmix-v1',
     notes: 'AiHubMix聚合模型接口。',
     star: false,
@@ -435,7 +453,7 @@ const TEMPLATE_OPTIONS = [
   {
     id: 'pipellm',
     name: '⬛ PIPELLM',
-    endpoint: 'https://cc-api.pipellm.ai',
+    endpoint: 'https://cc-api.pipellm.ai/v1',
     model: 'pipe-v1',
     notes: 'PIPELLM流水线大模型接口。',
     star: false,
@@ -462,6 +480,38 @@ const TEMPLATE_OPTIONS = [
     endpoint: 'http://localhost:11434/v1',
     model: 'llama3.2',
     notes: '本地模型，通常不需要 API Key，可填任意占位值。',
+    star: false,
+  },
+  {
+    id: 'xai',
+    name: '✖️ xAI Grok',
+    endpoint: 'https://api.x.ai/v1',
+    model: 'grok-4',
+    notes: 'xAI 官方 OpenAI 兼容端点。',
+    star: false,
+  },
+  {
+    id: 'groq',
+    name: '⚡ Groq',
+    endpoint: 'https://api.groq.com/openai/v1',
+    model: 'llama-3.3-70b-versatile',
+    notes: 'Groq 超快推理，OpenAI 兼容协议。',
+    star: false,
+  },
+  {
+    id: 'mistral',
+    name: '🟠 Mistral',
+    endpoint: 'https://api.mistral.ai/v1',
+    model: 'mistral-large-latest',
+    notes: 'Mistral 官方 OpenAI 兼容端点。',
+    star: false,
+  },
+  {
+    id: 'google',
+    name: '🔵 Google Gemini (OpenAI 兼容)',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-2.5-pro',
+    notes: 'Google Gemini 官方 OpenAI 兼容端点。',
     star: false,
   },
 ]
@@ -514,6 +564,11 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
     };
   }, [filteredProviders]);
 
+  const selectedTemplate = useMemo(
+    () => builtinProviders.find(t => t.id === template) || builtinProviders[0],
+    [template, builtinProviders],
+  );
+
   // 从后端拉一次最新的预设供应商列表（拉取失败就保持本地默认）。
   useEffect(() => {
     let cancelled = false;
@@ -533,26 +588,11 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
         }
       })
       .catch(() => { /* 加载失败使用本地默认 */ });
-  // 选中预设时自动填充表单
-  useEffect(() => {
-    if (!selectedTemplate) return;
-    // 编辑模式不自动覆盖
-    if (initialProfile && savedProviderId) return;
-    setBaseUrl(selectedTemplate.endpoint);
-    setDefaultModel(selectedTemplate.model);
-    setModelsText(selectedTemplate.model);
-    setNotes(selectedTemplate.notes || "");
-    setProviderName(selectedTemplate.name.split(" ").slice(1).join(" ") || selectedTemplate.name);
-  }, [template]);
-
     return () => { cancelled = true; };
   }, []);
 
-  const selectedTemplate = useMemo(
-    () => builtinProviders.find(t => t.id === template) || builtinProviders[0],
-    [template, builtinProviders],
-  );
   const [providerName, setProviderName] = useState('自定义供应商');
+  const [providerFormat, setProviderFormat] = useState<ProviderFormat>('auto');
   const [baseUrl, setBaseUrl] = useState(selectedTemplate.endpoint);
   const [apiKey, setApiKey] = useState('');
   // 编辑模式时显示已配置 key 的掩码提示；用户开始输入则切换到清空状态
@@ -566,6 +606,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   const [requestJson, setRequestJson] = useState(prettyJson({
     chat_path: '/chat/completions',
     models_path: '/models',
+    api_format: inferFormatFromBaseUrl(selectedTemplate.endpoint),
     tool_call_mode: 'auto',
     headers: {},
     body_defaults: {},
@@ -582,6 +623,19 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
   const [testStatus, setTestStatus] = useState<TestStatus>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [savedProviderId, setSavedProviderId] = useState<string | null>(null);
+
+  // 选中预设时自动填充表单
+  useEffect(() => {
+    if (!selectedTemplate) return;
+    // 编辑模式不自动覆盖；新建时也不要覆盖用户已编辑内容。
+    if (initialProfile || isDirty) return;
+    setBaseUrl(selectedTemplate.endpoint);
+    setDefaultModel(selectedTemplate.model);
+    setModelsText(selectedTemplate.model);
+    setNotes(selectedTemplate.notes || "");
+    setProviderName(selectedTemplate.name.split(" ").slice(1).join(" ") || selectedTemplate.name);
+    setProviderFormat(inferFormatFromBaseUrl(selectedTemplate.endpoint));
+  }, [selectedTemplate, initialProfile, isDirty]);
 
   // 表单初始化 effect 1: open 从 false→true 边沿触发
   // 只在边沿触发，避免 builtinProviders 后端加载后把用户已输入内容覆盖
@@ -609,6 +663,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
         setWebsite(initialProfile.website || '');
         setNotes(initialProfile.notes || '');
         setRequestJson(prettyJson(initialProfile.request_config || {}));
+        setProviderFormat((initialProfile.request_config?.api_format as ProviderFormat) || inferFormatFromBaseUrl(initialProfile.base_url || ''));
         setSavedProviderId(initialProfile.id || null);
       } else {
         setProviderName('自定义供应商');
@@ -643,6 +698,9 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
     if (!open) {
       // 关闭后清空 saved id 防止下次打开用旧值
       setSavedProviderId(null);
+      setTestStatus('idle');
+      setStatusMessage('');
+      setIsDirty(false);
     }
     wasOpen.current = open;
   }, [open, initialProfile, builtinProviders]);
@@ -686,9 +744,27 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
 
   const isValid = providerName.trim() && baseUrl.trim() && defaultModel.trim();
 
+  const resolvedProviderFormat = useMemo(() => {
+    if (providerFormat !== 'auto') return providerFormat;
+    try {
+      const requestConfig = parseJsonObject(requestJson, '高级配置');
+      const explicit = requestConfig.api_format;
+      if (typeof explicit === 'string' && explicit.trim()) {
+        return explicit as ProviderFormat;
+      }
+    } catch {
+      // ignore parse error here; validation will surface below
+    }
+    return inferFormatFromBaseUrl(baseUrl);
+  }, [providerFormat, requestJson, baseUrl]);
+
   const buildProfile = (id?: string): CustomProviderProfile => {
     const request_config = parseJsonObject(requestJson, '高级配置');
     const models = modelLinesToEntries(modelsText);
+    const normalizedRequestConfig = {
+      ...request_config,
+      api_format: (request_config.api_format as string | undefined) || resolvedProviderFormat,
+    };
     // 注意：apiKey 留空 → api_key: undefined → JSON.stringify 丢字段 →
     // 后端 upsert_custom_provider 看到没传 key 会沿用旧 key。
     return {
@@ -701,7 +777,7 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
       models,
       website: website.trim() || undefined,
       notes: notes.trim() || undefined,
-      request_config,
+      request_config: normalizedRequestConfig,
       enabled: true,
     };
   };
@@ -935,6 +1011,28 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
           )}
 
 
+          <div className="config-summary-card">
+            <div className="config-summary-main">
+              <div className="config-summary-title">当前连接预览</div>
+              <div className="config-summary-row">
+                <span className="config-summary-label">协议</span>
+                <span className="config-summary-value">{resolvedProviderFormat}</span>
+              </div>
+              <div className="config-summary-row">
+                <span className="config-summary-label">端点</span>
+                <span className="config-summary-value mono">{baseUrl || '未填写'}</span>
+              </div>
+              <div className="config-summary-row">
+                <span className="config-summary-label">默认模型</span>
+                <span className="config-summary-value mono">{defaultModel || '未填写'}</span>
+              </div>
+            </div>
+            <div className="config-summary-badges">
+              {providerFormat === 'auto' ? <span className="summary-badge subtle">自动识别</span> : <span className="summary-badge primary">手动覆盖</span>}
+              <span className="summary-badge">{modelsText.split('\n').filter(Boolean).length} 个模型</span>
+            </div>
+          </div>
+
           <div className="add-model-grid">
             <div className="add-model-field">
               <label className="required">供应商名称</label>
@@ -943,6 +1041,26 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
             <div className="add-model-field">
               <label>官网 / 控制台</label>
               <input value={website} onChange={e => { setWebsite(e.target.value); setIsDirty(true); }} placeholder="https://..." />
+            </div>
+          </div>
+
+          <div className="add-model-field">
+            <label className="required">连接类型 / 协议</label>
+            <div className="format-selector">
+              {FORMAT_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`format-pill ${providerFormat === option.id ? 'active' : ''}`}
+                  onClick={() => { setProviderFormat(option.id); setIsDirty(true); }}
+                  title={option.hint}
+                >
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="format-hint">
+              当前将按 <strong>{resolvedProviderFormat}</strong> 发送测试请求；"自动识别" 会根据 Base URL / 配置推断。
             </div>
           </div>
 
@@ -996,6 +1114,10 @@ export default function AddModelDialog({ open, onClose, initialProfile }: AddMod
                 rows={14}
                 spellCheck={false}
               />
+              <div className="format-hint">
+                高级项里也可以写 <code>api_format</code>、<code>chat_path</code>、<code>response_mapping</code>，
+                这里会覆盖自动识别。
+              </div>
             </div>
           )}
 

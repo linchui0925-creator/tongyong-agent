@@ -127,7 +127,7 @@ function RoleConfigPanel({
 
   return (
     <div style={{
-      background: '#1E140D', borderRadius: 10, padding: 16,
+      background: 'var(--bg-inset)', borderRadius: 10, padding: 16,
       border: `1px solid ${C.accent}44`,
       display: 'flex', flexDirection: 'column', gap: 10,
       animation: 'slideDown 0.2s ease',
@@ -138,7 +138,7 @@ function RoleConfigPanel({
         <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>配置: {role?.name || ''}</span>
         <button onClick={onClose} style={{
           marginLeft: 'auto', background: 'transparent', border: 'none',
-          color: '#A0674A', cursor: 'pointer', fontSize: 14, padding: '2px 6px',
+          color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 14, padding: '2px 6px',
         }}>
           {Icons.x}
         </button>
@@ -221,7 +221,7 @@ function RoleConfigPanel({
             <div style={{ fontSize: 11, fontWeight: 600, color: '#93C5FD', marginBottom: 4 }}>↑ 上游 Agent（数据/任务来源）</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {others.length === 0 ? (
-                <span style={{ fontSize: 10, color: '#A0674A' }}>暂无其他 Agent</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>暂无其他 Agent</span>
               ) : (
                 others.map(o => {
                   if (!o.name) return null
@@ -230,8 +230,8 @@ function RoleConfigPanel({
                     <label key={o.name} onClick={() => toggleUpstream(o.name)} style={{
                       display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
                       padding: '3px 8px', borderRadius: 6, fontSize: 11,
-                      background: isActive ? '#3B82F644' : '#FFFFFF12',
-                      color: isActive ? '#93C5FD' : '#A0674A',
+                      background: isActive ? '#3B82F644' : 'var(--border-light)',
+                      color: isActive ? '#93C5FD' : 'var(--text-tertiary)',
                       border: `1px solid ${isActive ? '#3B82F666' : 'transparent'}`,
                       transition: 'all 0.1s',
                     }}>
@@ -257,7 +257,7 @@ function RoleConfigPanel({
             <div style={{ fontSize: 11, fontWeight: 600, color: '#FCD34D', marginBottom: 4 }}>↓ 下游 Agent（交付对象）</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {others.length === 0 ? (
-                <span style={{ fontSize: 10, color: '#A0674A' }}>暂无其他 Agent</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>暂无其他 Agent</span>
               ) : (
                 others.map(o => {
                   if (!o.name) return null
@@ -266,8 +266,8 @@ function RoleConfigPanel({
                     <label key={o.name} onClick={() => toggleDownstream(o.name)} style={{
                       display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
                       padding: '3px 8px', borderRadius: 6, fontSize: 11,
-                      background: isActive ? '#F59E0B44' : '#FFFFFF12',
-                      color: isActive ? '#FCD34D' : '#A0674A',
+                      background: isActive ? '#F59E0B44' : 'var(--border-light)',
+                      color: isActive ? '#FCD34D' : 'var(--text-tertiary)',
                       border: `1px solid ${isActive ? '#F59E0B66' : 'transparent'}`,
                       transition: 'all 0.1s',
                     }}>
@@ -348,7 +348,7 @@ export function RoleList({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#D4A574' }}>🤖 Agents</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>🤖 Agents</span>
         <button onClick={() => { setShowForm(v => !v); setConfigRole(null) }} style={{
           background: showForm ? '#FFFFFF22' : C.accent, color: '#fff',
           border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
@@ -359,14 +359,14 @@ export function RoleList({
 
       {showForm && (
         <div style={{
-          background: '#2A1F14', borderRadius: 10, padding: 12,
+          background: 'var(--bg-inset)', borderRadius: 10, padding: 12,
           display: 'flex', flexDirection: 'column', gap: 8,
           border: `1px solid ${C.accent}33`,
         }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {Object.keys(templates).map(k => (
               <button key={k} onClick={() => handleTemplate(k)} style={{
-                background: form.template === k ? C.accent : '#FFFFFF18',
+                background: form.template === k ? C.accent : 'var(--bg-hover)',
                 color: '#fff', border: 'none', borderRadius: 6,
                 padding: '3px 10px', cursor: 'pointer', fontSize: 12,
               }}>
@@ -399,7 +399,7 @@ export function RoleList({
               onMouseLeave={() => setHoveredRole(null)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 10px', background: '#2A1F14',
+                padding: '8px 10px', background: 'var(--bg-inset)',
                 borderRadius: configRole === r.name ? '8px 8px 0 0' : 8,
                 // W4-6 2026-06-09 修 React 警告: 别用 borderWidth + borderStyle 这种
                 //   shorthand, 它跟 borderBottom* longhand 冲突, React 会算
@@ -439,7 +439,7 @@ export function RoleList({
                     )}
                   </div>
                 ) : (
-                  <div style={{ fontSize: 10, color: '#A0674A', marginTop: 1 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 1 }}>
                     {(r.watch_actions || []).join(', ') || '无监听'}
                   </div>
                 )}
@@ -480,7 +480,7 @@ export function RoleList({
           </div>
         ))}
         {roles.length === 0 && !showForm && (
-          <div style={{ color: '#A0674A', fontSize: 12, textAlign: 'center', padding: 8 }}>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: 12, textAlign: 'center', padding: 8 }}>
             暂无 Agent
           </div>
         )}

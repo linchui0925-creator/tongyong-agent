@@ -44,7 +44,7 @@
   align-items: center;
   justify-content: center;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-primary);
   font-size: 10px;
   font-weight: 800;
 }
@@ -208,7 +208,7 @@
   border: none;
   border-radius: 12px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text-primary);
   font-family: var(--font);
   font-size: 22px;
   line-height: 1;
@@ -291,7 +291,7 @@
 
 .model-primary-btn {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-primary);
   border-color: var(--accent);
 }
 .model-primary-btn:hover { background: var(--accent-hover); }
@@ -388,6 +388,11 @@
   color: var(--accent);
   font-size: 10px;
   font-weight: 700;
+}
+
+.status-chip.protocol {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-inset));
+  color: var(--accent);
 }
 
 .connected-url {
@@ -633,7 +638,7 @@
   border-radius: 8px;
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-primary);
   font-family: var(--font);
   font-size: 12px;
   font-weight: 600;

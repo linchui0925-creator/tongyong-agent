@@ -16,12 +16,11 @@ import { useStreamChat } from '../../hooks/useStreamChat';
 import { Message, ContextInfo, ArtifactPreview, Attachment } from '../../types';
 import { uploadAttachments } from '../../api/attachments';
 import { MarkdownContent } from './MarkdownContent';
-import { ThemeSwitcher } from '../Theme/ThemeSwitcher';
 import { detectFilePaths, getFileIcon } from './pathDetector';
+import ComposerModelControl from './ComposerModelControl';
 import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
-const USER_NAME = '我';
 const AGENT_NAME = 'AI 助手';
 const USER_INITIAL = 'U';
 
@@ -88,7 +87,10 @@ function ArtifactPreviewCard({ artifact }: { artifact: ArtifactPreview }) {
       <div className="chat-artifact chat-artifact--image">
         <div className="chat-artifact-header">
           <span className="chat-artifact-title">{artifact.name}</span>
-          <a className="chat-artifact-open" href={openUrl} target="_blank" rel="noopener noreferrer">打开</a>
+          <div className="chat-artifact-actions">
+            <a className="chat-artifact-open" href={openUrl} target="_blank" rel="noopener noreferrer">打开</a>
+            <a className="chat-artifact-open" href={previewUrl} target="_blank" rel="noopener noreferrer">预览</a>
+          </div>
         </div>
         <a href={openUrl} target="_blank" rel="noopener noreferrer">
           <img className="chat-artifact-image" src={openUrl} alt={artifact.name} />
@@ -100,7 +102,10 @@ function ArtifactPreviewCard({ artifact }: { artifact: ArtifactPreview }) {
     <div className="chat-artifact">
       <div className="chat-artifact-header">
         <span className="chat-artifact-title">{artifact.name}</span>
-        <a className="chat-artifact-open" href={openUrl} target="_blank" rel="noopener noreferrer">打开</a>
+        <div className="chat-artifact-actions">
+          <a className="chat-artifact-open" href={previewUrl} target="_blank" rel="noopener noreferrer">预览</a>
+          <a className="chat-artifact-open" href={openUrl} target="_blank" rel="noopener noreferrer">打开</a>
+        </div>
       </div>
       <iframe
         className="chat-artifact-frame"
@@ -126,6 +131,26 @@ function formatFileSize(bytes: number): string {
 function AttachmentView({ attachment, onRemove }: { attachment: Attachment; onRemove?: () => void }) {
   const src = toBackendUrl(attachment.preview_url || attachment.url);
   const openUrl = toBackendUrl(attachment.open_url || attachment.url);
+  const status = attachment.extraction_status || '';
+  const summary = attachment.extraction_summary || '';
+  const statusLabel = status === 'ocr_extracted'
+    ? 'OCR 已识别'
+    : status === 'ocr_unavailable'
+      ? 'OCR 不可用'
+      : status === 'ocr_no_text'
+        ? '未识别文字'
+        : status === 'metadata_only'
+          ? '仅元数据'
+          : status === 'error'
+            ? '解析失败'
+            : '';
+  const statusClass = status === 'ocr_extracted'
+    ? 'is-ok'
+    : status === 'ocr_unavailable' || status === 'ocr_no_text' || status === 'metadata_only'
+      ? 'is-warn'
+      : status === 'error'
+        ? 'is-error'
+        : '';
   if (attachment.kind === 'image') {
     return (
       <div className="chat-attachment chat-attachment--image">
@@ -135,6 +160,8 @@ function AttachmentView({ attachment, onRemove }: { attachment: Attachment; onRe
         <div className="chat-attachment-meta">
           <span>{attachment.name || attachment.filename}</span>
           <span>{formatFileSize(attachment.size)}</span>
+          {statusLabel && <span className={`chat-attachment-status ${statusClass}`}>{statusLabel}</span>}
+          {summary && <span className="chat-attachment-summary">{summary}</span>}
           {onRemove && <button onClick={onRemove} aria-label="移除附件">×</button>}
         </div>
       </div>
@@ -149,6 +176,8 @@ function AttachmentView({ attachment, onRemove }: { attachment: Attachment; onRe
         <span className="chat-attachment-name">{attachment.name || attachment.filename}</span>
         <span className="chat-attachment-size">{formatFileSize(attachment.size)}</span>
       </a>
+      {statusLabel && <div className={`chat-attachment-status ${statusClass}`}>{statusLabel}</div>}
+      {summary && <div className="chat-attachment-summary">{summary}</div>}
       {onRemove && <button onClick={onRemove} aria-label="移除附件">×</button>}
     </div>
   );
@@ -233,7 +262,7 @@ function TypingIndicator({ currentTool, toolElapsed, progressText }: {
 }
 
 // ── Token Usage Bar ─────────────────────────────────────────
-function TokenUsageBar({ contextInfo, isCompressing, savedFlash, onCompress }: {
+function TokenUsageRing({ contextInfo, isCompressing, savedFlash, onCompress }: {
   contextInfo: ContextInfo | null;
   isCompressing: boolean;
   savedFlash: string | null;
@@ -241,17 +270,32 @@ function TokenUsageBar({ contextInfo, isCompressing, savedFlash, onCompress }: {
 }) {
   if (!contextInfo) return null;
   const pct = Math.min(100, Math.max(0, contextInfo.percent));
+  const R = 11;
+  const C = 2 * Math.PI * R;
+  const dash = (pct / 100) * C;
+  const title = `上下文 ${contextInfo.estimated_tokens} / ${contextInfo.threshold_tokens} tok (${pct.toFixed(0)}%) · 点击压缩`;
   return (
-    <div className="token-usage-bar">
-      <div className="token-usage-bar-fill" style={{ width: `${pct}%` }} data-approaching={String(contextInfo.approaching)} />
-      <span className="token-usage-bar-text">
-        {contextInfo.estimated_tokens} / {contextInfo.threshold_tokens} tok ({pct.toFixed(0)}%)
-      </span>
-      <button className="token-usage-bar-compress" onClick={onCompress} disabled={isCompressing} title="压缩上下文">
-        {isCompressing ? '压缩中…' : '压缩'}
-      </button>
-      {savedFlash && <span className="token-usage-bar-flash">{savedFlash}</span>}
-    </div>
+    <button
+      type="button"
+      className={`token-ring ${contextInfo.approaching ? 'is-approaching' : ''} ${isCompressing ? 'is-compressing' : ''}`}
+      onClick={onCompress}
+      disabled={isCompressing}
+      title={title}
+      aria-label={title}
+    >
+      <svg width="28" height="28" viewBox="0 0 28 28" className="token-ring-svg">
+        <circle className="token-ring-track" cx="14" cy="14" r={R} fill="none" strokeWidth="3" />
+        <circle
+          className="token-ring-fill"
+          cx="14" cy="14" r={R} fill="none" strokeWidth="3"
+          strokeDasharray={`${dash} ${C}`}
+          strokeLinecap="round"
+          transform="rotate(-90 14 14)"
+        />
+      </svg>
+      <span className="token-ring-label">{isCompressing ? '…' : `${pct.toFixed(0)}`}</span>
+      {savedFlash && <span className="token-ring-flash">{savedFlash}</span>}
+    </button>
   );
 }
 
@@ -266,19 +310,10 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
 }) {
   const isUser = msg.role === 'user';
   const parts = splitCodeBlocks(msg.content || '');
-  const showName = isFirstInGroup;
-  const showAvatar = isLastInGroup; // avatar 只在每组最后一条显示
+  void isFirstInGroup;
   return (
     <div className={`chat-row chat-row--${isUser ? 'user' : 'agent'} ${isLastInGroup ? 'is-last' : ''}`}>
-      {/* 头像列: 始终占位保持气泡对齐, 非最后一条用空白 placeholder */}
-      <div className="chat-row-avatar">
-        {showAvatar ? <Avatar isUser={isUser} /> : <div className="chat-avatar-placeholder" />}
-      </div>
-
       <div className="chat-row-body">
-        {showName && (
-          <div className="chat-row-name">{isUser ? USER_NAME : AGENT_NAME}</div>
-        )}
         <div className={`chat-bubble chat-bubble--${isUser ? 'user' : 'agent'} chat-bubble--status-${msg.status}`}>
           {!isUser && msg.thinking && (
             <details className="chat-thinking" open={thinkingExpanded}>
@@ -286,6 +321,71 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
                 💭 思考过程
               </summary>
               <pre>{msg.thinking}</pre>
+            </details>
+          )}
+          {!isUser && msg.trace && msg.trace.length > 0 && (
+            <details className="chat-trace" open={msg.status === 'streaming'}>
+              <summary>
+                🔎 任务过程 · {msg.trace.filter((s) => s.kind === 'tool_call').length} 次工具调用
+              </summary>
+              <ol className="chat-trace-list">
+                {msg.trace.map((step, idx) => {
+                  if (step.kind === 'text') {
+                    return (
+                      <li key={idx} className="chat-trace-step chat-trace-step--text">
+                        <span className="chat-trace-icon">📝</span>
+                        <div className="chat-trace-body">{step.content}</div>
+                      </li>
+                    );
+                  }
+                  if (step.kind === 'tool_call') {
+                    const argsPreview = step.args && Object.keys(step.args).length > 0
+                      ? Object.entries(step.args).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ')
+                      : '';
+                    return (
+                      <li key={idx} className="chat-trace-step chat-trace-step--call">
+                        <span className="chat-trace-icon">{step.emoji || '⚙️'}</span>
+                        <div className="chat-trace-body">
+                          <span className="chat-trace-tool">{step.tool_name}</span>
+                          {argsPreview && <span className="chat-trace-args">({argsPreview})</span>}
+                        </div>
+                      </li>
+                    );
+                  }
+                  if (step.kind === 'tool_result') {
+                    const hasFull = !!(step.result_full && step.result_full.trim() && step.result_full.trim() !== (step.preview || '').trim());
+                    return (
+                      <li key={idx} className="chat-trace-step chat-trace-step--result">
+                        <span className="chat-trace-icon">✅</span>
+                        <div className="chat-trace-body">
+                          <span className="chat-trace-tool">{step.tool_name}</span>
+                          {typeof step.duration === 'number' && <span className="chat-trace-duration">{step.duration.toFixed(1)}s</span>}
+                          {hasFull ? (
+                            <details className="chat-trace-detail">
+                              <summary>
+                                <span className="chat-trace-preview-inline">{step.preview}</span>
+                                <span className="chat-trace-expand-hint">展开完整结果</span>
+                              </summary>
+                              <pre className="chat-trace-preview chat-trace-preview--full">{step.result_full}</pre>
+                            </details>
+                          ) : (
+                            step.preview && <pre className="chat-trace-preview">{step.preview}</pre>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  }
+                  return (
+                    <li key={idx} className="chat-trace-step chat-trace-step--error">
+                      <span className="chat-trace-icon">⚠️</span>
+                      <div className="chat-trace-body">
+                        <span className="chat-trace-tool">{step.tool_name}</span>
+                        <span className="chat-trace-args">{step.content}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
             </details>
           )}
           {parts.map((p, i) => p.type === 'code'
@@ -312,9 +412,19 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
           {msg.status === 'streaming' && !msg.content && !msg.progressLabel && (
             <span className="chat-bubble-cursor" />
           )}
-          {!isUser && msg.needsContinue && (
+          {!isUser && (msg.needsContinue || msg.endedBy) && (
             <div className="chat-bubble-progress">
-              {msg.stopReason || '长任务达到单次执行上限，可继续执行。'}
+              {msg.stopReason
+                ? msg.stopReason
+                : msg.endedBy === 'budget'
+                  ? '本次输出达到预算上限，可继续。'
+                  : msg.endedBy === 'ask'
+                    ? '当前流程等待用户回答后继续。'
+                    : msg.endedBy === 'evidence_missing'
+                      ? '任务缺少交付证据，已提前停止。'
+                      : msg.endedBy === 'tool_required_retry_exhausted'
+                        ? '连续多轮未成功调用工具，已停止。'
+                        : '长任务达到单次执行上限，可继续执行。'}
             </div>
           )}
         </div>
@@ -324,41 +434,6 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
             <button className="chat-row-delete" onClick={() => onDelete(msg.id)} title="删除消息" aria-label="删除消息">×</button>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ── Chat Header ─────────────────────────────────────────
-function ChatHeader({ isStreaming, messageCount }: {
-  isStreaming: boolean;
-  messageCount: number;
-}) {
-  return (
-    <div className="chat-header">
-      <div className="chat-header-avatar">
-        <div className="chat-avatar chat-avatar--agent chat-avatar--header">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" y1="19" x2="12" y2="22" />
-          </svg>
-        </div>
-        <span className={`chat-header-status ${isStreaming ? 'is-streaming' : 'is-online'}`} />
-      </div>
-      <div className="chat-header-info">
-        <div className="chat-header-name">{AGENT_NAME}</div>
-        <div className="chat-header-subtitle">
-          {isStreaming ? (
-            <span className="chat-header-typing">正在输入…</span>
-          ) : (
-            <span className="chat-header-online">● 在线</span>
-          )}
-        </div>
-      </div>
-      <div className="chat-header-meta">
-        <ThemeSwitcher />
-        <span className="chat-header-count">{messageCount} 条消息</span>
       </div>
     </div>
   );
@@ -518,11 +593,6 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
       onDragLeave={(e) => { if (e.currentTarget === e.target) setIsDraggingFile(false); }}
       onDrop={handleDrop}
     >
-      <ChatHeader
-        isStreaming={isStreaming}
-        messageCount={messages.length}
-      />
-
       {errorMessage && (
         <div className="chat-error">
           <span>{errorMessage}</span>
@@ -666,13 +736,6 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
         </div>
       )}
 
-      <TokenUsageBar
-        contextInfo={contextInfo}
-        isCompressing={isCompressing}
-        savedFlash={savedFlash}
-        onCompress={() => handleCompress(false)}
-      />
-
       <div className="chat-input">
         {isDraggingFile && <div className="chat-drop-overlay">松开以上传附件</div>}
         {pendingAttachments.length > 0 && (
@@ -687,15 +750,6 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
           </div>
         )}
         <div className="chat-input-box">
-          <button
-            className="chat-attach-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading || isLoading}
-            title="上传附件"
-            aria-label="上传附件"
-          >
-            {isUploading ? '…' : '+'}
-          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -714,12 +768,32 @@ function ModernChatPanel({ initialSessionId }: ModernChatPanelProps) {
             disabled={isLoading && !isStreaming}
             rows={1}
           />
-          <div>
-            {isStreaming ? (
-              <button className="chat-stop-btn" onClick={handleStop} title="停止" aria-label="停止生成">■</button>
-            ) : (
-              <button className="chat-send-btn" onClick={handleSendClick} disabled={(!inputValue.trim() && pendingAttachments.length === 0) || isLoading} title="发送" aria-label="发送">→</button>
-            )}
+          <div className="chat-input-toolbar">
+            <div className="chat-input-toolbar-left">
+              <button
+                className="chat-attach-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading || isLoading}
+                title="上传附件"
+                aria-label="上传附件"
+              >
+                {isUploading ? '…' : '+'}
+              </button>
+              <ComposerModelControl />
+              <TokenUsageRing
+                contextInfo={contextInfo}
+                isCompressing={isCompressing}
+                savedFlash={savedFlash}
+                onCompress={() => handleCompress(false)}
+              />
+            </div>
+            <div className="chat-input-toolbar-right">
+              {isStreaming ? (
+                <button className="chat-stop-btn" onClick={handleStop} title="停止" aria-label="停止生成">■</button>
+              ) : (
+                <button className="chat-send-btn" onClick={handleSendClick} disabled={(!inputValue.trim() && pendingAttachments.length === 0) || isLoading} title="发送" aria-label="发送">↑</button>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -1,0 +1,255 @@
+/* SettingsView — 高级简约双栏设置 */
+.settings-view {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  width: 100%;
+  background: var(--bg-primary);
+}
+
+/* ── 左侧分组导航 ── */
+.settings-nav {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 14px 16px;
+  gap: 14px;
+  border-right: 1px solid var(--border-light);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+.settings-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.settings-back:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.settings-search {
+  width: 100%;
+  padding: 9px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.settings-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.settings-search::placeholder { color: var(--text-muted); }
+
+.settings-nav-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-nav-group { display: flex; flex-direction: column; gap: 2px; }
+.settings-nav-grouptitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 2px 12px 6px;
+}
+.settings-nav-item {
+  position: relative;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 9px 14px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.settings-nav-item:hover { color: var(--text-primary); background: var(--bg-hover); }
+.settings-nav-item.is-active {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  font-weight: 600;
+}
+.settings-nav-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 4px; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 16px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+
+/* ── 右侧内容 ── */
+.settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+.set-content {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 48px 56px 80px;
+  animation: settingsFade 0.28s ease;
+}
+@keyframes settingsFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.set-h2 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.set-lede {
+  font-size: 13.5px;
+  color: var(--text-tertiary);
+  margin-bottom: 24px;
+}
+.set-section-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 32px 0 10px;
+}
+.set-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 4px 20px;
+  box-shadow: var(--shadow-sm);
+}
+.set-divider { height: 1px; background: var(--border-light); }
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 17px 0;
+}
+.set-row-text { min-width: 0; }
+.set-row-title { font-size: 14.5px; font-weight: 600; color: var(--text-primary); }
+.set-row-desc { font-size: 12.5px; color: var(--text-tertiary); margin-top: 4px; line-height: 1.55; }
+.set-row-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  padding: 5px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+}
+.set-kbd {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+/* toggle */
+.set-toggle {
+  flex-shrink: 0;
+  width: 44px;
+  height: 26px;
+  border-radius: var(--r-full);
+  border: none;
+  background: var(--border-hover);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--t-normal);
+}
+.set-toggle.is-on { background: var(--accent); }
+.set-toggle-knob {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--t-normal);
+}
+.set-toggle.is-on .set-toggle-knob { transform: translateX(18px); }
+
+/* 主题网格 */
+.set-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.set-theme-card {
+  position: relative;
+  text-align: left;
+  border: 1.5px solid var(--border);
+  background: var(--bg-card);
+  border-radius: var(--r-xl);
+  padding: 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+}
+.set-theme-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.set-theme-card.is-active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.set-theme-swatch { height: 52px; border-radius: var(--r-lg); }
+.set-theme-name { font-size: 14.5px; font-weight: 700; color: var(--text-primary); }
+.set-theme-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
+.set-theme-check {
+  position: absolute;
+  top: 14px; right: 16px;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* 嵌入的既有面板: 铺满内容区, 不再左挤/右侧空白 */
+.set-embed {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.set-embed > * {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+/* 让内部网格铺满可用宽度 */
+.set-embed .profile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}

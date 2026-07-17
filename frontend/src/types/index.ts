@@ -9,6 +9,23 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 /** 消息状态枚举 */
 export type MessageStatus = 'sending' | 'streaming' | 'completed' | 'error' | 'waiting';
 
+/** Agent 中间过程步骤 (类似 Codex 展示的可追溯任务时间线) */
+export type TraceStepKind = 'text' | 'tool_call' | 'tool_result' | 'tool_error';
+
+export interface TraceStep {
+    kind: TraceStepKind;
+    /** 用户可读的文字内容 (text 段落, 或 tool 结果预览) */
+    content?: string;
+    tool_name?: string;
+    args?: Record<string, any>;
+    preview?: string;
+    /** 完整结果 (后端截断到 4KB), 用于二级展开查看 */
+    result_full?: string;
+    emoji?: string;
+    duration?: number;
+    timestamp: number;
+}
+
 /** 对话消息接口 */
 export interface Message {
     id: string;
@@ -19,6 +36,8 @@ export interface Message {
     error?: string;
     /** 提取的思考过程内容 */
     thinking?: string;
+    /** Agent 完成本条回复过程中的中间步骤 (工具调用/中间叙述), 供 UI 折叠成"任务过程"面板 */
+    trace?: TraceStep[];
     toolsUsed?: string[];
     commandsExecuted?: string[];
     artifactPreviews?: ArtifactPreview[];
@@ -27,6 +46,21 @@ export interface Message {
     needsContinue?: boolean;
     stopReason?: string;
     continuePrompt?: string;
+    endedBy?: 'budget' | 'ask' | 'evidence_missing' | 'tool_required_retry_exhausted' | 'manual_stop' | 'unknown';
+    /** tool 消息的结构化载荷（刷新后可恢复展示） */
+    toolMeta?: {
+        tool_call_id?: string;
+        tool_name?: string;
+        emoji?: string;
+        success?: boolean;
+        content?: string;
+        result_full?: string;
+        error?: string;
+        error_type?: string;
+        suggestion?: string;
+        elapsed?: number;
+        artifact_previews?: ArtifactPreview[];
+    };
     /** 流式输出过程中后端推送的阶段描述（如 "正在思考..."），渲染在气泡里 */
     progressLabel?: string;
 }
@@ -68,6 +102,8 @@ export interface ToolEvent {
     tool_name: string;
     arguments?: Record<string, any>;
     result_preview?: string;
+    /** 工具完成事件的完整结果 (截断到 4KB) */
+    result_full?: string;
     duration?: number;
     error?: boolean;
     emoji: string;
@@ -92,6 +128,7 @@ export interface StreamEvent {
     tool_name?: string;
     arguments?: Record<string, any>;
     result_preview?: string;
+    result_full?: string;
     duration?: number;
     choices?: string[];
     question?: string;
@@ -116,6 +153,7 @@ export interface StreamEvent {
     needs_continue?: boolean;
     stop_reason?: string;
     continue_prompt?: string;
+    ended_by?: 'budget' | 'ask' | 'evidence_missing' | 'tool_required_retry_exhausted' | 'manual_stop' | 'unknown';
 }
 
 export interface ArtifactPreview {
@@ -124,6 +162,7 @@ export interface ArtifactPreview {
     kind: 'web' | 'image';
     preview_url: string;
     open_url: string;
+    render_mode?: 'iframe' | 'image';
 }
 
 export interface Attachment {
@@ -164,7 +203,7 @@ export interface SSECallbacks {
     /** 工具开始执行 */
     onToolStart?: (toolName: string, args: Record<string, any>, emoji: string) => void;
     /** 工具执行完成 */
-    onToolComplete?: (toolName: string, preview: string, duration: number, emoji: string) => void;
+    onToolComplete?: (toolName: string, preview: string, duration: number, emoji: string, resultFull?: string) => void;
     /** 工具执行出错 */
     onToolError?: (toolName: string, error: string, emoji: string) => void;
     /** 工具执行反馈（如已调用工具列表） */

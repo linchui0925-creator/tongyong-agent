@@ -2,37 +2,29 @@
  * TongYong Agent — Main Application
  */
 import { useState, useEffect, useCallback } from 'react'
+import { useTheme } from './theme/ThemeContext'
+import { themes } from './theme/themes'
 import ModernChatPanel from './components/Chat/ModernChatPanel'
-import MemoryPanel from './components/Memory/MemoryPanel'
 import SessionSidebar from './components/Session/SessionSidebar'
-import ModelBadge from './components/LLM/ModelBadge'
 import ModelSelector from './components/LLM/ModelSelector'
-import ProfileSelector from './components/LLM/ProfileSelector'
-import DreamingPanel from './components/Dreaming/DreamingPanel'
-import { SkillManagement } from './components/Skills/SkillManagement'
-import PersonalityPanel from './components/Personality/PersonalityPanel'
-import EvaluationDashboard from './components/Evaluation/EvaluationDashboard'
+import SettingsView from './components/Settings/SettingsView'
 import { TeamPanel } from './components/Team/TeamPanel'
+import { MCPMarketplace } from './components/Skills/MCPMarketplace'
 import ErrorBoundary from './components/common/ErrorBoundary'
-import { getSessions } from './api/memory'
+import { ThemeSwitcher } from './components/Theme/ThemeSwitcher'
+import SplashCursor from './components/effects/SplashCursor'
+import TargetCursor from './components/effects/TargetCursor'
+import { getSessions, createSession } from './api/memory'
 import './App.css'
 
-type Tab = 'chat' | 'memory' | 'skills' | 'personality' | 'dreaming' | 'profiles' | 'evaluation' | 'team'
-
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'chat', label: '对话' },
-  { key: 'memory', label: '记忆' },
-  { key: 'skills', label: '技能' },
-  { key: 'personality', label: '人格' },
-  { key: 'dreaming', label: '梦境' },
-  { key: 'profiles', label: 'Profiles' },
-  { key: 'evaluation', label: '评估' },
-  { key: 'team', label: '团队' },
-]
+type View = 'chat' | 'team' | 'settings' | 'mcp'
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('chat')
+  const [view, setView] = useState<View>('chat')
   const [currentSessionId, setCurrentSessionId] = useState<string>('')
+  const [sessionReload, setSessionReload] = useState(0)
+  const { theme } = useTheme()
+  const accent = themes[theme].tokens['--accent']
 
   const loadSessions = useCallback(async () => {
     try {
@@ -47,70 +39,96 @@ function App() {
     loadSessions()
   }, [loadSessions])
 
-  useEffect(() => {
-    const onNav = (e: Event) => {
-      const detail = (e as CustomEvent<typeof activeTab>).detail
-      if (detail) setActiveTab(detail)
+  const refreshSessions = useCallback(() => setSessionReload(v => v + 1), [])
+
+  const handleNewChat = useCallback(async () => {
+    try {
+      const name = `新对话 ${new Date().toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+      const session = await createSession(name)
+      setCurrentSessionId(session.id)
+      setView('chat')
+      refreshSessions()
+    } catch (error) {
+      console.error('新建会话失败:', error)
     }
-    window.addEventListener('navigate:tab', onNav as EventListener)
-    return () => window.removeEventListener('navigate:tab', onNav as EventListener)
-  }, [])
+  }, [refreshSessions])
 
   const handleSessionSelect = (sessionId: string) => {
     setCurrentSessionId(sessionId)
+    setView('chat')
+  }
+
+  // 设置是独立整页, 不与主会话共用侧边栏布局
+  if (view === 'settings') {
+    return (
+      <div className="app app--settings">
+        <ErrorBoundary>
+          <SettingsView
+            currentSessionId={currentSessionId}
+            onSessionChange={setCurrentSessionId}
+            onRefreshSessions={refreshSessions}
+            onBackToChat={() => setView('chat')}
+          />
+        </ErrorBoundary>
+        <ModelSelector defaultHubVisible={false} />
+      </div>
+    )
   }
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>TongYong</h1>
-        <nav className="app-nav">
-          {TABS.map(tab => (
-            <button
-              key={tab.key}
-              className={activeTab === tab.key ? 'active' : ''}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-        <div className="app-header-actions">
-          <ModelBadge />
-        </div>
-      </header>
-
+      <SplashCursor RAINBOW_MODE={false} COLOR={accent} SPLAT_RADIUS={0.16} DENSITY_DISSIPATION={4.2} />
+      <TargetCursor targetSelector=".cursor-target, .btn, .theme-switcher-trigger" cursorColor={accent} cursorColorOnTarget="#ffffff" spinDuration={3} hideDefaultCursor={false} />
       <div className="app-container">
         <aside className="app-sidebar">
+          <div className="sidebar-brand">
+            <div className="brand-text"><h1>TongYong</h1></div>
+            <ThemeSwitcher />
+          </div>
+
+          <div className="sidebar-actions">
+            <button className="sidebar-newchat cursor-target" onClick={handleNewChat}>
+              <span>新建对话</span>
+            </button>
+            <button
+              className={`sidebar-newchat sidebar-newchat--ghost cursor-target ${view === 'team' ? 'is-active' : ''}`}
+              onClick={() => setView('team')}
+            >
+              <span>团队</span>
+            </button>
+            <button
+              className={`sidebar-newchat sidebar-newchat--ghost cursor-target ${view === 'mcp' ? 'is-active' : ''}`}
+              onClick={() => setView('mcp')}
+            >
+              <span>MCP</span>
+            </button>
+          </div>
+
+          <div className="sidebar-divider" />
+
           <div className="sidebar-section">
             <SessionSidebar
               currentSessionId={currentSessionId}
               onSessionSelect={handleSessionSelect}
+              reloadSignal={sessionReload}
             />
           </div>
+
+          <button
+            className="sidebar-foot-item cursor-target"
+            onClick={() => setView('settings')}
+          >
+            <span>设置</span>
+          </button>
         </aside>
 
         <main className="app-main">
-          {/* ErrorBoundary 只包面板区：单个 tab 组件崩了不会把 sidebar + header 一起带走 */}
           <ErrorBoundary>
-            {activeTab === 'chat' && (
+            {view === 'chat' && (
               <ModernChatPanel initialSessionId={currentSessionId} />
             )}
-            {activeTab === 'memory' && (
-              <MemoryPanel
-                currentSessionId={currentSessionId}
-                onSessionChange={setCurrentSessionId}
-                onRefreshSessions={loadSessions}
-              />
-            )}
-            {activeTab === 'skills' && <SkillManagement />}
-            {activeTab === 'personality' && <PersonalityPanel />}
-            {activeTab === 'dreaming' && <DreamingPanel />}
-            {activeTab === 'profiles' && <ProfileSelector />}
-            {activeTab === 'evaluation' && (
-              <EvaluationDashboard currentSessionId={currentSessionId} />
-            )}
-            {activeTab === 'team' && <TeamPanel />}
+            {view === 'team' && <TeamPanel />}
+            {view === 'mcp' && <MCPMarketplace />}
           </ErrorBoundary>
         </main>
       </div>

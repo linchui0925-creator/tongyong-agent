@@ -2,34 +2,34 @@ import type React from 'react'
 
 // ── Warm Color Palette ─────────────────────────────────────────
 export const C = {
-  bg: '#FEF7F0',
-  sidebarBg: '#3D2B1F',
-  sidebarCard: '#4A3728',
-  card: '#FFFFFF',
-  accent: '#C4703A',
-  accentLight: '#F5E6D3',
-  amber: '#D97706',
-  amberBg: '#FEF3C7',
-  text: '#7C4A2D',
-  textLight: '#A0674A',
-  textMuted: '#B88B6A',
-  border: '#E8D5C4',
-  success: '#65A30D',
-  error: '#DC2626',
-  running: '#1D4ED8',
-  // Chat-specific (WeChat style)
-  chatBg: '#F5F0EB',
-  userBubble: '#A8D08D',
-  userBubbleText: '#4A3728',
-  agentBubble: '#FFFFFF',
-  agentBubbleBorder: '#E8D5C4',
-  sendBtn: '#8CB369',
+  bg: 'var(--bg-secondary)',
+  sidebarBg: 'var(--bg-inset)',
+  sidebarCard: 'var(--bg-tertiary)',
+  card: 'var(--bg-card)',
+  accent: 'var(--accent)',
+  accentLight: 'var(--accent-subtle)',
+  amber: 'var(--warning)',
+  amberBg: 'var(--warning-subtle)',
+  text: 'var(--text-primary)',
+  textLight: 'var(--text-secondary)',
+  textMuted: 'var(--text-tertiary)',
+  border: 'var(--border)',
+  success: 'var(--success)',
+  error: 'var(--danger)',
+  running: 'var(--accent)',
+  // Chat-specific
+  chatBg: 'var(--bg-primary)',
+  userBubble: 'var(--bubble-user-bg-end)',
+  userBubbleText: 'var(--bubble-user-text)',
+  agentBubble: 'var(--bubble-agent-bg)',
+  agentBubbleBorder: 'var(--bubble-agent-border)',
+  sendBtn: 'var(--accent)',
 }
 
 // ── Shared inline styles ─────────────────────────────────────
 export const inputStyle: React.CSSProperties = {
   padding: '7px 10px', border: `1px solid ${C.border}`, borderRadius: 8,
-  background: '#2A1F14', color: '#fff', fontSize: 13, width: '100%',
+  background: 'var(--bg-inset)', color: 'var(--text-primary)', fontSize: 13, width: '100%',
   boxSizing: 'border-box',
 }
 

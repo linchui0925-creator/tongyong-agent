@@ -115,14 +115,14 @@ function RoundDivider({ round }: { round: number }) {
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '16px 0 8px', userSelect: 'none',
     }}>
-      <div style={{ flex: 1, height: 1, background: '#D5CBC2' }} />
+      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
       <span style={{
         fontSize: 11, color: C.textMuted, fontWeight: 500,
         background: C.chatBg, padding: '2px 10px', borderRadius: 10,
       }}>
         第 {round} 轮
       </span>
-      <div style={{ flex: 1, height: 1, background: '#D5CBC2' }} />
+      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
     </div>
   )
 }
@@ -134,7 +134,7 @@ function TimeSeparator({ time }: { time: string }) {
       textAlign: 'center', padding: '8px 0 4px',
     }}>
       <span style={{
-        fontSize: 11, color: '#999', background: '#DAD5CE',
+        fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)',
         padding: '2px 8px', borderRadius: 4,
       }}>
         {formatTimeShort(time)}
@@ -183,7 +183,7 @@ function TypingIndicator() {
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, padding: '4px 0' }}>
       <div style={{
         width: 40, height: 40, borderRadius: 6,
-        background: '#D5CBC2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 14, flexShrink: 0,
       }}>
         ⏳
@@ -311,7 +311,7 @@ function MessageBubble({ msg, isUser, isFirstInGroup, isLastInGroup }: {
                 {msg.cause_by}
               </span>
             )}
-            <span style={{ fontSize: 10, color: '#B0A89E' }}>{formatTime(msg.created_at)}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{formatTime(msg.created_at)}</span>
           </div>
         )}
       </div>
@@ -356,10 +356,10 @@ export function MessageList({ messages, isRunning }: { messages: MessageItem[]; 
       }}>
         <div style={{
           width: 80, height: 80, borderRadius: 20,
-          background: '#E8E0D8', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 36,
         }}>💬</div>
-        <div style={{ fontSize: 14, color: '#999', textAlign: 'center', lineHeight: 1.8 }}>
+        <div style={{ fontSize: 14, color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.8 }}>
           添加 Agent，输入任务<br/>即可开始协作
         </div>
       </div>

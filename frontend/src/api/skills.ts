@@ -15,6 +15,8 @@ const api = axios.create({
 export interface Skill {
     id: string
     name: string
+    // W5-3: frontmatter 友好名 (中文), 缺省回退到 name
+    display_name?: string
     content: string
     category: string
     usage_count: number

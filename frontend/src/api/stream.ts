@@ -29,12 +29,14 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             tool_name: data.tool_name,
             arguments: data.arguments,
             result_preview: data.result_preview,
+            result_full: data.result_full,
             duration: data.duration,
             choices: data.choices,
             question: data.question,
             question_id: data.question_id,
             commands_executed: data.commands_executed,
             artifact_previews: data.artifact_previews,
+            tools_used: data.tools_used,
             processing_time: data.processing_time,
             usage: data.usage,
             round: data.round,
@@ -43,11 +45,38 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             needs_continue: data.needs_continue,
             stop_reason: data.stop_reason,
             continue_prompt: data.continue_prompt,
+            ended_by: data.ended_by,
         };
     } catch (error) {
         console.error('解析SSE事件数据失败:', error);
         return null;
     }
+}
+
+function parseSseBuffer(buffer: string): { events: Array<{ eventType: string; data: string }>; remainder: string } {
+    const events: Array<{ eventType: string; data: string }> = [];
+    const parts = buffer.split(/\r?\n\r?\n/);
+    const remainder = parts.pop() || '';
+
+    for (const part of parts) {
+        const block = part.trim();
+        if (!block) continue;
+        const lines = block.split(/\r?\n/);
+        let eventType = 'message';
+        const dataLines: string[] = [];
+        for (const line of lines) {
+            if (line.startsWith('event:')) {
+                eventType = line.slice(6).trim() || 'message';
+            } else if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5).trimStart());
+            }
+        }
+        if (dataLines.length > 0) {
+            events.push({ eventType, data: dataLines.join('\n') });
+        }
+    }
+
+    return { events, remainder };
 }
 
 /**
@@ -96,13 +125,19 @@ export function streamChat(
     }
 
     // 构建请求数据
+    // 推理强度 / 思考模式 (TongYong 新增, 存 localStorage; 后端不识别也不影响)
+    const reasoningEffort = (typeof localStorage !== 'undefined' && localStorage.getItem('tongyong.reasoning_effort')) || undefined;
+    const thinkingMode = (typeof localStorage !== 'undefined' && localStorage.getItem('tongyong.thinking_mode')) || undefined;
+
     const requestData = {
         message: message.trim(),
         session_id: sessionId || undefined,
         use_memory: useMemory,
         clarify_question_id: clarifyQuestionId || undefined,
         clarify_answer: clarifyAnswer || undefined,
-        attachment_ids: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined
+        attachment_ids: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
+        reasoning_effort: reasoningEffort,
+        thinking_mode: thinkingMode
     };
 
     console.log('[流式聊天请求]', requestData);
@@ -134,38 +169,28 @@ export function streamChat(
             reader.read().then(({ done, value }) => {
                 if (done) {
                     console.log('[流式响应完成]');
+                    const remaining = buffer.trim();
+                    if (remaining) {
+                        const parsed = parseSseBuffer(remaining + '\n\n');
+                        for (const item of parsed.events) {
+                            const event = parseEventData({ data: item.data } as MessageEvent);
+                            if (event) handleStreamEvent(event, item.eventType, callbacks);
+                        }
+                    }
                     return;
                 }
 
                 buffer += decoder.decode(value, { stream: true });
                 console.log('[SSE原始数据]', buffer);
-                
-                // 处理缓冲区中的完整行
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
 
-                for (let i = 0; i < lines.length; i++) {
-                    const trimmedLine = lines[i].trim();
-                    if (!trimmedLine) continue;
+                const parsed = parseSseBuffer(buffer);
+                buffer = parsed.remainder;
 
-                    if (trimmedLine.startsWith('event:')) {
-                        const eventType = trimmedLine.slice(6).trim();
-                        // Read the next line which should be the data line
-                        const nextLine = lines[i + 1]?.trim();
-                        if (nextLine?.startsWith('data:')) {
-                            const dataLine = nextLine.slice(5);
-                            const event = parseEventData({ data: dataLine } as MessageEvent);
-                            if (event) {
-                                handleStreamEvent(event, eventType, callbacks);
-                            }
-                            i++; // Skip the data line — already handled
-                        }
-                    } else if (trimmedLine.startsWith('data:')) {
-                        const dataLine = trimmedLine.slice(5);
-                        const event = parseEventData({ data: dataLine } as MessageEvent);
-                        if (event) {
-                            handleStreamEvent(event, event.type, callbacks);
-                        }
+                for (const item of parsed.events) {
+                    const event = parseEventData({ data: item.data } as MessageEvent);
+                    if (event) {
+                        const normalizedType = item.eventType === 'message' ? event.type : item.eventType;
+                        handleStreamEvent(event, normalizedType, callbacks);
                     }
                 }
 
@@ -183,7 +208,7 @@ export function streamChat(
         }
         
         console.error('[流式请求错误]', error);
-        callbacks.onError?.(error.message || '网络错误');
+        callbacks.onError?.(friendlyErrorMessage(error.message || '网络错误'));
     });
 
     return controller;
@@ -192,6 +217,26 @@ export function streamChat(
 /**
  * 处理流式事件
  */
+function friendlyErrorMessage(raw: string): string {
+    const msg = String(raw || '');
+    if (/\b401\b|unauthorized|invalid api key|api key/i.test(msg)) {
+        return '模型服务鉴权失败：API Key 无效或已失效，请在「模型切换」中检查配置。';
+    }
+    if (/\b402\b|insufficient|balance|欠费|余额/i.test(msg)) {
+        return '模型服务余额不足：请充值或切换到其它可用模型。';
+    }
+    if (/\b403\b|forbidden|not allowed|modelnotallowed|模型不允许/i.test(msg)) {
+        return '模型服务暂不可用：当前 API Key 无权访问该模型，请切换模型或更新 Key。';
+    }
+    if (/\b429\b|rate limit|too many/i.test(msg)) {
+        return '请求过于频繁：已触发模型服务限流，请稍后再试。';
+    }
+    if (/\b5\d\d\b|internal server|bad gateway|unavailable/i.test(msg)) {
+        return '模型服务暂时异常：请稍后重试或切换模型。';
+    }
+    return msg || '未知错误';
+}
+
 function handleStreamEvent(
     event: StreamEvent,
     eventType: string,
@@ -214,7 +259,7 @@ function handleStreamEvent(
             break;
 
         case 'tool_complete':
-            callbacks.onToolComplete?.(event.tool_name || '', event.result_preview || '', event.duration || 0, event.emoji || '⚡');
+            callbacks.onToolComplete?.(event.tool_name || '', event.result_preview || '', event.duration || 0, event.emoji || '⚡', event.result_full);
             if (event.result_preview) {
                 callbacks.onProgress?.(`${event.emoji || '⚡'} ${event.tool_name || ''} 完成: ${event.result_preview}`);
             }
@@ -281,7 +326,7 @@ function handleStreamEvent(
 
         case 'error':
             console.error('[流式错误]', event.error);
-            callbacks.onError?.(event.error || '未知错误');
+            callbacks.onError?.(friendlyErrorMessage(event.error || '未知错误'));
             break;
 
         default:

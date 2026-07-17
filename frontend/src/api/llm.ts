@@ -22,6 +22,13 @@ export interface LLMSettings {
     default_provider: string;
     available_providers: string[];
     current_config: ModelConfig;
+    runtime?: {
+        provider?: string;
+        model?: string;
+        api_format?: string;
+        api_base?: string;
+        request_config?: Record<string, unknown>;
+    };
 }
 
 export interface ConfigUpdateResult {
@@ -143,6 +150,13 @@ export async function getCurrentModel(): Promise<{
   color?: string;
   model?: string;
   api_key_configured?: boolean;
+  provider_profile_id?: string;
+  runtime?: {
+    provider?: string;
+    model?: string;
+    api_format?: string;
+    api_base?: string;
+  };
 }> {
     const response = await fetch(`${API_BASE}/current`);
     if (!response.ok) {

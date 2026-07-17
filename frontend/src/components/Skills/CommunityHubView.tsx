@@ -292,8 +292,12 @@ export const CommunityHubView: React.FC = () => {
                         gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
                         gap: '12px',
                     }}>
-                        {filteredSkills.map(s => (
-                            <SkillCard key={s.name} skill={s} onOpen={setDetailSkill} />
+                        {filteredSkills.map((s, index) => (
+                            <SkillCard
+                                key={`${s.name}-${s.source_repo || 'unknown'}-${s.version || '0.0.0'}-${index}`}
+                                skill={s}
+                                onOpen={setDetailSkill}
+                            />
                         ))}
                     </div>
                 )}

@@ -63,8 +63,8 @@ export function SessionList({
               {s.name}
             </span>
             <span style={{
-              fontSize: 10, color: '#A0674A',
-              background: '#FFFFFF18', borderRadius: 4, padding: '1px 5px',
+              fontSize: 10, color: 'var(--text-tertiary)',
+              background: 'var(--bg-hover)', borderRadius: 4, padding: '1px 5px',
             }}>
               {s.status === 'idle' ? '空闲' : s.status}
             </span>
@@ -79,7 +79,7 @@ export function SessionList({
           </div>
         ))}
         {sessions.length === 0 && (
-          <div style={{ color: '#A0674A', fontSize: 12, textAlign: 'center', padding: 12 }}>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: 12, textAlign: 'center', padding: 12 }}>
             暂无会话
           </div>
         )}

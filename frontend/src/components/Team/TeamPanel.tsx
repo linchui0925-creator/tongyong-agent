@@ -48,7 +48,7 @@ function StatusBar({ status, currentRound, totalRounds, messageCount, lastError 
   )
   if (status === 'error') return (
     <div style={{
-      background: '#FEF2F2', border: '1px solid #FECACA',
+      background: 'var(--danger-subtle)', border: '1px solid #FECACA',
       borderRadius: 8, padding: '6px 14px', animation: 'slideDown 0.3s ease',
     }}>
       <span style={{ fontSize: 12, color: '#991B1B' }}>❌ 错误: {lastError}</span>
@@ -69,8 +69,8 @@ function ModeSelector({ mode, onChange }: { mode: string; onChange: (m: string) 
         <button key={o.key} onClick={() => onChange(o.key)} style={{
           flex: 1, padding: '6px 8px', borderRadius: 8, cursor: 'pointer',
           fontSize: 12, fontWeight: 600, border: 'none',
-          background: mode === o.key ? C.accent : '#FFFFFF18',
-          color: mode === o.key ? '#fff' : '#A0674A',
+          background: mode === o.key ? C.accent : 'var(--bg-hover)',
+          color: mode === o.key ? '#fff' : 'var(--text-tertiary)',
           transition: 'all 0.15s',
         }}>
           <div>{o.label}</div>
@@ -238,17 +238,17 @@ export const TeamPanel: React.FC = () => {
       {/* Header */}
       <div style={{
         padding: '12px 20px',
-        background: `linear-gradient(135deg, ${C.sidebarBg} 0%, #2A1F14 100%)`,
+        background: C.sidebarBg,
         display: 'flex', alignItems: 'center', gap: 10,
         borderBottom: `2px solid ${C.accent}`,
       }}>
         <div style={{ fontSize: 20 }}>🔥</div>
         <div>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Multi-Agent Team</div>
-          <div style={{ fontSize: 11, color: '#A0674A' }}>智能协作 · 实时对话</div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>智能协作 · 实时对话</div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: '#A0674A' }}>模式</span>
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>模式</span>
           <ModeSelector mode={configMode} onChange={setConfigMode} />
         </div>
       </div>
@@ -263,8 +263,8 @@ export const TeamPanel: React.FC = () => {
             {(['sessions', 'market'] as const).map(tab => (
               <button key={tab} onClick={() => setSidebarTab(tab)} style={{
                 flex: 1, padding: '8px 0', cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                background: sidebarTab === tab ? '#2A1F14' : 'transparent',
-                color: sidebarTab === tab ? '#D4A574' : '#A0674A',
+                background: sidebarTab === tab ? 'var(--bg-inset)' : 'transparent',
+                color: sidebarTab === tab ? 'var(--accent)' : 'var(--text-tertiary)',
                 border: 'none', borderBottom: sidebarTab === tab ? `2px solid ${C.accent}` : '2px solid transparent',
                 transition: 'all 0.15s', letterSpacing: 1, textTransform: 'uppercase',
               }}>
@@ -276,11 +276,11 @@ export const TeamPanel: React.FC = () => {
           {sidebarTab === 'sessions' ? (
             <>
               <div style={{ padding: '12px 12px 8px' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#A0674A', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>
                   会话
                 </div>
                 {loadingSessions ? (
-                  <div style={{ color: '#A0674A', fontSize: 13, padding: 8 }}>加载中...</div>
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: 13, padding: 8 }}>加载中...</div>
                 ) : (
                   <SessionList
                     sessions={sessions} activeId={activeSessionId}
@@ -288,7 +288,7 @@ export const TeamPanel: React.FC = () => {
                   />
                 )}
               </div>
-              <div style={{ height: 1, background: '#FFFFFF12', margin: '4px 12px' }} />
+              <div style={{ height: 1, background: 'var(--border-light)', margin: '4px 12px' }} />
               {activeSessionId && (
                 <div style={{ padding: '8px 12px', flex: 1, overflow: 'auto' }}>
                   <RoleList
@@ -317,7 +317,7 @@ export const TeamPanel: React.FC = () => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.chatBg }}>
           {/* Task Input */}
           <div style={{
-            background: '#fff', borderBottom: `1px solid ${C.border}`,
+            background: 'var(--bg-card)', borderBottom: `1px solid ${C.border}`,
             padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10,
           }}>
             <StatusBar
@@ -333,7 +333,7 @@ export const TeamPanel: React.FC = () => {
                 style={{
                   flex: 1, padding: '10px 14px',
                   border: `1.5px solid ${runStatus === 'running' ? C.sendBtn : C.border}`,
-                  borderRadius: 12, background: '#fff', color: C.text, fontSize: 13, lineHeight: 1.6,
+                  borderRadius: 12, background: 'var(--bg-inset)', color: C.text, fontSize: 13, lineHeight: 1.6,
                   resize: 'none', fontFamily: 'inherit',
                   boxShadow: runStatus === 'running' ? `0 0 0 3px ${C.sendBtn}22` : 'none',
                   transition: 'border 0.2s, box-shadow 0.2s',

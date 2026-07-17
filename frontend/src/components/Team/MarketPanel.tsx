@@ -522,7 +522,7 @@ function EditorModal({ agent, toolsData, allSkills, onSave, onClose }: {
 
           {/* Error */}
           {error && (
-            <div style={{ color: C.error, fontSize: 12, background: '#FEF2F2', borderRadius: 6, padding: '6px 10px' }}>
+            <div style={{ color: C.error, fontSize: 12, background: 'var(--danger-subtle)', borderRadius: 6, padding: '6px 10px' }}>
               {error}
             </div>
           )}
@@ -690,7 +690,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#D4A574' }}>📦 Agent 市场</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>📦 Agent 市场</span>
         <button onClick={() => { ensureToolsAndSkills(); setShowCreate(true) }} style={{
           background: C.accent, color: '#fff', border: 'none', borderRadius: 6,
           padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
@@ -708,7 +708,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
           placeholder="搜索 Agent..."
           style={{
             ...inputS, paddingLeft: 26, fontSize: 12,
-            background: '#2A1F14', color: '#fff', border: `1px solid ${C.accent}33`,
+            background: 'var(--bg-inset)', color: '#fff', border: `1px solid ${C.accent}33`,
             width: '100%',
           }}
         />
@@ -720,7 +720,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
         maxHeight: 320, overflowY: 'auto',
       }}>
         {loading ? (
-          <div style={{ color: '#A0674A', fontSize: 12, textAlign: 'center', padding: 12 }}>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: 12, textAlign: 'center', padding: 12 }}>
             加载中...
           </div>
         ) : error ? (
@@ -733,7 +733,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
             }}>重试</button>
           </div>
         ) : filtered.length === 0 ? (
-          <div style={{ color: '#A0674A', fontSize: 12, textAlign: 'center', padding: 12 }}>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: 12, textAlign: 'center', padding: 12 }}>
             {search ? '无匹配 Agent' : '市场暂无 Agent\n点击上方"新建"创建'}
           </div>
         ) : (
@@ -742,7 +742,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
             const tagCount = a.tags?.length || 0
             return (
               <div key={a.id} style={{
-                background: '#2A1F14', borderRadius: 8, padding: '8px 10px',
+                background: 'var(--bg-inset)', borderRadius: 8, padding: '8px 10px',
                 border: `1px solid ${C.accent}22`,
                 transition: 'border 0.15s',
               }}>
@@ -759,7 +759,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>
                       {a.name}
                     </div>
-                    <div style={{ fontSize: 10, color: '#A0674A', marginTop: 1, lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 1, lineHeight: 1.4 }}>
                       {a.profile ? (a.profile.length > 60 ? a.profile.slice(0, 60) + '...' : a.profile) : '无资料'}
                     </div>
                     <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
@@ -781,7 +781,7 @@ export function MarketPanel({ sessionId, onImportSuccess }: {
                       )}
                       {tagCount > 0 && (
                         <span style={{
-                          background: '#A0674A22', color: '#A0674A',
+                          background: '#A0674A22', color: 'var(--text-tertiary)',
                           fontSize: 9, padding: '1px 5px', borderRadius: 3,
                         }}>
                           {tagCount} 标签

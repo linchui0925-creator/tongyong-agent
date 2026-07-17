@@ -88,24 +88,147 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
   const lastEventTimeRef = useRef<number>(Date.now());
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const thinkingStartedRef = useRef<boolean>(false);
+  // 追踪 agent 中间过程 (工具调用+叙述), 用于 UI "任务过程"折叠面板
+  const traceRef = useRef<{ msgId: string | null; flushedLen: number; hasTool: boolean }>({
+    msgId: null, flushedLen: 0, hasTool: false,
+  });
+  const fullContentRef = useRef<string>('');
+
+  const pushTrace = useCallback((msgId: string, step: import('../types').TraceStep) => {
+    setMessages((prev) => prev.map((m) =>
+      m.id === msgId ? { ...m, trace: [...(m.trace || []), step] } : m
+    ));
+  }, []);
+
+  const flushPendingTextIntoTrace = useCallback((msgId: string) => {
+    const full = fullContentRef.current;
+    const st = traceRef.current;
+    if (st.msgId !== msgId) return;
+    const pending = full.slice(st.flushedLen)
+      .replace(/<think>[\s\S]*?<\/think>/g, '')
+      .trim();
+    if (pending) {
+      pushTrace(msgId, { kind: 'text', content: pending, timestamp: Date.now() });
+    }
+    st.flushedLen = full.length;
+  }, [pushTrace]);
 
   const loadMessages = useCallback(async (sid: string) => {
     if (!sid) return;
     try {
       const data = await getSessionMessages(sid);
+      const metaStart = '<<<TOOL_META_JSON>>>';
+      const metaEnd = '<<<TOOL_META_JSON_END>>>';
       const msgs: Message[] = (data.messages || []).map((m: any, i: number) => {
         const rawContent = m.content || '';
-        const cleanedForThink = rawContent.replace(/<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>/g, '');
+        const metaStartIdx = rawContent.indexOf(metaStart);
+        const metaEndIdx = rawContent.indexOf(metaEnd);
+        let toolsUsed: string[] | undefined;
+        let commandsExecuted: string[] | undefined;
+        let cleanedContent = rawContent;
+        if (metaStartIdx >= 0 && metaEndIdx > metaStartIdx) {
+          const metaJson = rawContent.slice(metaStartIdx + metaStart.length, metaEndIdx).trim();
+          try {
+            const parsed = JSON.parse(metaJson);
+            toolsUsed = Array.isArray(parsed.tools_used) ? parsed.tools_used : undefined;
+            commandsExecuted = Array.isArray(parsed.commands_executed) ? parsed.commands_executed : undefined;
+          } catch {
+            // ignore malformed metadata
+          }
+          cleanedContent = rawContent.slice(0, metaStartIdx).trim();
+        }
+        const cleanedForThink = cleanedContent.replace(/<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>/g, '');
         const thinkMatch = cleanedForThink.match(/<think>([\s\S]*?)<\/think>/);
         const thinking = thinkMatch ? thinkMatch[1] : '';
         const displayContent = cleanedForThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+        let toolMeta: Message['toolMeta'] | undefined;
+        let artifactPreviews: Message['artifactPreviews'] | undefined;
+        if (m.role === 'tool') {
+          try {
+            const parsed = JSON.parse(rawContent);
+            if (parsed && typeof parsed === 'object') {
+              toolMeta = {
+                tool_call_id: parsed.tool_call_id,
+                tool_name: parsed.tool_name,
+                emoji: parsed.emoji,
+                success: parsed.success,
+                content: parsed.content,
+                result_full: parsed.result_full,
+                error: parsed.error,
+                error_type: parsed.error_type,
+                suggestion: parsed.suggestion,
+                elapsed: parsed.elapsed,
+              };
+
+              const previews = Array.isArray(parsed.artifact_previews) ? parsed.artifact_previews : [];
+              if (previews.length > 0) {
+                artifactPreviews = previews
+                  .filter((item: any) => item && item.path && item.kind)
+                  .map((item: any) => ({
+                    path: String(item.path),
+                    name: String(item.name || item.path.split('/').pop() || 'artifact'),
+                    kind: item.kind === 'image' ? 'image' : 'web',
+                    preview_url: String(item.preview_url || item.open_url || ''),
+                    open_url: String(item.open_url || item.preview_url || ''),
+                    render_mode: item.render_mode === 'image' ? 'image' : 'iframe',
+                  }));
+              } else {
+                const candidateText = String(parsed.result_full || parsed.content || '');
+                const pathMatch = candidateText.match(/absolute_path=([^\s\n]+)/);
+                const fileMatch = candidateText.match(/workspace\/(?:[^\s\n/]+)\/([^\s\n]+)/);
+                const targetPath = pathMatch?.[1] || '';
+                const name = fileMatch?.[1] || parsed.tool_name || 'artifact';
+                const kind: 'web' | 'image' | undefined = /\.(png|jpg|jpeg|gif|webp)$/i.test(name)
+                  ? 'image'
+                  : /\.(html?|xhtml|htm)$/i.test(name) || /<html|<!doctype|<iframe/i.test(candidateText)
+                    ? 'web'
+                    : undefined;
+                if (kind && targetPath) {
+                  const backend = (typeof window !== 'undefined' && (window as any).__BACKEND_URL__) || 'http://127.0.0.1:8000';
+                  const previewUrl = targetPath.startsWith('http')
+                    ? targetPath
+                    : `${backend}/api/files/serve?path=${encodeURIComponent(targetPath)}`;
+                  artifactPreviews = [{
+                    path: targetPath,
+                    name,
+                    kind,
+                    preview_url: previewUrl,
+                    open_url: previewUrl,
+                  }];
+                }
+              }
+            }
+          } catch {
+            toolMeta = { content: displayContent || rawContent };
+          }
+        }
+
+        const trace = toolMeta ? [{
+          kind: (toolMeta.success === false ? 'tool_error' : 'tool_result') as const,
+          tool_name: toolMeta.tool_name,
+          preview: toolMeta.content,
+          result_full: toolMeta.result_full,
+          emoji: toolMeta.emoji,
+          duration: toolMeta.elapsed,
+          timestamp: new Date(m.created_at || Date.now()).getTime(),
+        }] : (toolsUsed?.length ? toolsUsed.map((tool_name) => ({
+          kind: 'tool_call' as const,
+          tool_name,
+          timestamp: new Date(m.created_at || Date.now()).getTime(),
+        })) : undefined);
         return {
           id: m.id || `msg-${i}`,
           role: m.role,
-          content: displayContent,
+          content: m.role === 'tool' ? (toolMeta?.content || displayContent || rawContent) : displayContent,
           thinking: thinking || undefined,
           timestamp: new Date(m.created_at || Date.now()).getTime(),
           status: 'completed' as const,
+          toolsUsed,
+          commandsExecuted,
+          toolMeta,
+          artifactPreviews,
+          trace,
         };
       });
       setMessages(msgs);
@@ -203,6 +326,8 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
         setProgressText('连接中...');
         setExpandedThinkingMsgId(null);
         thinkingStartedRef.current = false;
+        traceRef.current = { msgId: msgId, flushedLen: 0, hasTool: false };
+        fullContentRef.current = '';
         startHeartbeat(msgId);
         markActive();
       },
@@ -213,13 +338,23 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
           m.id === msgId && m.status === 'streaming' ? { ...m, progressLabel: content } : m
         ));
       },
-      onToolStart: (toolName, _args, emoji) => {
+      onToolStart: (toolName, args, emoji) => {
         setToolElapsed(0);
         setCurrentTool({ name: toolName, emoji, startTime: Date.now() });
+        traceRef.current.hasTool = true;
+        flushPendingTextIntoTrace(msgId);
+        pushTrace(msgId, {
+          kind: 'tool_call', tool_name: toolName, args, emoji, timestamp: Date.now(),
+        });
         markActive();
       },
-      onToolComplete: (toolName, preview, duration, emoji) => {
+      onToolComplete: (toolName, preview, duration, emoji, resultFull) => {
         setCurrentTool(null);
+        pushTrace(msgId, {
+          kind: 'tool_result', tool_name: toolName, preview, duration, emoji,
+          result_full: resultFull,
+          timestamp: Date.now(),
+        });
         markActive();
         if (preview) {
           console.log(`[tool] ${emoji} ${toolName} (${duration.toFixed(1)}s): ${preview}`);
@@ -227,6 +362,10 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
       },
       onToolError: (toolName, error, emoji) => {
         setCurrentTool(null);
+        pushTrace(msgId, {
+          kind: 'tool_error', tool_name: toolName, content: error, emoji,
+          timestamp: Date.now(),
+        });
         markActive();
         console.warn(`[tool] ${emoji} ${toolName} 出错: ${error}`);
       },
@@ -264,9 +403,14 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
       onContent: (_chunk, full) => {
         setProgressText('');
         markActive();
+        fullContentRef.current = full;
         const thinkMatch = full.match(/<think>([\s\S]*?)<\/think>/);
         const thinking = thinkMatch ? thinkMatch[1] : '';
-        const displayContent = full.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        // 如果本条消息经历过工具调用, 只把"最后一次工具后"的文本作为最终气泡内容,
+        // 之前的叙述在下一次 tool_start / done 时被 flush 到 trace 时间线
+        const st = traceRef.current;
+        const rawTail = st.hasTool ? full.slice(st.flushedLen) : full;
+        const displayContent = rawTail.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
         setMessages((prev) => prev.map((m) =>
           m.id === msgId ? { ...m, content: displayContent, thinking: thinking || m.thinking, status: 'streaming' as const } : m
         ));
@@ -276,6 +420,23 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
         stopHeartbeat();
         setProgressText('');
         setCurrentTool(null);
+        // done 时如果最后一段文本还未落到 trace 且没有真实答案内容, 兜底把它作为最终答案
+        // 若有 tool 且最后 content 为空, 用最后一段 pending 作为答案
+        const st = traceRef.current;
+        if (st.hasTool) {
+          const full = fullContentRef.current;
+          const tail = full.slice(st.flushedLen).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+          if (!tail) {
+            // agent 完成后没有再输出新 content, 说明最后一段本身就应是答案 → 把最近一次 flush 之前的最后一段 text 回补作为 content
+            setMessages((prev) => prev.map((m) => {
+              if (m.id !== msgId) return m;
+              if (m.content && m.content.trim().length > 0) return m;
+              const lastText = (m.trace || []).filter((s) => s.kind === 'text').slice(-1)[0];
+              if (!lastText) return m;
+              return { ...m, content: (lastText.content || '').trim(), trace: (m.trace || []).slice(0, -1) };
+            }));
+          }
+        }
         setMessages((prev) => prev.map((m) =>
           m.id === msgId ? {
             ...m,
@@ -286,6 +447,7 @@ export function useStreamChat({ sessionId, onError }: UseStreamChatOptions): Use
             needsContinue: Boolean(data.needs_continue),
             stopReason: data.stop_reason || undefined,
             continuePrompt: data.continue_prompt || undefined,
+            endedBy: data.ended_by || undefined,
             executionClaimMismatch: looksLikeExecutionClaim(m.content) && !((data.tools_used && data.tools_used.length > 0) || (data.commands_executed && data.commands_executed.length > 0)),
           } : m
         ));

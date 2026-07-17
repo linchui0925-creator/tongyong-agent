@@ -1,0 +1,73 @@
+/**
+ * BranchCanopy — 四季春 (W5-3) 真实枝桠背景
+ *
+ * 主枝粗 (0.5) → 分枝中 (0.32) → 嫩枝细 (0.18), 3 级 taper 模拟真实树木。
+ * 抽枝动画按 level 错峰: 主枝先 0s, 分枝 0.6s, 嫩枝 1.2s; 嫩芽在末枝画完后冒出。
+ *
+ * z-index / opacity / pointer-events / 位置 由 App.css 的 .branch-canopy 容器继承,
+ * 本文件只覆盖 svg + 子元素。
+ */
+
+.branch-canopy__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 主色取 accent 跟中性 sage mix, 呈深一档的灰绿; 4 季节各微调 */
+.branch {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent, #4d9a2a) 55%, #5d7a4a 45%);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: branchGrow 2.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* 主枝 → 分枝 → 嫩枝 渐细 + 渐透明; 动画延时分层错峰 */
+.branch--l0 { stroke-width: 0.50; opacity: 0.55; animation-delay: 0.00s; }
+.branch--l1 { stroke-width: 0.32; opacity: 0.50; animation-delay: 0.65s; }
+.branch--l2 { stroke-width: 0.18; opacity: 0.45; animation-delay: 1.30s; }
+
+/* 嫩芽 dot: 用主题 accent 的浅色, 比枝桠更鲜 */
+.bud {
+  fill: color-mix(in srgb, var(--accent, #4d9a2a) 75%, #ffffff 25%);
+  opacity: 0;
+  animation: budBloom 0.5s ease-out forwards;
+  animation-delay: 2.2s;
+}
+
+/* ── 季节微调 ── */
+.branch-canopy--spring .bud { fill: var(--accent, #4d9a2a); }
+
+.branch-canopy--summer .branch { stroke: color-mix(in srgb, var(--accent, #34d058) 65%, #0d5a2a 35%); opacity: 0.55; }
+.branch-canopy--summer .bud { fill: var(--accent, #34d058); }
+
+.branch-canopy--autumn .branch { stroke: color-mix(in srgb, var(--accent, #6d8b2f) 55%, #8a5a1e 45%); opacity: 0.55; }
+.branch-canopy--autumn .bud { fill: var(--warning, #c98a1a); }
+
+.branch-canopy--winter .branch { opacity: 0.45; }
+.branch-canopy--winter .bud { fill: var(--accent, #2fb391); }
+
+@keyframes branchGrow {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes budBloom {
+  to { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .branch {
+    animation: none;
+    stroke-dashoffset: 0;
+    opacity: 0.55;
+  }
+  .bud {
+    animation: none;
+    opacity: 0.85;
+  }
+}

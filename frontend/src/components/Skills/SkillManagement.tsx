@@ -21,8 +21,9 @@ import {
 } from '../../api/skills';
 import { reinstallMarketplaceSkill } from '../../api/marketplace';
 import { MarketplaceView } from '../Marketplace/MarketplaceView';
-import CozeSkillsMarket from './CozeSkillsMarket';
 import { CommunityHubView } from './CommunityHubView';
+import CozeSkillsMarket from './CozeSkillsMarket';
+import { MCPMarketplace } from './MCPMarketplace';
 
 // ── 共享样式 ──────────────────────────────────────
 
@@ -36,7 +37,15 @@ const subTabStyle = (active: boolean): React.CSSProperties => ({
     color: active ? 'var(--accent)' : 'var(--text-tertiary)',
     borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
     cursor: 'pointer', transition: 'all 0.12s ease', marginBottom: '-1px',
-    background: 'transparent', border: 'none', borderRadius: 0,
+    background: 'transparent', borderTop: 'none', borderRight: 'none', borderLeft: 'none', borderRadius: 0,
+});
+
+const marketTabStyle = (active: boolean): React.CSSProperties => ({
+    padding: '7px 12px', fontSize: '12px', fontWeight: active ? 600 : 500,
+    color: active ? 'var(--accent)' : 'var(--text-tertiary)',
+    background: active ? 'var(--bg-hover)' : 'transparent',
+    border: '1px solid var(--border)', borderRadius: 'var(--r-md)',
+    cursor: 'pointer', transition: 'all 0.12s ease',
 });
 
 const TOOLBAR: React.CSSProperties = {
@@ -551,7 +560,7 @@ const LocalSkillsView: React.FC = () => {
                                             style={{ cursor: 'pointer' }}
                                         />
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name}</span>
+                                            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{skill.display_name || skill.name}</span>
                                             <span style={{
                                                 fontSize: '11px', color: 'var(--text-muted)', background: 'var(--bg-elevated)',
                                                 padding: '1px 6px', borderRadius: 'var(--r-sm)',
@@ -736,7 +745,7 @@ const LocalSkillsView: React.FC = () => {
                     <div style={{ ...modalContent, maxWidth: '720px' }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>{selectedSkill.name}</div>
+                                <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>{selectedSkill.display_name || selectedSkill.name}</div>
                                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '1px 8px', borderRadius: 'var(--r-sm)' }}>{selectedSkill.category}</span>
                                 <span style={{ marginLeft: '8px' }}>{renderTypeBadge(selectedSkill)}</span>
                             </div>
@@ -870,7 +879,38 @@ const LocalSkillsView: React.FC = () => {
 
 // ── 主壳 ──────────────────────────────────────────
 
-type SubTab = 'local' | 'marketplace' | 'community';
+type SubTab = 'local' | 'marketplace' | 'mcp' | 'community';
+type MarketSource = 'coze' | 'repository';
+
+const MarketSwitcher: React.FC<{ onCozeInstalled?: () => void }> = ({ onCozeInstalled }) => {
+    const [marketSource, setMarketSource] = useState<MarketSource>('coze');
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+            <div style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '10px 16px', borderBottom: '1px solid var(--border)',
+                background: 'var(--bg-surface)', flexShrink: 0,
+            }}>
+                <button
+                    style={marketTabStyle(marketSource === 'coze')}
+                    onClick={() => setMarketSource('coze')}
+                >
+                    扣子技能
+                </button>
+                <button
+                    style={marketTabStyle(marketSource === 'repository')}
+                    onClick={() => setMarketSource('repository')}
+                >
+                    仓库源
+                </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                {marketSource === 'coze' ? <CozeSkillsMarket onInstall={onCozeInstalled} /> : <MarketplaceView />}
+            </div>
+        </div>
+    );
+};
 
 export const SkillManagement: React.FC = () => {
     const [subTab, setSubTab] = useState<SubTab>('local');
@@ -890,16 +930,20 @@ export const SkillManagement: React.FC = () => {
                 >
                     Skill 市场
                 </button>
+                <button style={subTabStyle(subTab === 'mcp')} onClick={() => setSubTab('mcp')}>
+                    MCP 市场
+                </button>
                 <button
                     style={subTabStyle(subTab === 'community')}
                     onClick={() => setSubTab('community')}
                 >
-                    ✨ Community (Hub)
+                    Community (Hub)
                 </button>
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
                 {subTab === 'local' && <LocalSkillsView />}
-                {subTab === 'marketplace' && <><CozeSkillsMarket onInstall={() => window.location.reload()} /><MarketplaceView /></>}
+                {subTab === 'marketplace' && <MarketSwitcher onCozeInstalled={() => setSubTab('local')} />}
+                {subTab === 'mcp' && <MCPMarketplace />}
                 {subTab === 'community' && <CommunityHubView />}
             </div>
         </div>

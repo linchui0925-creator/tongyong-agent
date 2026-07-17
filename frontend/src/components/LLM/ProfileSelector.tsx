@@ -262,71 +262,62 @@ export default function ProfileSelector() {
                     <button onClick={openCreateForm}>创建第一个Profile</button>
                 </div>
             ) : (
-                <div className="profile-list">
+                <div className="profile-grid">
                     {profiles.map(profile => {
                         const provider = getProviderInfo(profile.provider);
                         const isActive = profile.id === activeProfileId;
                         const isSelected = profile.id === selectedProfileId;
+                        const running = isGatewayRunning(profile.id);
                         return (
                             <div
                                 key={profile.id}
-                                className={`profile-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+                                className={`profile-card ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
                                 onClick={() => setSelectedProfileId(isSelected ? null : profile.id)}
                             >
-                                <div className="profile-item-icon">{provider.icon}</div>
-                                <div className="profile-item-info">
-                                    <div className="profile-item-name">
-                                        {profile.name}
-                                        {isActive && <span className="profile-active-badge">当前</span>}
+                                <div className="profile-card-sheen" aria-hidden="true" />
+                                <div className="profile-card-inner">
+                                    <div className="profile-card-header">
+                                        <span className={`profile-card-badge ${isActive ? 'is-active' : ''}`}>
+                                            {isActive ? '● 当前使用' : '待命'}
+                                        </span>
+                                        <span className={`profile-card-gw ${running ? 'on' : 'off'}`}>
+                                            {running ? `网关 · ${getGatewayPort(profile.id)}` : '网关未启'}
+                                        </span>
                                     </div>
-                                    <div className="profile-item-meta">
-                                        {provider.name} / {profile.model || profile.provider}
+
+                                    <div className="profile-card-body">
+                                        <h2 className="profile-card-name">{profile.name}</h2>
+                                        <p className="profile-card-role">{provider.name}</p>
                                     </div>
-                                </div>
-                                <div className="profile-item-actions">
-                                    {!isActive && (
+
+                                    <div className="profile-card-footer">
+                                        <div className="profile-card-id">
+                                            <span className="profile-card-label">MODEL</span>
+                                            <span className="profile-card-value">{profile.model || profile.provider}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="profile-card-actions">
+                                        {!isActive && (
+                                            <button
+                                                className="profile-action-btn activate"
+                                                onClick={(e) => { e.stopPropagation(); handleActivate(profile.id); }}
+                                            >激活</button>
+                                        )}
                                         <button
-                                            className="profile-action-btn activate"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleActivate(profile.id);
-                                            }}
-                                            title="激活"
-                                        >
-                                            激活
-                                        </button>
-                                    )}
-                                    <button
-                                        className="profile-action-btn test"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleTest(profile.id);
-                                        }}
-                                        disabled={testingId === profile.id}
-                                        title="测试"
-                                    >
-                                        {testingId === profile.id ? '测试中...' : '测试'}
-                                    </button>
-                                    <button
-                                        className="profile-action-btn edit"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleEdit(profile);
-                                        }}
-                                        title="编辑"
-                                    >
-                                        编辑
-                                    </button>
-                                    <button
-                                        className="profile-action-btn delete"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDelete(profile.id);
-                                        }}
-                                        title="删除"
-                                    >
-                                        删除
-                                    </button>
+                                            className="profile-action-btn test"
+                                            onClick={(e) => { e.stopPropagation(); handleTest(profile.id); }}
+                                            disabled={testingId === profile.id}
+                                        >{testingId === profile.id ? '测试中…' : '测试'}</button>
+                                        <button
+                                            className="profile-action-btn edit"
+                                            onClick={(e) => { e.stopPropagation(); handleEdit(profile); }}
+                                        >编辑</button>
+                                        <button
+                                            className="profile-action-btn delete"
+                                            onClick={(e) => { e.stopPropagation(); handleDelete(profile.id); }}
+                                        >删除</button>
+                                    </div>
                                 </div>
                             </div>
                         );

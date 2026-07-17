@@ -1,0 +1,156 @@
+.composer-ctl {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.composer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-secondary, #cbd5c0);
+  font-family: var(--font, sans-serif);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  max-width: 220px;
+}
+
+.composer-pill:hover,
+.composer-pill.open {
+  background: var(--accent-subtle, rgba(120,180,120,0.14));
+  color: var(--text-primary, #f5f5f4);
+  border-color: var(--border, rgba(255,255,255,0.08));
+}
+
+.composer-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #6faf6f);
+  flex-shrink: 0;
+}
+
+.composer-pill-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-pill-chevron {
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.composer-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-card, var(--bg-primary, #1c201a));
+  border: 1.5px solid var(--accent, #6faf6f);
+  border-radius: 14px;
+  box-shadow: 0 20px 56px rgba(0,0,0,0.36), 0 0 0 1px var(--accent-subtle, rgba(120,180,120,0.2));
+  padding: 8px;
+  z-index: 220;
+  animation: composer-menu-pop 0.14s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.composer-menu--sm { width: 240px; }
+
+@keyframes composer-menu-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.composer-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent, #8fce8f);
+  padding: 4px 8px 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.composer-menu-err { color: #ef8c8c; text-transform: none; font-weight: 400; }
+
+.composer-menu-empty {
+  padding: 16px 8px;
+  text-align: center;
+  color: var(--text-muted, #78716c);
+  font-size: 12.5px;
+}
+
+.composer-menu-list { display: flex; flex-direction: column; gap: 2px; }
+
+.composer-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary, #f5f5f4);
+  text-align: left;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.1s ease;
+}
+
+.composer-menu-item:hover:not(:disabled) { background: var(--accent-subtle, rgba(120,180,120,0.25)); }
+.composer-menu-item:hover:not(:disabled) .composer-menu-name { color: var(--accent, #6faf6f); }
+.composer-menu-item.active { background: var(--accent, #6faf6f); }
+.composer-menu-item.active .composer-menu-name,
+.composer-menu-item.active .composer-menu-meta,
+.composer-menu-item.active .composer-menu-tag { color: #fff; }
+.composer-menu-item:disabled { opacity: 0.5; cursor: default; }
+
+.composer-menu-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.composer-menu-name { font-size: 14px; font-weight: 800; color: var(--text-primary, #f5f5f4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.01em; }
+.composer-menu-meta { font-size: 12px; font-weight: 600; color: var(--text-secondary, #a8a29e); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.composer-menu-tag {
+  font-size: 10.5px;
+  color: var(--accent, #6faf6f);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.composer-menu-foot {
+  display: flex;
+  gap: 6px;
+  padding: 8px 4px 2px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+}
+
+.composer-menu-link {
+  flex: 1;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary, #a8a29e);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.composer-menu-link:hover { background: var(--accent-subtle, rgba(120,180,120,0.14)); color: var(--text-primary, #f5f5f4); }

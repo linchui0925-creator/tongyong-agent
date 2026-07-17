@@ -25,6 +25,12 @@ interface CurrentModel {
   model?: string;
   api_key_configured?: boolean;
   provider_profile_id?: string;
+  runtime?: {
+    provider?: string;
+    model?: string;
+    api_format?: string;
+    api_base?: string;
+  };
 }
 
 interface ConnectedModelCard {
@@ -60,10 +66,6 @@ function shortName(name: string) {
   const parts = clean.split(/\s+/);
   if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   return clean.slice(0, 2).toUpperCase();
-}
-
-function modelFromProfile(profile: CustomProviderProfile): string {
-  return profile.default_model || profile.models?.[0]?.id || '';
 }
 
 interface ModelSelectorProps {
@@ -125,36 +127,71 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
   }, [showAddDialog, loadData]);
 
   const connectedModels = useMemo<ConnectedModelCard[]>(() => {
-    const profileCards = profiles
+    // W5-3: 每个 (provider, model) 一张卡, 不再吞掉同一 provider 下的多个 model
+    // 解决 "edgefn 有 GLM-4.5V/GLM-5.2 等 6 个 model 但只显示 1 张卡 (默认 GLM-4.5V)" 的问题
+    const profileCards: ConnectedModelCard[] = [];
+    profiles
       .filter(profile => profile.has_api_key || profile.id === current?.provider || profile.id === current?.provider_profile_id)
-      .map(profile => {
-        const model = modelFromProfile(profile);
-        const firstModel = profile.models?.find(m => m.id === model) || profile.models?.[0];
-        const isCurrent = current?.provider === profile.id || current?.provider_profile_id === profile.id;
-        const status = localStatus[profile.id || '']?.status || (isCurrent ? 'connected' : 'untested');
-        return {
-          id: profile.id || profile.name,
-          source: 'profile' as const,
-          name: profile.name,
-          providerId: profile.id || profile.name,
-          model,
-          baseUrl: profile.base_url,
-          icon: profile.icon || shortName(profile.name),
-          color: profile.color || '#3B82F6',
-          status,
-          isCurrent,
-          hasApiKey: Boolean(profile.has_api_key),
-          supportsTools: firstModel?.supports_tools,
-          supportsVision: firstModel?.supports_vision,
-          supportsReasoning: firstModel?.supports_reasoning,
-          lastMessage: localStatus[profile.id || '']?.message,
-          profile,
-        };
+      .forEach(profile => {
+        // 候选 model 列表: profile.models[] (来自 builtin / scrape), 至少含 default_model
+        const ids = (profile.models && profile.models.length > 0)
+            ? profile.models.map(m => m.id)
+            : (profile.default_model ? [profile.default_model] : []);
+        if (ids.length === 0) {
+          // fallback: 没 models 也没 default → 单卡, 用 profile 的 default_model
+          const model = profile.default_model || '';
+          const isCurrent = (current?.provider === profile.id || current?.provider_profile_id === profile.id) &&
+                            (!model || current?.model === model);
+          const firstModel = profile.models?.find(m => m.id === model);
+          profileCards.push({
+            id: `${profile.id || profile.name}::${model}`,
+            source: 'profile',
+            name: profile.name,
+            providerId: profile.id || profile.name,
+            model,
+            baseUrl: profile.base_url,
+            icon: profile.icon || shortName(profile.name),
+            color: profile.color || '#3B82F6',
+            status: localStatus[profile.id || '']?.status || (isCurrent ? 'connected' : 'untested'),
+            isCurrent,
+            hasApiKey: Boolean(profile.has_api_key),
+            supportsTools: firstModel?.supports_tools,
+            supportsVision: firstModel?.supports_vision,
+            supportsReasoning: firstModel?.supports_reasoning,
+            lastMessage: localStatus[profile.id || '']?.message,
+            profile,
+          } as ConnectedModelCard);
+          return;
+        }
+        ids.forEach(modelId => {
+          const isCurrent = (current?.provider === profile.id || current?.provider_profile_id === profile.id) &&
+                            current?.model === modelId;
+          const firstModel = profile.models?.find(m => m.id === modelId) || profile.models?.[0];
+          const cardKey = `${profile.id || profile.name}::${modelId}`;
+          profileCards.push({
+            id: cardKey,
+            source: 'profile',
+            name: `${profile.name} · ${modelId}`,
+            providerId: profile.id || profile.name,
+            model: modelId,
+            baseUrl: profile.base_url,
+            icon: profile.icon || shortName(profile.name),
+            color: profile.color || '#3B82F6',
+            status: localStatus[cardKey]?.status || (isCurrent ? 'connected' : 'untested'),
+            isCurrent,
+            hasApiKey: Boolean(profile.has_api_key),
+            supportsTools: firstModel?.supports_tools,
+            supportsVision: firstModel?.supports_vision,
+            supportsReasoning: firstModel?.supports_reasoning,
+            lastMessage: localStatus[cardKey]?.message,
+            profile,
+          } as ConnectedModelCard);
+        });
       });
 
     const seen = new Set(profileCards.map(card => `${card.providerId}:${card.model}`));
     const savedCards = savedModels
-      .filter(saved => saved.api_key && !seen.has(`${saved.provider}:${saved.model}`))
+      .filter(saved => saved.api_key && saved.api_key !== 'YOUR_API_KEY' && !seen.has(`${saved.provider}:${saved.model}`))
       .map(saved => {
         const isCurrent = current?.provider === saved.provider && current?.model === saved.model;
         const id = `saved:${saved.id}`;
@@ -320,6 +357,7 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
           <button className="current-model-pill" onClick={() => setShowManager(true)}>
             <span className={`status-dot ${currentCard.status}`} />
             {currentCard.model || currentCard.name}
+            {current?.runtime?.api_format && <span className="current-model-pill-protocol">{current.runtime.api_format}</span>}
           </button>
         )}
         <button className="model-icon-btn" onClick={loadData} title="刷新">↻</button>
@@ -366,6 +404,9 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
                       <span className="model-code">{card.model}</span>
                       <span className={`status-chip ${card.status}`}>{statusLabel[card.status]}</span>
                       {card.lastMessage && <span>{card.lastMessage}</span>}
+                      {current?.runtime?.api_format && card.isCurrent && (
+                        <span className="status-chip protocol">{current.runtime.api_format}</span>
+                      )}
                     </div>
                   </div>
                   <div className="connected-actions">

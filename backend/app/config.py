@@ -115,6 +115,19 @@ class Settings(BaseSettings):
     community_hub_scrape_rate_per_sec: float = 1.0
     community_hub_max_repos: int = 50
     community_hub_frontend_install_confirm: bool = True
+
+    # W5-7: Runtime trace 框架
+    runtime_trace_enabled: bool = True
+    runtime_trace_retention_days: int = 14
+
+    # W5-8: Runtime 核心组件 (IPC 隔离 / Planner / Reflection)
+    runtime_ipc_enabled: bool = False          # 重型: 工具改走 spawn 子进程隔离 (默认关)
+    runtime_ipc_default_timeout: float = 30.0
+    runtime_ipc_failure_threshold: int = 3     # 连续失败几次熔断
+    runtime_ipc_reset_timeout: float = 30.0    # 熔断冷却秒数
+    runtime_tool_guard_enabled: bool = True    # 轻量: 高风险工具超时+熔断治理 (默认开)
+    runtime_planner_enabled: bool = False      # 默认关: 显式规划器接入 agent 循环需显式开
+    runtime_reflection_enabled: bool = True    # 反思判定组件 (统一 delivery_gate) 默认开
     
     feishu_webhook_url: Optional[str] = None
     feishu_enabled: bool = False

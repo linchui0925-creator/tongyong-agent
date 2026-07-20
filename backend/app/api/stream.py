@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 import logging
 
 router = APIRouter()
@@ -142,6 +143,7 @@ class StreamChatRequest(BaseModel):
     attachment_ids: list[str] = Field(default_factory=list, max_length=20)
     thinking_mode: Optional[str] = Field(None, description="off/auto/always")
     reasoning_effort: Optional[str] = Field(None, description="low/medium/high")
+    plan_id: Optional[str] = Field(None, description="W5-8: 计划 ID, 关联 plan/build 生成的计划")
 
     @field_validator("message")
     @classmethod
@@ -236,6 +238,22 @@ async def generate_stream_response(
         if not session_id:
             session_id = await agent_engine._get_or_create_session()
 
+        # W5-7: runtime trace — 一次 stream 请求 = 一条 trace
+        trace_id = uuid.uuid4().hex
+        # W5-8: 加载计划 (如果 plan_id 提供), 先于 trace 避免循环依赖
+        _loaded_plan = None
+        if request.plan_id:
+            try:
+                _store = _rt.get_store() if _rt else None
+                if _store is not None:
+                    _loaded_plan = _store.get_plan(request.plan_id)
+            except Exception:
+                pass
+        try:
+            from app.core.runtime import trace as _rt
+        except Exception:
+            _rt = None
+
         # W3 切流量: 决策是否走 langchain (显式 > 默认 > 灰度)
         effective_use_langchain = _should_use_langchain(
             request_use_langchain=use_langchain,
@@ -260,8 +278,13 @@ async def generate_stream_response(
 
         yield {
             "event": "start",
-            "data": json.dumps({"type": "start", "timestamp": time.time()})
+            "data": json.dumps({"type": "start", "trace_id": trace_id, "timestamp": time.time()})
         }
+        if _loaded_plan:
+            yield {
+                "event": "plan_loaded",
+                "data": json.dumps({"type": "plan_loaded", "plan": _loaded_plan, "timestamp": time.time()})
+            }
         prelude_marks["start_sent"] = time.time()
         # 尽早让前端收到首个可见事件，避免等到上下文整理结束才显示。
         yield {
@@ -301,6 +324,16 @@ async def generate_stream_response(
 
         # 选择 agent 实现
         prelude_marks["before_agent_select"] = time.time()
+        if _rt is not None:
+            _rt_cm = _rt.start_trace(
+                session_id=session_id,
+                name="chat.langchain" if effective_use_langchain else "chat",
+                trace_id=trace_id,
+                attributes={"provider": current_provider, "model": current_model_name},
+            )
+            _rt_cm.__enter__()
+        else:
+            _rt_cm = None
         if effective_use_langchain:
             from app.core.langchain_agent import stream_chat_langchain
             agent_stream = stream_chat_langchain(
@@ -469,6 +502,7 @@ async def generate_stream_response(
                     # Include usage if present
                     done_data = {
                         "type": "done",
+                        "trace_id": trace_id,
                         "session_id": item.get("session_id", session_id or ""),
                         "tools_used": item.get("tools_used", []),
                         "commands_executed": item.get("commands_executed", []),
@@ -478,6 +512,7 @@ async def generate_stream_response(
                         "needs_continue": item.get("needs_continue", False),
                         "stop_reason": item.get("stop_reason", ""),
                         "continue_prompt": item.get("continue_prompt", ""),
+                        "reflection": item.get("reflection"),
                         "timestamp": time.time()
                     }
                     yield {
@@ -488,6 +523,12 @@ async def generate_stream_response(
         except Exception as e:
             logger.error(f"流式处理错误: {e}")
             metrics.log_error("STREAM_ERROR", str(e))
+            if _rt_cm is not None:
+                try:
+                    _rt_cm.__exit__(type(e), e, e.__traceback__)
+                except Exception:
+                    pass
+                _rt_cm = None
             yield {
                 "event": "error",
                 "data": json.dumps({
@@ -497,6 +538,13 @@ async def generate_stream_response(
                 })
             }
             return
+        finally:
+            if _rt_cm is not None:
+                try:
+                    _rt_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+                _rt_cm = None
 
         if not first_event_sent:
             yield {

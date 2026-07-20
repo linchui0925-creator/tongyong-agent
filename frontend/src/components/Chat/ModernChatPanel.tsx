@@ -14,6 +14,9 @@ import { uploadAttachments } from '../../api/attachments';
 import { MarkdownContent } from './MarkdownContent';
 import { detectFilePaths, getFileIcon } from './pathDetector';
 import ComposerModelControl from './ComposerModelControl';
+import PlanModeToggle from './PlanModeToggle';
+import PlanCard from './PlanCard';
+import { buildPlan, type PlanData } from '../../api/plan';
 import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
@@ -433,7 +436,11 @@ function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanel
   const [waitingAnswer, setWaitingAnswer] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [planMode, setPlanMode] = useState(false);
+const [planPending, setPlanPending] = useState<PlanData | null>(null);
+const [planId, setPlanId] = useState<string | null>(null);
+const [planBuilding, setPlanBuilding] = useState(false);
+const [isDraggingFile, setIsDraggingFile] = useState(false);
 
   // Sync session from parent
   useEffect(() => {
@@ -476,6 +483,17 @@ function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanel
       window.dispatchEvent(new CustomEvent('weizhi:streaming', { detail: { streaming: false } }));
     };
   }, [isStreaming]);
+
+  // 监听 plan_loaded 事件, 更新 PlanCard 状态
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      if (e.detail) {
+        setPlanPending(e.detail);
+      }
+    };
+    window.addEventListener('weizhi:plan_loaded', handler as EventListener);
+    return () => window.removeEventListener('weizhi:plan_loaded', handler as EventListener);
+  }, []);
 
   // 全局监听: 拖动取消/点击空白 都清掉 isDraggingFile
   useEffect(() => {
@@ -532,12 +550,46 @@ function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanel
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }, []);
 
-  const sendComposer = useCallback(() => {
+  const sendComposer = useCallback(async () => {
     if ((inputValue.trim() || pendingAttachments.length > 0) && !isLoading && !isStreaming) {
-      handleSend(inputValue, pendingAttachments);
-      clearComposer();
+      if (planMode && inputValue.trim()) {
+        // 先构建计划, 等待用户批准
+        setPlanBuilding(true);
+        setPlanPending(null);
+        setErrorMessage(null);
+        try {
+          const plan = await buildPlan(inputValue.trim());
+          setPlanPending(plan);
+          setPlanId(plan.plan_id);
+        } catch (e: any) {
+          setErrorMessage(e?.message || '计划生成失败');
+          // 失败后直接走普通发送
+          handleSend(inputValue, pendingAttachments);
+          clearComposer();
+        } finally {
+          setPlanBuilding(false);
+        }
+      } else {
+        handleSend(inputValue, pendingAttachments);
+        clearComposer();
+      }
     }
-  }, [inputValue, pendingAttachments, isLoading, isStreaming, handleSend, clearComposer]);
+  }, [inputValue, pendingAttachments, isLoading, isStreaming, planMode, handleSend, clearComposer, setErrorMessage]);
+
+  const approvePlan = useCallback(() => {
+    if (!planPending || !inputValue.trim()) return;
+    // 把计划作为上下文追加到消息, 让 LLM 按计划执行
+    const planText = planPending.steps.map((s, i) => `${i + 1}. ${s.action}${s.tool ? ' [' + s.tool + ']' : ''}`).join('\n');
+    const messageWithPlan = `用户请求: ${inputValue.trim()}\n\n计划:\n${planText}\n\n请按以上计划逐步执行, 每完成一步更新进度。`;
+    setPlanPending(null);
+    // 先把原消息发出去 (不含计划上下文), 实际发送带计划上下文的完整消息
+    handleSend(messageWithPlan, pendingAttachments, planId || undefined);
+    clearComposer();
+  }, [planPending, inputValue, pendingAttachments, handleSend, clearComposer]);
+
+  const rejectPlan = useCallback(() => {
+    setPlanPending(null);
+  }, []);
 
   // Input handling
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -709,6 +761,23 @@ function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanel
             ))}
           </div>
         )}
+        {planPending && (
+          <div className="plan-card-container" style={{ marginBottom: '10px' }}>
+            <PlanCard
+              plan={planPending}
+              onApprove={approvePlan}
+              onReject={rejectPlan}
+              busy={isLoading}
+            />
+          </div>
+        )}
+        {planBuilding && (
+          <div className="plan-card-container" style={{ marginBottom: '10px', textAlign: 'center', padding: '12px', background: 'var(--accent-subtle, rgba(120,180,120,0.08))', borderRadius: '14px' }}>
+            <span style={{ fontSize: '14px', color: 'var(--text-secondary, #a8a29e)' }}>
+              📋 正在生成计划...
+            </span>
+          </div>
+        )}
         <div className="chat-input-box">
           <input
             ref={fileInputRef}
@@ -739,6 +808,7 @@ function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanel
               >
                 {isUploading ? '…' : '+'}
               </button>
+              <PlanModeToggle planMode={planMode} onToggle={() => setPlanMode(m => !m)} disabled={isLoading || isStreaming} />
               <ComposerModelControl />
               <TokenUsageRing
                 contextInfo={contextInfo}

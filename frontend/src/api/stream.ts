@@ -45,6 +45,7 @@ function parseEventData(event: MessageEvent): StreamEvent | null {
             stop_reason: data.stop_reason,
             continue_prompt: data.continue_prompt,
             ended_by: data.ended_by,
+            reflection: data.reflection,
         };
     } catch (error) {
         console.error('解析SSE事件数据失败:', error);
@@ -108,7 +109,8 @@ export function streamChat(
     callbacks: SSECallbacks = {},
     clarifyQuestionId?: string,
     clarifyAnswer?: string,
-    attachmentIds?: string[]
+    attachmentIds?: string[],
+    planId?: string
 ): AbortController {
     const controller = new AbortController();
 
@@ -136,7 +138,8 @@ export function streamChat(
         clarify_answer: clarifyAnswer || undefined,
         attachment_ids: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
         reasoning_effort: reasoningEffort,
-        thinking_mode: thinkingMode
+        thinking_mode: thinkingMode,
+        plan_id: planId || undefined,
     };
 
     console.log('[流式聊天请求]', requestData);
@@ -298,6 +301,10 @@ function handleStreamEvent(
 
         case 'thinking_done':
             callbacks.onThinkingDone?.();
+            break;
+
+        case 'plan_loaded':
+            callbacks.onPlanLoaded?.(event.plan);
             break;
 
         case 'ask':

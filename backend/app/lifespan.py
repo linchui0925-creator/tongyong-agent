@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"{app.title} 启动中...")
     logger.info("=" * 50)
 
+    await _startup_runtime(app)
     await _startup_tools(app)
     await _startup_database(app)
     await _startup_llm(app)
@@ -36,6 +37,20 @@ async def lifespan(app: FastAPI):
     await _shutdown_hub()
     await _shutdown_im_gateway()
     logger.info("应用已关闭")
+
+
+async def _startup_runtime(app: FastAPI) -> None:
+    """W5-7: 初始化 runtime trace 框架 (SQLite 落库 + 全局开关)。"""
+    try:
+        from app.config import settings
+        from app.core.runtime import trace as _rt
+        _rt.configure_runtime(enabled=bool(getattr(settings, "runtime_trace_enabled", True)))
+        logger.info(
+            "[startup] runtime trace %s",
+            "enabled" if _rt.is_enabled() else "disabled",
+        )
+    except Exception as e:
+        logger.warning(f"[startup] runtime trace 初始化失败 (降级为关闭): {e}")
 
 
 async def _startup_tools(app: FastAPI) -> None:

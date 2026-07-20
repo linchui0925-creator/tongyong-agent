@@ -468,6 +468,7 @@ class AgentEngine:
             return {"type": "progress", "content": text, "timestamp": _time.time()}
 
         def _content(chunk: str):
+            _content_emitted[0] = True
             return {"type": "content", "content": chunk, "timestamp": _time.time()}
 
         def _tool_start(name: str, args: dict):
@@ -717,6 +718,8 @@ class AgentEngine:
         artifact_previews: List[Dict[str, str]] = []
         ask_triggered = False  # 标记是否触发了 ask 交互
         final_response_chunks: List[str] = []
+        # 是否已向前端 emit 过任意 content 事件 (用于兜底补发, 避免空气泡)
+        _content_emitted = [False]
         budget = IterationBudget()
         cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}  # Token 使用量追踪
         must_use_tool = _message_requires_tool_call(message)
@@ -938,12 +941,28 @@ class AgentEngine:
                         if budget.current_round == 0:
                             self.context.add_message("system", cached_prompt_marker)
 
+                    _rt_llm_t0 = _time.time()
                     _llm_coro = self.llm.chat(messages=llm_messages, tools=tool_schemas)
                     async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应", interval=15.0):
                         if _ev_type == "heartbeat":
                             yield _progress(_ev_val)
                         else:
                             llm_response = _ev_val
+                    # W5-7: LLM 调用 span (失败绝不影响主流程)
+                    try:
+                        from app.core.runtime import trace as _rt
+                        _rt.record_span(
+                            "llm_call",
+                            (_time.time() - _rt_llm_t0) * 1000.0,
+                            attributes={
+                                "model": getattr(self.llm, "model", None),
+                                "round": budget.current_round,
+                                "with_tools": bool(tool_schemas),
+                                "total_tokens": (llm_response.usage or {}).get("total_tokens") if llm_response.usage else None,
+                            },
+                        )
+                    except Exception:
+                        pass
                     # 追踪 token 使用量
                     if llm_response.usage:
                         cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
@@ -1658,6 +1677,31 @@ class AgentEngine:
         # 清理 Qwen 风格的 <|im_start|>...<|im_end|> 标签
         final_reply = re.sub(r'<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>', '', final_reply).strip()
 
+        # 若整轮从未向前端 emit 过任何可见答案 (final_response_chunks 为空),
+        # 但我们从 context 兜底恢复出了 final_reply, 需补发一个 content 事件,
+        # 否则前端气泡为空 (done 到达但 content/full_content 全 undefined)。
+        if not _content_emitted[0] and final_reply and final_reply != "（无回复内容）":
+            yield _content(final_reply)
+
+        # W5-8: 统一反思 — 收尾对本轮做一次结果校验 (可观测 + done 附带 verdict)。
+        # 纯观测, 不改变现有控制流; 失败绝不影响主流程。
+        reflection_verdict = None
+        try:
+            from app.config import settings as _settings
+            if getattr(_settings, "runtime_reflection_enabled", True):
+                from app.core.runtime.reflection import get_reflector
+                _last_tool_result = tool_results_for_hermes[-1][1] if tool_results_for_hermes else None
+                _verdict = get_reflector().reflect(
+                    user_message=message,
+                    response_text=final_reply if final_reply != "（无回复内容）" else "",
+                    tools_used=list(dict.fromkeys(tools_used)),
+                    commands_executed=commands_executed,
+                    last_tool_result=_last_tool_result,
+                )
+                reflection_verdict = _verdict.to_dict()
+        except Exception as _refl_err:
+            logger.debug(f"reflection pass skipped: {_refl_err}")
+
         self.context.add_message("assistant", final_reply)
         # W4-16: Stop hook (s04_hooks 模式)
         # 把"保存到 memory_storage + 重置 constraint_engine"挪到注册表, 循环不再硬编码
@@ -1673,7 +1717,7 @@ class AgentEngine:
         })
         self.context.clear()
 
-        yield _done()
+        yield _done({"reflection": reflection_verdict} if reflection_verdict else None)
 
     async def create_session(self, name: str) -> Session:
         return await self.memory_storage.create_session(name)

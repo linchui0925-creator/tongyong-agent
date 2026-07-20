@@ -206,6 +206,8 @@ with TestClient(app) as c:
 
 | SHA | W4 | 摘要 |
 |---|---|---|
+| (pending) | W5-8 | Runtime 核心三大件 + plan mode 前端: 同上 + `POST /api/plan/build` 端点; 前端 `PlanModeToggle` pill 开关 + `PlanCard` 计划卡片 (步骤列表 + 批准/重规划按钮); plan mode 下用户消息先建计划 → 审批 → 计划上下文追加到消息执行; 共 30 新 test |
+| (pending) | W5-7 | Runtime trace 框架 + 整合进 runtime 维护: 新增 `app/core/runtime/` (Trace/Span + contextvar 传播 + 自建 SQLite `runtime_trace.db`), 每次 `/api/chat/stream` = 一条 trace, SSE `start`/`done` 带 `trace_id`; PostToolUse hook 自动产 tool span, agent.py LLM 调用产 `llm_call` span; `/api/trace/*` 只读时间线查询; scheduler 按 `runtime_trace_retention_days` 清理; 全局开关关闭零开销, 落库失败绝不影响主流程 |
 | (pending) | W5-6 | Skill 安装 no_source_mapping / 找不到 skill 修复: 显式 source 安装改单次仓库树解析 (按目录名→frontmatter name 精准定位, 不再全仓库扫描), _http_get 加 SSL/URLError 指数退避重试, skillId≠目录名时明确报错并列出可用 skill; 前端透传后端 detail.error |
 | (pending) | W5-5 | 会话 HTML 预览修复: browser 导航远程 `.html/.htm/.xhtml` 不再误当本地文件路径, 直接使用原始 URL 预览/打开; `/api/files/*` 明确拒绝远程 URL 走本地文件代理; MCP 市场为全部条目补中文说明并支持中文搜索 |
 | (pending) | W5-3 | 会话压缩状态 + MCP Registry 安装修复: 新流式请求先创建持久会话, 前端接收 `done.session_id` 并刷新 context stats; Registry 安装保留 runtime arguments, 支持 remote-only HTTP server, 启动失败回滚配置 |
@@ -243,6 +245,59 @@ with TestClient(app) as c:
 ---
 
 ## 6.5 已知坑 (按 W4 倒序)
+
+### W5-8: Runtime 核心三大件 (IPC 隔离 / Planner / Reflection)
+
+- **动机**: 对照参考 runtime 架构盘点, 最缺三块 —— IPC/进程隔离层、显式 Planner、独立 Reflection 模块。本次全部落在 `app/core/runtime/` 下, 都接入 W5-7 trace。
+- **IPC 隔离层** (`ipc.py`):
+  - `SubprocessBroker.call(target, func, args, timeout)` 在 **spawn 子进程**里执行可 pickle 的 callable, 超时 **硬 kill** 子进程, 结构化返回 `IPCResult` (ok/value/error/timed_out/short_circuited), 绝不抛给主流程。
+  - `CircuitBreaker` 每 target 一个: 连续失败 `failure_threshold` 次 → OPEN 短路; 冷却 `reset_timeout` 秒 → HALF_OPEN 放一个试探; 成功回 CLOSED, 失败立刻回 OPEN。
+  - 每次调用产 `ipc.call` span (带 target/ok/timed_out/breaker 状态)。
+  - **进程级隔离取舍**: 不引容器/命名空间 (环境不具备), 用 `multiprocessing spawn` 拿纯 Python 最强隔离; 工具是否可 pickle 由调用方保证 (顶层函数最稳)。
+  - `get_broker()` 进程级单例复用同一组熔断器; `reset_broker()` 测试用。
+- **Planner** (`planner.py`):
+  - `Plan`/`PlanStep`/`StepStatus` 一等公民数据结构 + 状态机 (start/complete/fail/skip/replan); `progress()` / `current_step()` / `is_complete`。
+  - `build_plan_from_llm(goal, llm)` 结构化 JSON 拆解 (最多 20 步), 解析失败/无 llm → `build_plan_heuristic` 单步兜底, runtime 永远有可跟踪计划。
+  - `plan.build` + 每步 `plan.step` span。跟 `todo_tools` 区别: todo 是给**模型**维护 checklist 的工具, Planner 是 **runtime 侧**可被循环/反思/trace 直接消费的结构。
+- **Reflection** (`reflection.py`):
+  - `Reflector.reflect(user_message, response_text, tools_used, commands_executed, last_tool_result)` → `ReflectionVerdict{decision, reasons, correction, missing_evidence}`。
+  - 判定顺序: 工具错误→RETRY / 执行声明不符→REVISE / 缺交付证据→RETRY / 空回复→RETRY / 否则→COMPLETE。
+  - **复用** `delivery_gate` 原子函数 (`_validate_execution_claim` / `_missing_tool_evidence` / `_is_error_result`), 只做编排+trace, 不重复实现规则。异常保守判 COMPLETE, 不打断主流程。
+- **config 开关** (`config.py`): `runtime_ipc_enabled=False` / `runtime_ipc_default_timeout=30` / `runtime_ipc_failure_threshold=3` / `runtime_ipc_reset_timeout=30` / `runtime_planner_enabled=False` / `runtime_reflection_enabled=True`。ipc/planner 默认关 (接入 agent 主循环属高风险改动, 先备而不启); reflection 默认开。
+- **接入现状**:
+  - ✅ **Reflection 已接入 agent 收尾** (W5-8): `agent.py` `stream_chat` 收尾调 `get_reflector().reflect(...)` 做一次结果校验 (纯观测, 不改控制流), verdict 通过 `_done({"reflection": ...})` → `stream.py` SSE `done.reflection` → 前端 `StreamEvent.reflection`。config `runtime_reflection_enabled` 默认开; 失败 fail-safe 跳过。
+  - ✅ **IPC 工具治理已接入 ToolManager**: `app/tools/manager.py` `execute()` 对高风险工具 (terminal/workspace_terminal/browser/cdp/desktop/adb) 经 `AsyncCallGuard.run()` 执行 (超时熔断 + `tool.guard` span)。`config.runtime_tool_guard_enabled=True` 默认开。安全工具直通 registry, 零开销。
+  - ✅ **Plan mode 前端已接入**: 聊天输入框新增 `PlanModeToggle` pill (📋 计划), 跟模型/推理强度/思考模式并列。开启后发送消息 → `POST /api/plan/build` 生成计划 → `PlanCard` 组件展示步骤列表 (编号/动作/所需工具) → 用户点"批准执行" → 计划上下文追加到消息后走正常 stream 流。点"重新规划"清空计划, 可编辑消息重试。`config.runtime_planner_enabled` 默认关 (启发式兜底); 开则走 LLM 结构化拆解。
+  - ⏳ **`SubprocessBroker` (真 spawn 子进程隔离)** 仍为可用库, 未接入主循环 (工具 handler 依赖 event loop + contextvar 会话, 不适用)。
+- **测试**: `tests/test_w58_runtime_core.py` 27 个 + `tests/test_w58_plan_api.py` 3 个 (plan build heuristic/空 goal/缺参)。回归 91 passed; 前端 `npm run build` 通过。
+
+### W5-7: Runtime trace 框架 (整合进 runtime 维护)
+
+- **目标**: 每条 chat 请求一个 `trace_id`, 关联该请求下所有 span (LLM 调用/工具调用/压缩/子 agent) 成时间线, 落库可查询。
+- **包**: `backend/app/core/runtime/` (新)。`trace.py` = `Trace`/`Span` dataclass + contextvar 传播 + `TraceStore` (自建 SQLite `data/runtime_trace.db`, 复用 ask_store 的 per-thread conn + `CREATE TABLE IF NOT EXISTS` 模式, **不走**未接线的 m001 migration runner)。
+- **传播**: contextvars (`_CURRENT_TRACE` / `_CURRENT_SPAN`), 跟 `app/tools/runtime_context.py` 一致。`start_trace` 产一个 **root span** (name=trace 名) 落库但**不设为 `_CURRENT_SPAN`**, 所以第一层 `start_span` 的 `parent_id=None`。
+- **开关**: `configure_runtime(enabled=...)` 全局控制; 关闭时 `start_trace/start_span` 仍返回可用 id 但**不落库** (零开销)。`config.py`: `runtime_trace_enabled=True` / `runtime_trace_retention_days=14`; `lifespan._startup_runtime` 首个启动步骤调 `configure_runtime`。
+- **埋点**:
+  - `stream.py`: session_id 后生成 `trace_id`, `start`/`done` SSE 带 `trace_id`; agent stream 循环包在 `_rt.start_trace(...)` (手动 `__enter__`/`__exit__`, inner-except + `finally` 双关闭, `_rt_cm` 在 try(343) 前所有路径已绑定)。
+  - `agent_hooks.py`: 模块级 `hook_trace_tool_span(ctx)` 注册在 `PostToolUse`, 每个工具调用自动产 tool span (log 行 "8 hooks")。
+  - `agent.py` (~941): 主流式 LLM 调用后用 `record_span("llm_call", ...)` 手动计时 (不 re-indent 复杂 fallback 块), 带 model/round/tokens。
+- **查询**: `app/api/trace.py` — `GET /api/trace/{trace_id}` (trace + span 时间线), `GET /api/trace/session/{session_id}` (列会话 trace), `GET /api/trace` (全局列表); 注册在 `main.py` hub_router 后。store 未启用返回空/404, 查询失败降级空结果。
+- **保留期清理**: `scheduler/__init__.py::scheduled_cleanup` 末尾加 `purge_older_than(now - retention_days*86400)` (独立 db, 失败不影响主清理)。
+- **铁律**: trace/落库代码**任何异常都 fail silently** (save_*/finish_* 全 try/except debug log), 绝不能打断主 chat 流。
+- **遗留**: 前端暂无 trace 时间线 UI (只有后端 API + SSE `trace_id`); LangChain 路径的 LLM span 未单独埋 (走 root trace + tool hook span)。
+- **测试**: `tests/test_w54_runtime_trace.py` (8, 模型传播/落库查询/error span/关闭 noop/record_span/hook span) + `tests/test_w54_trace_api.py` (5, 路由). 回归 75 passed (含 agent_hooks/lifespan/security 子集), in-process TestClient 验证 `/api/trace/*` 挂载 + `enabled=True`。
+
+
+### W5-7b: done 到达但气泡空白 (从未 emit content) 修复
+
+- **现象**: 前端 `[流式完成] {type:'done', content:undefined, full_content:undefined, usage:{}, tools_used:[]}` — 收到 done 但助手气泡空白。
+- **根因**: 某些路径 (如 delivery_gate 拦截"声称执行"回复 → 存进 context 但不 emit; 下一轮模型返回空 content → 循环 break) 会让 `final_response_chunks` 为空且**从未 yield 过 content 事件**; 后端从 context 兜底恢复 `final_reply` 存库, 但没补发给前端。
+- **修法** (三层, 任一层都能兜住):
+  1. `agent.py`: `_content()` 置位 `_content_emitted[0]`; 收尾若从未 emit 且 `final_reply` 非空/非"（无回复内容）", 补发一个 `_content(final_reply)` 再 `_done()`。
+  2. `langchain_agent.py`: 收尾若 `collected_content` 与 `display_text` 皆空, 补发一句占位内容。
+  3. `useStreamChat.ts`: `onDone` 兜底 — 气泡与 trace 都无可见文本时填占位文案, 永不留空气泡。
+- **测试**: `tests/test_w55_empty_response_fallback.py` (mock LLM 复现拦截+空回复两轮, 断言 done 前必有 content 事件); 前端 `npm run build` 通过。
+- **遗留失败**: `tests/test_w413_audit_fixes.py` 2 个 (`files_skipped` KeyError) 是 W5 skill-install 重构 (commit 7cd9e0a) 的既存回归, 与本次改动无关。
 
 ### W5-6: Skill 安装 no_source_mapping / 找不到 skill 修复
 

@@ -154,6 +154,15 @@ export interface StreamEvent {
     stop_reason?: string;
     continue_prompt?: string;
     ended_by?: 'budget' | 'ask' | 'evidence_missing' | 'tool_required_retry_exhausted' | 'manual_stop' | 'unknown';
+    /** W5-8: runtime 反思器对本轮的判定 (done 事件专属) */
+    /** W5-8: plan_loaded 事件携带的计划数据 */
+    plan?: any;
+    reflection?: {
+        decision: 'complete' | 'retry' | 'revise';
+        reasons?: string[];
+        correction?: string | null;
+        missing_evidence?: string[];
+    } | null;
 }
 
 export interface ArtifactPreview {
@@ -214,6 +223,8 @@ export interface SSECallbacks {
     onThinkingDelta?: (content: string) => void;
     /** 思考过程完成 */
     onThinkingDone?: () => void;
+    /** W5-8: plan_loaded 事件 — 计划已加载 */
+    onPlanLoaded?: (plan: any) => void;
     /** 等待用户交互式回答 */
     onAsk?: (question: string, choices: string[], question_id: string) => void;
     /** Token 使用量更新（实时） */

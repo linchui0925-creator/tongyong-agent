@@ -714,6 +714,11 @@ async def stream_chat_langchain(
             + "\n\n请点击继续执行，下一轮必须优先调用缺失工具。"
         )
         yield _content(display_text)
+    # 若整轮既没流式内容, 也没恢复出任何可见文本, 补一句兜底,
+    # 否则前端收到 done 但气泡为空 (content/full_content 全 undefined)。
+    if not collected_content and not display_text:
+        display_text = "（本轮没有生成可显示的回复，请重试或换个问法。）"
+        yield _content(display_text)
     if display_text:
         ctx.add_message("assistant", display_text)
 

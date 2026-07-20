@@ -88,13 +88,17 @@ def _required_tool_evidence(message: str) -> Dict[str, str]:
     text = (message or "").casefold()
     requirements: Dict[str, str] = {}
 
-    write_terms = (
-        "新增", "创建", "修改", "写入", "写文件", "完成一个", "实现",
-        "build", "ui", "react", "frontend", "前端", "界面", "组件",
-    )
-    if any(term in text for term in write_terms) and (
-        "文件" in text or "frontend" in text or "react" in text or "前端" in text or "ui" in text
-    ):
+    # 写文件要求: 必须同时有"写操作词"和"文件相关词"才触发, 纯计划/文案不触发。
+    # 代码/网页/前端 → 触发文件证据; 纯计划/文案/分析不触发。
+    write_terms = ("写", "新增", "创建", "修改", "生成", "写入", "写文件", "删除", "实现", "build", "构建", "编译")
+    # 代码相关: 网页/组件/程序/API/工具 → 需要文件证据
+    # 文案相关: 计划/文案/邮件/文章/方案 → 不需要文件证据
+    code_keywords = ("文件", "代码", "项目", "前端", "页面", "网页", "组件", "程序", "html",
+                     "app", "目录", "src", "workspace", "计算器", "博客", "爬虫", "api",
+                     "接口", "后端", "数据库", "脚本", "函数", "类", "模块", "demo",
+                     "css", "js", "tsx", "vue", "readme", "文档", "config", "json",
+                     "工具", "功能")
+    if any(t in text for t in write_terms) and any(k in text for k in code_keywords):
         requirements["write"] = "缺少真实写文件证据：必须调用 workspace_write、write_file 或 patch。"
 
     build_terms = ("npm run build", "构建", "build", "验证", "编译")

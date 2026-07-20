@@ -29,6 +29,41 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def hook_trace_tool_span(ctx: Dict[str, Any]) -> None:
+    """PostToolUse: 把工具调用写成 runtime trace span (W5-7)
+
+    挂在当前活跃 trace 下; runtime 关闭或无 trace 时零开销。
+    失败不抛: 追踪绝不能影响主流程。
+    """
+    try:
+        from app.core.runtime import trace as _rt
+        if not _rt.is_enabled():
+            return None
+        tool_name = ctx.get("tool_name", "unknown")
+        is_error = bool(ctx.get("is_error", False))
+        elapsed_ms = round(float(ctx.get("elapsed", 0.0) or 0.0) * 1000, 3)
+        args = ctx.get("arguments") or {}
+        attributes = {
+            "tool_call_id": ctx.get("tool_call_id"),
+            "session_id": ctx.get("session_id"),
+            "args_keys": sorted(list(args.keys())) if isinstance(args, dict) else [],
+        }
+        error_text = None
+        if is_error:
+            result = ctx.get("result")
+            error_text = str(result)[:500] if result is not None else "tool error"
+        _rt.record_span(
+            name=f"tool:{tool_name}",
+            duration_ms=elapsed_ms,
+            status="error" if is_error else "ok",
+            error=error_text,
+            attributes=attributes,
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"hook_trace_tool_span failed: {e}")
+    return None
+
 # 4 个核心事件 (与 s04_hooks 教学版对齐)
 HOOKS: Dict[str, List[Callable]] = {
     "UserPromptSubmit": [],
@@ -312,5 +347,6 @@ def setup_default_hooks(get_time: Callable[[], float] = None) -> None:
     register_hook("PostToolUse", hook_post_tool_side_effects)
     register_hook("PostToolUse", hook_audit_tool_use)
     register_hook("PostToolUse", hook_tool_stats)
+    register_hook("PostToolUse", hook_trace_tool_span)
     register_hook("Stop", hook_memory_save)
-    logger.info("default agent hooks registered (6 events, 7 hooks)")
+    logger.info("default agent hooks registered (6 events, 8 hooks)")

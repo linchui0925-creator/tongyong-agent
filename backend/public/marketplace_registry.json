@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-17T06:50:28.755570+00:00",
+  "updated_at": "2026-07-20T01:12:16.573333+00:00",
   "etag": null,
   "sources": {
     "hongmaple0820/scale-engine": {
@@ -94,8 +94,8 @@
     "anthropics/skills": {
       "owner": "anthropics",
       "repo": "skills",
-      "last_fetch": "2026-07-16T08:22:10.470764+00:00",
-      "skill_count": 10,
+      "last_fetch": "2026-07-19T12:59:51.682080+00:00",
+      "skill_count": 15,
       "skills": [
         {
           "name": "algorithmic-art",
@@ -129,6 +129,516 @@
               "path": "skills/algorithmic-art/templates/viewer.html",
               "size": 20844,
               "sha": "630cc1f62df51deac69b3246b2dfeb1e68dae024",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "canvas-design",
+          "path": "skills/canvas-design/SKILL.md",
+          "category": "general",
+          "description": "Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create ori",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 11937,
+          "files": [
+            {
+              "path": "skills/canvas-design/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/SKILL.md",
+              "size": 11939,
+              "sha": "9f63fee82de84cd4230e1d0e322247b61eb4c94c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/ArsenalSC-OFL.txt",
+              "size": 4373,
+              "sha": "1dad6ca6de2b041ef35c0f5009239ede4567e1f4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/ArsenalSC-Regular.ttf",
+              "size": 165848,
+              "sha": "fe5409b22e6b22a0ce80c65bdbb333d7d96e7a6a",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/BigShoulders-Bold.ttf",
+              "size": 94528,
+              "sha": "fc5f8fddee4c9e5810b1ab0e518a69acee3d2c50",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/BigShoulders-OFL.txt",
+              "size": 4397,
+              "sha": "b220280e780d0b52a1efb259f44f332cfa9dcab4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/BigShoulders-Regular.ttf",
+              "size": 94396,
+              "sha": "de8308ce32f3d6759e491dcdce37f65f538d6ac7",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Boldonse-OFL.txt",
+              "size": 4390,
+              "sha": "1890cb1c226f32e581a9ca30cb06e01f2d251168",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Boldonse-Regular.ttf",
+              "size": 77168,
+              "sha": "43fa30affce39b3649e6e94122fbe17cc5536dd2",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/BricolageGrotesque-Bold.ttf",
+              "size": 90952,
+              "sha": "f3b1deda1c594859a1f5197644142f73e2a85868",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/BricolageGrotesque-OFL.txt",
+              "size": 4403,
+              "sha": "fc2b2167c3ccc6fa6f41ab38cb5bde9b3b808769",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/BricolageGrotesque-Regular.ttf",
+              "size": 90920,
+              "sha": "0674ae3e4fc8c3f7baa53dbb582dd420ea73f224",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/CrimsonPro-Bold.ttf",
+              "size": 107352,
+              "sha": "58730fb4c7b999b46537d613ab629b8e465251ad",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/CrimsonPro-Italic.ttf",
+              "size": 108828,
+              "sha": "786a1bd66d38006d94a7cb96db1f93a2f439b08e",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/CrimsonPro-OFL.txt",
+              "size": 4394,
+              "sha": "f976fdc910257e3de8f4b24475963edb81b6ba46",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/CrimsonPro-Regular.ttf",
+              "size": 106696,
+              "sha": "f5666b9beb8fb808ee56e78726a5b754e67d1ae7",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/DMMono-OFL.txt",
+              "size": 4392,
+              "sha": "5b17f0c628c0a76ceb057e1b44d0112ab9a63ad2",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/DMMono-Regular.ttf",
+              "size": 48852,
+              "sha": "7efe813da72c7b1c0294cae782e88f262ecb75be",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/EricaOne-OFL.txt",
+              "size": 4410,
+              "sha": "490d012017f42bee136a3d3cb0d79ef9c3ba4561",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/EricaOne-Regular.ttf",
+              "size": 24872,
+              "sha": "8bd91d11773f5b035a9e6b6d1bab2e59b08051e3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/GeistMono-Bold.ttf",
+              "size": 78304,
+              "sha": "736ff7c3b1483081322cacc7c64e0995b52d8af6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/GeistMono-OFL.txt",
+              "size": 4388,
+              "sha": "679a685a2343079632b0dd836fecb7cefbea6f0d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/GeistMono-Regular.ttf",
+              "size": 78232,
+              "sha": "1a30262ab749ea7a56aedd91410d8be3787db548",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Gloock-OFL.txt",
+              "size": 4381,
+              "sha": "363acd33d9e37e60b9941229448244b6a2d22461",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Gloock-Regular.ttf",
+              "size": 95156,
+              "sha": "3e58c4e455cc143e9b02d05fdcb054fac62ed7ab",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexMono-Bold.ttf",
+              "size": 136008,
+              "sha": "247979caeb26c286a33cfd33234188d370c1c0ff",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexMono-OFL.txt",
+              "size": 4363,
+              "sha": "e423b74780b16934a073769bd147d46479ceb8b2",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexMono-Regular.ttf",
+              "size": 133796,
+              "sha": "601ae945ebe1a717ac3ab7ed393288975da83b32",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexSerif-Bold.ttf",
+              "size": 161000,
+              "sha": "78f6e500de7faaec05bbbc60ccfc81083440b1c8",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexSerif-BoldItalic.ttf",
+              "size": 169840,
+              "sha": "369b89d261b2d6d186e46b49a5b1959d9e95b5d4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexSerif-Italic.ttf",
+              "size": 170004,
+              "sha": "a4d859a77f0e52e36bf699cf55469c31a4664c18",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/IBMPlexSerif-Regular.ttf",
+              "size": 160380,
+              "sha": "35f454ceac6b101ea3f9bed9f57a68a61519b401",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSans-Bold.ttf",
+              "size": 68084,
+              "sha": "f602dcef23bb96d8d2f5c74c595ecf400c5ec722",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSans-BoldItalic.ttf",
+              "size": 70004,
+              "sha": "122b27305b6de88f6946bb171c055bd428124fc3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSans-Italic.ttf",
+              "size": 69900,
+              "sha": "4b98fb8dd753453f6e355a6dd1d4f483961c4017",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSans-OFL.txt",
+              "size": 4403,
+              "sha": "4bb99142f612dfaa0053377934b47e466800b20e",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSans-Regular.ttf",
+              "size": 68028,
+              "sha": "14c6113cdd3abcfa360f8d27bb42034aa91accc0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSerif-Italic.ttf",
+              "size": 70868,
+              "sha": "8fa958d9baf94bdf86c45d5340dc2ba171e2eb2c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/InstrumentSerif-Regular.ttf",
+              "size": 69312,
+              "sha": "976303184a522174d92bc8d1a82d7960850a94b0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Italiana-OFL.txt",
+              "size": 4394,
+              "sha": "ba8af215bb486cc7f3f9acfa5df895d5ba2d89ae",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Italiana-Regular.ttf",
+              "size": 27184,
+              "sha": "a9b828c0f308eaf07a172cbf2aae823e0f762210",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/JetBrainsMono-Bold.ttf",
+              "size": 114828,
+              "sha": "1926c804b95bcd44835689b0ddf1ac10d0b7a805",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/JetBrainsMono-OFL.txt",
+              "size": 4399,
+              "sha": "5ceee0025da23d2cd5fd14b28569708a8db4db2b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/JetBrainsMono-Regular.ttf",
+              "size": 114904,
+              "sha": "436c982ff3209357305892181e61565d1e01d439",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Jura-Light.ttf",
+              "size": 154308,
+              "sha": "dffbb3397409ebc91d53f4c4b29b7988c26a49f6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Jura-Medium.ttf",
+              "size": 154488,
+              "sha": "4bf91a33951b960e4d579eb2e57cce624e4aec0a",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Jura-OFL.txt",
+              "size": 4380,
+              "sha": "64ad4c67d29fb44d037a400881c3c7a3d227cacf",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/LibreBaskerville-OFL.txt",
+              "size": 4449,
+              "sha": "8c531fa56848a48577f9aa3b3e8051f3682e87f4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/LibreBaskerville-Regular.ttf",
+              "size": 147584,
+              "sha": "c1abc2645f623b8ab8d71724df32746b1aa627aa",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Lora-Bold.ttf",
+              "size": 133828,
+              "sha": "edae21eb689cda1c1a7b7b1a69277b3c01112a4c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Lora-BoldItalic.ttf",
+              "size": 140332,
+              "sha": "12dea8c6f5f3af6c7e066b9c6ae5c8b33741e45e",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Lora-Italic.ttf",
+              "size": 139328,
+              "sha": "e24b69b26b0e14a48fdbb65fd29db51ce1e95aad",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Lora-OFL.txt",
+              "size": 4423,
+              "sha": "4cf1b950d308edaee72401989e45410ea99e76a4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Lora-Regular.ttf",
+              "size": 133888,
+              "sha": "dc751db00dc171fc19737d9da800d7a583bb2c6d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/NationalPark-Bold.ttf",
+              "size": 79208,
+              "sha": "f4d7c021b6e0edd88bb152d8cee73154efa086c1",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/NationalPark-OFL.txt",
+              "size": 4399,
+              "sha": "f4ec3fba915df6e072b72fed691f1032d440544d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/NationalPark-Regular.ttf",
+              "size": 76424,
+              "sha": "e4cbfbf5eb9569b2f0bcfe2f55ea1625123fc14c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/NothingYouCouldDo-OFL.txt",
+              "size": 4363,
+              "sha": "c81eccdee9a75cebdd400cc39ff5a0bb7bd1eaa3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/NothingYouCouldDo-Regular.ttf",
+              "size": 32020,
+              "sha": "b086bced91e7b587e8cbe5d7e13e3363e18bc812",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Outfit-Bold.ttf",
+              "size": 55392,
+              "sha": "f9f2f72afdee8011d61048072576ceee2f95ea60",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Outfit-OFL.txt",
+              "size": 4389,
+              "sha": "fd0cb995c0cadfa28394e7f9b88b7e43c783b453",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Outfit-Regular.ttf",
+              "size": 54912,
+              "sha": "3939ab246e0736f7283a571a458db274088ed7b6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/PixelifySans-Medium.ttf",
+              "size": 51072,
+              "sha": "95cd372534b533c9cb7ce35b782f0623ecb4de00",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/PixelifySans-OFL.txt",
+              "size": 4395,
+              "sha": "b02d1b6767c0cd44a3a3afeddef03778f10e6ad2",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/PoiretOne-OFL.txt",
+              "size": 4366,
+              "sha": "607bdad3fd41bf7915b74271cd4c67f3319c00e6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/PoiretOne-Regular.ttf",
+              "size": 45244,
+              "sha": "b339511b02ea2c25722c8c975e7018e8efcaa217",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/RedHatMono-Bold.ttf",
+              "size": 34420,
+              "sha": "a6e3cf157ad71c0620620c9da48a8c8d0ca26cdf",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/RedHatMono-OFL.txt",
+              "size": 4394,
+              "sha": "16cf394bb1bd5100686703ebc4a3772a568e0e6a",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/RedHatMono-Regular.ttf",
+              "size": 34488,
+              "sha": "3bf6a698bbb3ab2caefdd2cd0456fc08b35ecf1d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Silkscreen-OFL.txt",
+              "size": 4394,
+              "sha": "a1fe7d5fbe4182d1071a23f8a8c46b9766eec81c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Silkscreen-Regular.ttf",
+              "size": 31960,
+              "sha": "8abaa7c500d4555073f9e303ec2e5e343d3b8f3f",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/SmoochSans-Medium.ttf",
+              "size": 59704,
+              "sha": "0af9ead07bc2b95a691a63c72d328595b93183a0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/SmoochSans-OFL.txt",
+              "size": 4396,
+              "sha": "4c2f033ac0e041f61d88d255c4bb02ee28b6f3cb",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Tektur-Medium.ttf",
+              "size": 76248,
+              "sha": "34fc797195169923bad8e76181d60ae02019fef0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Tektur-OFL.txt",
+              "size": 4385,
+              "sha": "2cad55f1b2d239571560773c92801166cb2be635",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/Tektur-Regular.ttf",
+              "size": 75604,
+              "sha": "f280fba407441453779b16f7021a286219421486",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/WorkSans-Bold.ttf",
+              "size": 191304,
+              "sha": "5c97989292020632435b96e6622c74b1f1c6e5cd",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/WorkSans-BoldItalic.ttf",
+              "size": 175772,
+              "sha": "54418b8a6303d1b0cd6b6a206ca3014eba71bc3a",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/WorkSans-Italic.ttf",
+              "size": 174280,
+              "sha": "40529b68f7784c96872fa7ed9bfb46d72bf699e2",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/WorkSans-OFL.txt",
+              "size": 4397,
+              "sha": "070f3416c4767c3396120b5942627f6d3d5bab10",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/WorkSans-Regular.ttf",
+              "size": 188916,
+              "sha": "d24586cc0336949d49a1c2bf3fb3b306c47b431e",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/YoungSerif-OFL.txt",
+              "size": 4398,
+              "sha": "f09443cbe4dfca41153edf6f9dd8fd63138a24b3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/canvas-design/canvas-fonts/YoungSerif-Regular.ttf",
+              "size": 105136,
+              "sha": "f454fbedd4c8b00833d17fffa1f89acb5149b02c",
               "type": "blob"
             }
           ]
@@ -542,6 +1052,456 @@
           ]
         },
         {
+          "name": "docx",
+          "path": "skills/docx/SKILL.md",
+          "category": "general",
+          "description": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files) or Word templates (.dotx files). Triggers include: any mention of 'Word doc', 'word document', ",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 6868,
+          "files": [
+            {
+              "path": "skills/docx/LICENSE.txt",
+              "size": 1467,
+              "sha": "c55ab42224874608473643de0a85736b7fec0730",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/SKILL.md",
+              "size": 6911,
+              "sha": "fb954a460a1ea2294e9595e87fecce8df043eeba",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/__init__.py",
+              "size": 1,
+              "sha": "8b137891791fe96927ad78e64b0aad7bded08bdc",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/accept_changes.py",
+              "size": 4051,
+              "sha": "8e363161915d3720409bb8b6ef9bc4ade33b64e4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/comment.py",
+              "size": 14054,
+              "sha": "46ed5f52eb639934a8ead383976eecc2a6867fa7",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/merge_runs.py",
+              "size": 9398,
+              "sha": "4c7c1bf261b1ec3febe4112e30f46c2aa9f4a141",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/helpers/__init__.py",
+              "size": 3358,
+              "sha": "d3c5817c7e50b23bdd82032c8f89fed497bce9fa",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/helpers/pptx_chart.py",
+              "size": 5862,
+              "sha": "209cb7c58b91b90ee685c082f7e20be21a1a6686",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/helpers/pptx_slide.py",
+              "size": 1675,
+              "sha": "22f9aee0ff6c4797fa344f064d7cd6a1ab96b05b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/helpers/pptx_theme.py",
+              "size": 3510,
+              "sha": "84466201cf22ca237cd640c80a08e9e2cabcce90",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-chart.xsd",
+              "size": 74984,
+              "sha": "6454ef9a94d52512e4905df61280a3fd1dafc0a4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-chartDrawing.xsd",
+              "size": 6956,
+              "sha": "afa4f463e3140a3f626c73f7966d689270d89b2c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-diagram.xsd",
+              "size": 51302,
+              "sha": "64e66b8abd496d2e450c08110e40607e90b3fe13",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-lockedCanvas.xsd",
+              "size": 624,
+              "sha": "687eea8297caa298581aa06c40ca40ef7b8a58bc",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-main.xsd",
+              "size": 152039,
+              "sha": "6ac81b06b7a3ef916d677953084ae225504a77bc",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-picture.xsd",
+              "size": 1231,
+              "sha": "1dbf05140d07fa014f18a5630acc0613d8058e52",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-spreadsheetDrawing.xsd",
+              "size": 8862,
+              "sha": "f1af17db4e83b1c40152577eca4a575ab63a1ca7",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/dml-wordprocessingDrawing.xsd",
+              "size": 14795,
+              "sha": "0a185ab6ed0c2dd9b383a403c56c909bbab8b9a1",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/pml.xsd",
+              "size": 83612,
+              "sha": "14ef488865f3ae6150776220ebbcf4788f89066a",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-additionalCharacteristics.xsd",
+              "size": 1269,
+              "sha": "c20f3bf14720d34247e8e1302dc3c40f7b832099",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-bibliography.xsd",
+              "size": 7328,
+              "sha": "ac60252262534e7b87523fd04d252f085b38bec0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-commonSimpleTypes.xsd",
+              "size": 6382,
+              "sha": "424b8ba8d1f9ebb22ba72cdd174c8a2ade0ecf89",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-customXmlDataProperties.xsd",
+              "size": 1248,
+              "sha": "2bddce29214882eb9fdf2be8a50ed5bdd0c69dfc",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-customXmlSchemaProperties.xsd",
+              "size": 880,
+              "sha": "8a8c18ba2d5caa7e60a365e77ae0d1b872141bb0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-documentPropertiesCustom.xsd",
+              "size": 2608,
+              "sha": "5c42706a0d53c5e8b96818d9c29a292d1504f720",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-documentPropertiesExtended.xsd",
+              "size": 3507,
+              "sha": "853c341c87feb51e10d757aea28b4185ae4c2731",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-documentPropertiesVariantTypes.xsd",
+              "size": 7507,
+              "sha": "da835ee82d5cc31be9fa9792512930f7ae3fb5ce",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-math.xsd",
+              "size": 23313,
+              "sha": "87ad2658fa51cb4c172f82d0fdf33a492a750eca",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/shared-relationshipReference.xsd",
+              "size": 1367,
+              "sha": "9e86f1b2be0d431cd3c250ddeaf4efabdbcb088b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/sml.xsd",
+              "size": 242277,
+              "sha": "d0be42e757f3cce533c1c80770239f0097d3de6b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/vml-main.xsd",
+              "size": 26148,
+              "sha": "8821dd183caf9c8c3b809e0e2d9e0df56c4e9ed9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/vml-officeDrawing.xsd",
+              "size": 25279,
+              "sha": "ca2575c753be78cdaa96de56b3ff8770173c324d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/vml-presentationDrawing.xsd",
+              "size": 535,
+              "sha": "dd079e603f5770176212776a1d565b108875cf64",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/vml-spreadsheetDrawing.xsd",
+              "size": 5712,
+              "sha": "3dd6cf625a740398c2a4dc8abbe18e25e0ac5e9f",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/vml-wordprocessingDrawing.xsd",
+              "size": 4010,
+              "sha": "f1041e34ef365926f5670b896f5bb23e553ac36d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/wml.xsd",
+              "size": 171367,
+              "sha": "9c5b7a633411c2313ce839f748e4623bb0a70efe",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ISO-IEC29500-4_2016/xml.xsd",
+              "size": 4646,
+              "sha": "0f13678d80a762375223f060e23b56c7b2eac89e",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ecma/fouth-edition/opc-contentTypes.xsd",
+              "size": 1963,
+              "sha": "a6de9d2733d3f0eea12ae87b24122495df1f0928",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ecma/fouth-edition/opc-coreProperties.xsd",
+              "size": 2515,
+              "sha": "10e978b661fc291cbeea9ab0c248601cf216f96d",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ecma/fouth-edition/opc-digSig.xsd",
+              "size": 2856,
+              "sha": "4248bf7a39c793c9f319bae7d09f92983efe5368",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/ecma/fouth-edition/opc-relationships.xsd",
+              "size": 1344,
+              "sha": "56497467120b52b742756379959d4b2536be6df7",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/mce/mc.xsd",
+              "size": 3127,
+              "sha": "ef725457cf39116672e285d021be69b7ad022574",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-2010.xsd",
+              "size": 26549,
+              "sha": "f65f777730d82162f4248f03c703b1b85fda5fe2",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-2012.xsd",
+              "size": 3745,
+              "sha": "6b00755a9a8733f0fb171a47b25d0d7b4c70dee8",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-2018.xsd",
+              "size": 901,
+              "sha": "f321d333a5e6ef98cbdfeeeaa334923e4cfc8a6c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-cex-2018.xsd",
+              "size": 1778,
+              "sha": "364c6a9b8df6e252bb5ae39e2ca031fcbfc4e8a5",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-cid-2016.xsd",
+              "size": 1002,
+              "sha": "fed9d15b7f504e14ac82793d79db2d7ad83d56ed",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-sdtdatahash-2020.xsd",
+              "size": 600,
+              "sha": "680cf15400cd57ce2bf17a58ecd29caa0d8a8422",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/schemas/microsoft/wml-symex-2015.xsd",
+              "size": 745,
+              "sha": "89ada90837b2db3f3d453212ae426520acedbbea",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/soffice.py",
+              "size": 5927,
+              "sha": "0b4c99deca54013c550458c9244ee63eea748dca",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/validate.py",
+              "size": 6142,
+              "sha": "29ca186a12e5c102702029ab9e51e6c3b71b1403",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/validators/__init__.py",
+              "size": 336,
+              "sha": "db092ece7e21de98f87bd81471578259a1bc642f",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/validators/base.py",
+              "size": 33756,
+              "sha": "33fc97bbe351949f9a8bd88998c78f81cd842c6a",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/validators/docx.py",
+              "size": 17482,
+              "sha": "b18149945a7cf7ebd77c14655eb74d89baca3a00",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/validators/pptx.py",
+              "size": 15966,
+              "sha": "318f0e61483972fb08e02be39c94331dba46445e",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/office/validators/redlining.py",
+              "size": 11231,
+              "sha": "4185c51f4f10eeaf3227168e440ed378ce120ec6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/templates/comments.xml",
+              "size": 2603,
+              "sha": "cd01a7d7155f9a78cf3d11470e2ce2b5ccdac640",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/templates/commentsExtended.xml",
+              "size": 2611,
+              "sha": "411003cc485356c560e29687ca359d64cd89d4b4",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/templates/commentsExtensible.xml",
+              "size": 2707,
+              "sha": "f5572d710826dd7a1f455af7487e2157ef01ada0",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/templates/commentsIds.xml",
+              "size": 2619,
+              "sha": "32f1629f2a8bb9aafebb0699349d0d799edce9f3",
+              "type": "blob"
+            },
+            {
+              "path": "skills/docx/scripts/templates/people.xml",
+              "size": 115,
+              "sha": "3803d2de0faa635687a48947b52ab98b9655f631",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "frontend-design",
+          "path": "skills/frontend-design/SKILL.md",
+          "category": "general",
+          "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defau",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 8250,
+          "files": [
+            {
+              "path": "skills/frontend-design/LICENSE.txt",
+              "size": 10174,
+              "sha": "f433b1a53f5b830a205fd2df78e2b34974656c7b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/frontend-design/SKILL.md",
+              "size": 8260,
+              "sha": "decdff43d05908b4c1fc2cfd2d80fc5743440934",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "internal-comms",
+          "path": "skills/internal-comms/SKILL.md",
+          "category": "general",
+          "description": "A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal com",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 1511,
+          "files": [
+            {
+              "path": "skills/internal-comms/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/internal-comms/SKILL.md",
+              "size": 1511,
+              "sha": "56ea935b74f371bfeb4c7d3c19d5139df866e73b",
+              "type": "blob"
+            },
+            {
+              "path": "skills/internal-comms/examples/3p-updates.md",
+              "size": 3274,
+              "sha": "5329bfbf3b47035946a3995dd63025799b582f8c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/internal-comms/examples/company-newsletter.md",
+              "size": 3295,
+              "sha": "4997a072b62ed7f65a9fd113903db3d9eba34b98",
+              "type": "blob"
+            },
+            {
+              "path": "skills/internal-comms/examples/faq-answers.md",
+              "size": 2366,
+              "sha": "395262a860636434593cd3c3da258000231ea4f6",
+              "type": "blob"
+            },
+            {
+              "path": "skills/internal-comms/examples/general-comms.md",
+              "size": 602,
+              "sha": "0ea977018ca8167d39bfc9adb253f80336819578",
+              "type": "blob"
+            }
+          ]
+        },
+        {
           "name": "mcp-builder",
           "path": "skills/mcp-builder/SKILL.md",
           "category": "general",
@@ -701,11 +1661,11 @@
           "name": "pptx",
           "path": "skills/pptx/SKILL.md",
           "category": "general",
-          "description": "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from a",
+          "description": "Use this skill any time a .pptx or .potx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting te",
           "version": "0.0.0",
           "tags": [],
           "quarantined_reason": null,
-          "size_bytes": 9128,
+          "size_bytes": 20647,
           "files": [
             {
               "path": "skills/pptx/LICENSE.txt",
@@ -715,20 +1675,8 @@
             },
             {
               "path": "skills/pptx/SKILL.md",
-              "size": 9182,
-              "sha": "df5000e17ef60ecf400e65bfcd3c58ff88b604c3",
-              "type": "blob"
-            },
-            {
-              "path": "skills/pptx/editing.md",
-              "size": 6885,
-              "sha": "f873e8a04ab20b5a79543ea28729149cfd70ef2c",
-              "type": "blob"
-            },
-            {
-              "path": "skills/pptx/pptxgenjs.md",
-              "size": 12819,
-              "sha": "6bfed908c9001d047b65995a8eb8b2097340da76",
+              "size": 20796,
+              "sha": "41cd2306977f269bb1d8169a9643b35053aa66bd",
               "type": "blob"
             },
             {
@@ -739,38 +1687,38 @@
             },
             {
               "path": "skills/pptx/scripts/add_slide.py",
-              "size": 6872,
-              "sha": "13700df012007ae73e63e12555182b75d3899a4a",
+              "size": 14537,
+              "sha": "f013ea94d1785c8cf767fb69284ffb5b8dd9d390",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/clean.py",
-              "size": 9583,
-              "sha": "3d13994cfeb46b70ca2d8ba2839688bc85021fd0",
+              "size": 10415,
+              "sha": "551dd23192f6eae8e79d4b59b08a3cd9d10feadd",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/office/helpers/__init__.py",
-              "size": 0,
-              "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+              "size": 3358,
+              "sha": "d3c5817c7e50b23bdd82032c8f89fed497bce9fa",
               "type": "blob"
             },
             {
-              "path": "skills/pptx/scripts/office/helpers/merge_runs.py",
-              "size": 5567,
-              "sha": "ad7c25eec0d064fbd9f5624b17b60e5dd49b5903",
+              "path": "skills/pptx/scripts/office/helpers/pptx_chart.py",
+              "size": 5862,
+              "sha": "209cb7c58b91b90ee685c082f7e20be21a1a6686",
               "type": "blob"
             },
             {
-              "path": "skills/pptx/scripts/office/helpers/simplify_redlines.py",
-              "size": 5754,
-              "sha": "db963bb998d7d5a8517d8252ce82ec9ab28665bc",
+              "path": "skills/pptx/scripts/office/helpers/pptx_slide.py",
+              "size": 1675,
+              "sha": "22f9aee0ff6c4797fa344f064d7cd6a1ab96b05b",
               "type": "blob"
             },
             {
-              "path": "skills/pptx/scripts/office/pack.py",
-              "size": 4991,
-              "sha": "db29ed8b1c3676a4980b2d67e9dfe432556d2e58",
+              "path": "skills/pptx/scripts/office/helpers/pptx_theme.py",
+              "size": 3510,
+              "sha": "84466201cf22ca237cd640c80a08e9e2cabcce90",
               "type": "blob"
             },
             {
@@ -1009,20 +1957,14 @@
             },
             {
               "path": "skills/pptx/scripts/office/soffice.py",
-              "size": 5301,
-              "sha": "c7f7e3289fdff196399fd6f3d6668b9aa68eec87",
-              "type": "blob"
-            },
-            {
-              "path": "skills/pptx/scripts/office/unpack.py",
-              "size": 4052,
-              "sha": "00152533ac0fa95109f74253ac6a475401fa6afe",
+              "size": 5927,
+              "sha": "0b4c99deca54013c550458c9244ee63eea748dca",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/office/validate.py",
-              "size": 3668,
-              "sha": "03b01f6e3ba40e1408d0bd16d587154fa9798a87",
+              "size": 6142,
+              "sha": "29ca186a12e5c102702029ab9e51e6c3b71b1403",
               "type": "blob"
             },
             {
@@ -1033,32 +1975,32 @@
             },
             {
               "path": "skills/pptx/scripts/office/validators/base.py",
-              "size": 32651,
-              "sha": "db4a06a2291abf80bd9b000b6ff3b7f012e6dd2f",
+              "size": 33756,
+              "sha": "33fc97bbe351949f9a8bd88998c78f81cd842c6a",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/office/validators/docx.py",
-              "size": 16376,
-              "sha": "fec405e694790259824feebb95061f56a705621c",
+              "size": 17482,
+              "sha": "b18149945a7cf7ebd77c14655eb74d89baca3a00",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/office/validators/pptx.py",
-              "size": 9824,
-              "sha": "09842aa99866fe270ecfeec6f7993495e1865f2b",
+              "size": 15966,
+              "sha": "318f0e61483972fb08e02be39c94331dba46445e",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/office/validators/redlining.py",
-              "size": 8918,
-              "sha": "71c81b6bf4cacda322db32c87df7b2301c469933",
+              "size": 11231,
+              "sha": "4185c51f4f10eeaf3227168e440ed378ce120ec6",
               "type": "blob"
             },
             {
               "path": "skills/pptx/scripts/thumbnail.py",
-              "size": 8785,
-              "sha": "edcbdc0f81e7919fb2e6bb5b4a9f15bfa131f036",
+              "size": 9802,
+              "sha": "d49cac0e1a138fd0cbf46dece32b0da153cdc4f7",
               "type": "blob"
             }
           ]
@@ -1179,6 +2121,60 @@
               "path": "skills/skill-creator/scripts/utils.py",
               "size": 1661,
               "sha": "51b6a07dd57174197a937034b7eecebd5768ff8a",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "slack-gif-creator",
+          "path": "skills/slack-gif-creator/SKILL.md",
+          "category": "general",
+          "description": "Knowledge and utilities for creating animated GIFs optimized for Slack. Provides constraints, validation tools, and animation concepts. Use when users request animated GIFs for Slack like \"make me a G",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 7841,
+          "files": [
+            {
+              "path": "skills/slack-gif-creator/LICENSE.txt",
+              "size": 11345,
+              "sha": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/SKILL.md",
+              "size": 7841,
+              "sha": "16660d8ceb77af47986bba1c9176c2ff3f287a91",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/core/easing.py",
+              "size": 6265,
+              "sha": "772fa830235dac37ba995ee66778111f59c2ee31",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/core/frame_composer.py",
+              "size": 4548,
+              "sha": "1afe434811bd4a8a1bdb4df7961147f2c9afd130",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/core/gif_builder.py",
+              "size": 9847,
+              "sha": "5759f144fe3cef50f3dfd3b8911e612e80099cea",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/core/validators.py",
+              "size": 3785,
+              "sha": "a6f5bdf28ddd0a9613f2e076e37d940e03ad997c",
+              "type": "blob"
+            },
+            {
+              "path": "skills/slack-gif-creator/requirements.txt",
+              "size": 66,
+              "sha": "8bc4493e9163cb513d4be38ab9fe5c1ff763e0d7",
               "type": "blob"
             }
           ]
@@ -1325,11 +2321,11 @@
           "name": "xlsx",
           "path": "skills/xlsx/SKILL.md",
           "category": "general",
-          "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .csv, or .tsv file (e.g., add",
+          "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .xltx, .csv, or .tsv file (e.",
           "version": "0.0.0",
           "tags": [],
           "quarantined_reason": null,
-          "size_bytes": 11455,
+          "size_bytes": 8542,
           "files": [
             {
               "path": "skills/xlsx/LICENSE.txt",
@@ -1339,32 +2335,32 @@
             },
             {
               "path": "skills/xlsx/SKILL.md",
-              "size": 11463,
-              "sha": "c5c881be9ebaa2bfcdd02f97de2ebd711ab78803",
+              "size": 8598,
+              "sha": "9da54804cc8c938586f89363c8da3b3a6e2a563d",
               "type": "blob"
             },
             {
               "path": "skills/xlsx/scripts/office/helpers/__init__.py",
-              "size": 0,
-              "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+              "size": 3358,
+              "sha": "d3c5817c7e50b23bdd82032c8f89fed497bce9fa",
               "type": "blob"
             },
             {
-              "path": "skills/xlsx/scripts/office/helpers/merge_runs.py",
-              "size": 5567,
-              "sha": "ad7c25eec0d064fbd9f5624b17b60e5dd49b5903",
+              "path": "skills/xlsx/scripts/office/helpers/pptx_chart.py",
+              "size": 5862,
+              "sha": "209cb7c58b91b90ee685c082f7e20be21a1a6686",
               "type": "blob"
             },
             {
-              "path": "skills/xlsx/scripts/office/helpers/simplify_redlines.py",
-              "size": 5754,
-              "sha": "db963bb998d7d5a8517d8252ce82ec9ab28665bc",
+              "path": "skills/xlsx/scripts/office/helpers/pptx_slide.py",
+              "size": 1675,
+              "sha": "22f9aee0ff6c4797fa344f064d7cd6a1ab96b05b",
               "type": "blob"
             },
             {
-              "path": "skills/xlsx/scripts/office/pack.py",
-              "size": 4991,
-              "sha": "db29ed8b1c3676a4980b2d67e9dfe432556d2e58",
+              "path": "skills/xlsx/scripts/office/helpers/pptx_theme.py",
+              "size": 3510,
+              "sha": "84466201cf22ca237cd640c80a08e9e2cabcce90",
               "type": "blob"
             },
             {
@@ -1603,20 +2599,14 @@
             },
             {
               "path": "skills/xlsx/scripts/office/soffice.py",
-              "size": 5301,
-              "sha": "c7f7e3289fdff196399fd6f3d6668b9aa68eec87",
-              "type": "blob"
-            },
-            {
-              "path": "skills/xlsx/scripts/office/unpack.py",
-              "size": 4052,
-              "sha": "00152533ac0fa95109f74253ac6a475401fa6afe",
+              "size": 5927,
+              "sha": "0b4c99deca54013c550458c9244ee63eea748dca",
               "type": "blob"
             },
             {
               "path": "skills/xlsx/scripts/office/validate.py",
-              "size": 3668,
-              "sha": "03b01f6e3ba40e1408d0bd16d587154fa9798a87",
+              "size": 6142,
+              "sha": "29ca186a12e5c102702029ab9e51e6c3b71b1403",
               "type": "blob"
             },
             {
@@ -1627,32 +2617,32 @@
             },
             {
               "path": "skills/xlsx/scripts/office/validators/base.py",
-              "size": 32651,
-              "sha": "db4a06a2291abf80bd9b000b6ff3b7f012e6dd2f",
+              "size": 33756,
+              "sha": "33fc97bbe351949f9a8bd88998c78f81cd842c6a",
               "type": "blob"
             },
             {
               "path": "skills/xlsx/scripts/office/validators/docx.py",
-              "size": 16376,
-              "sha": "fec405e694790259824feebb95061f56a705621c",
+              "size": 17482,
+              "sha": "b18149945a7cf7ebd77c14655eb74d89baca3a00",
               "type": "blob"
             },
             {
               "path": "skills/xlsx/scripts/office/validators/pptx.py",
-              "size": 9824,
-              "sha": "09842aa99866fe270ecfeec6f7993495e1865f2b",
+              "size": 15966,
+              "sha": "318f0e61483972fb08e02be39c94331dba46445e",
               "type": "blob"
             },
             {
               "path": "skills/xlsx/scripts/office/validators/redlining.py",
-              "size": 8918,
-              "sha": "71c81b6bf4cacda322db32c87df7b2301c469933",
+              "size": 11231,
+              "sha": "4185c51f4f10eeaf3227168e440ed378ce120ec6",
               "type": "blob"
             },
             {
               "path": "skills/xlsx/scripts/recalc.py",
-              "size": 5782,
-              "sha": "f472e9a5d04583dc14869f36aa4252a533639ad6",
+              "size": 10670,
+              "sha": "6232be2deea56cc97c1d8996e4d68adf2457059c",
               "type": "blob"
             }
           ]
@@ -1680,8 +2670,8 @@
     "ComposioHQ/awesome-claude-skills": {
       "owner": "ComposioHQ",
       "repo": "awesome-claude-skills",
-      "last_fetch": "2026-07-16T20:30:49.497119+00:00",
-      "skill_count": 854,
+      "last_fetch": "2026-07-20T01:12:16.573234+00:00",
+      "skill_count": 843,
       "skills": [
         {
           "name": "artifacts-builder",
@@ -2314,24 +3304,6 @@
           ]
         },
         {
-          "name": "-2chat-automation",
-          "path": "composio-skills/-2chat-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate 2chat tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2897,
-          "files": [
-            {
-              "path": "composio-skills/-2chat-automation/SKILL.md",
-              "size": 2899,
-              "sha": "a390d0ae5a9cfbfff5a620036269948cab8118d6",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "ably-automation",
           "path": "composio-skills/ably-automation/SKILL.md",
           "category": "general",
@@ -2399,6 +3371,24 @@
               "path": "composio-skills/abyssale-automation/SKILL.md",
               "size": 2937,
               "sha": "0f1879105609aafd16d4140e5d4878cf962bd654",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "accelo-automation",
+          "path": "composio-skills/accelo-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Accelo tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2905,
+          "files": [
+            {
+              "path": "composio-skills/accelo-automation/SKILL.md",
+              "size": 2907,
+              "sha": "5252a206155128ad02e5663a07935a7fdd791948",
               "type": "blob"
             }
           ]
@@ -2998,24 +3988,6 @@
           ]
         },
         {
-          "name": "anonyflow-automation",
-          "path": "composio-skills/anonyflow-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Anonyflow tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2950,
-          "files": [
-            {
-              "path": "composio-skills/anonyflow-automation/SKILL.md",
-              "size": 2952,
-              "sha": "9a36d494c02f8d539c91cb70b72ed35d31e3ca08",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "anthropic-administrator-automation",
           "path": "composio-skills/anthropic-administrator-automation/SKILL.md",
           "category": "general",
@@ -3340,24 +4312,6 @@
           ]
         },
         {
-          "name": "appointo-automation",
-          "path": "composio-skills/appointo-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Appointo tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2935,
-          "files": [
-            {
-              "path": "composio-skills/appointo-automation/SKILL.md",
-              "size": 2937,
-              "sha": "7c1171b2eb35e2eb913b7b42cb99ea57acce3c65",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "appsflyer-automation",
           "path": "composio-skills/appsflyer-automation/SKILL.md",
           "category": "general",
@@ -3371,6 +4325,24 @@
               "path": "composio-skills/appsflyer-automation/SKILL.md",
               "size": 2952,
               "sha": "b5b066e16d281a93ee20d1e7d9ccd82e3fe19c24",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "appveyor-automation",
+          "path": "composio-skills/appveyor-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Appveyor tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2935,
+          "files": [
+            {
+              "path": "composio-skills/appveyor-automation/SKILL.md",
+              "size": 2937,
+              "sha": "ca3a737721e1a5c64eeac3eaeb20a590ab022cb1",
               "type": "blob"
             }
           ]
@@ -4510,24 +5482,6 @@
           ]
         },
         {
-          "name": "browseai-automation",
-          "path": "composio-skills/browseai-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Browseai tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2935,
-          "files": [
-            {
-              "path": "composio-skills/browseai-automation/SKILL.md",
-              "size": 2937,
-              "sha": "f33e02cdd000da2d6efcdc6a05f086d5ea10b0bb",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "browser-tool-automation",
           "path": "composio-skills/browser-tool-automation/SKILL.md",
           "category": "general",
@@ -4613,6 +5567,24 @@
               "path": "composio-skills/btcpay-server-automation/SKILL.md",
               "size": 3012,
               "sha": "be19b5045308704b0214e45692354f78856271f1",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "bubble-automation",
+          "path": "composio-skills/bubble-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Bubble tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2905,
+          "files": [
+            {
+              "path": "composio-skills/bubble-automation/SKILL.md",
+              "size": 2907,
+              "sha": "7751202329326a3ae9362c1ba0e5efe0e70ad0f2",
               "type": "blob"
             }
           ]
@@ -5423,24 +6395,6 @@
               "path": "composio-skills/cloudlayer-automation/SKILL.md",
               "size": 2967,
               "sha": "44079e22db690abf013cfc64673ce4121ff3d2ca",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "cloudpress-automation",
-          "path": "composio-skills/cloudpress-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Cloudpress tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2965,
-          "files": [
-            {
-              "path": "composio-skills/cloudpress-automation/SKILL.md",
-              "size": 2967,
-              "sha": "0e592df2e70f99ae2656cb76837c8629655c2e3a",
               "type": "blob"
             }
           ]
@@ -7012,6 +7966,24 @@
           ]
         },
         {
+          "name": "endorsal-automation",
+          "path": "composio-skills/endorsal-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Endorsal tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2935,
+          "files": [
+            {
+              "path": "composio-skills/endorsal-automation/SKILL.md",
+              "size": 2937,
+              "sha": "197b9dcad86af6231e813187faf437b570b48f9d",
+              "type": "blob"
+            }
+          ]
+        },
+        {
           "name": "enginemailer-automation",
           "path": "composio-skills/enginemailer-automation/SKILL.md",
           "category": "general",
@@ -7061,6 +8033,24 @@
               "path": "composio-skills/entelligence-automation/SKILL.md",
               "size": 2997,
               "sha": "3e9be30d57e553836d94bdd95dc2724036b0c524",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "eodhd-apis-automation",
+          "path": "composio-skills/eodhd-apis-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Eodhd Apis tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2965,
+          "files": [
+            {
+              "path": "composio-skills/eodhd-apis-automation/SKILL.md",
+              "size": 2967,
+              "sha": "55784e795ab64d9761725b295c72e78a2d24a4d0",
               "type": "blob"
             }
           ]
@@ -7282,24 +8272,6 @@
           ]
         },
         {
-          "name": "Excel Automation",
-          "path": "composio-skills/excel-automation/SKILL.md",
-          "category": "general",
-          "description": "Excel Automation: create workbooks, manage worksheets, read/write cell data, and format spreadsheets via Microsoft Excel and Google Sheets integration",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 7794,
-          "files": [
-            {
-              "path": "composio-skills/excel-automation/SKILL.md",
-              "size": 7794,
-              "sha": "e18eb13db57f068ed6b146fffb6ef0ef59c46bee",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "exist-automation",
           "path": "composio-skills/exist-automation/SKILL.md",
           "category": "general",
@@ -7313,24 +8285,6 @@
               "path": "composio-skills/exist-automation/SKILL.md",
               "size": 2892,
               "sha": "7ef45ba8b6abd71624c53ca7c463eec395373df2",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "expofp-automation",
-          "path": "composio-skills/expofp-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Expofp tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2905,
-          "files": [
-            {
-              "path": "composio-skills/expofp-automation/SKILL.md",
-              "size": 2907,
-              "sha": "558992825a713bf07bcf9bda989353515e7a9be8",
               "type": "blob"
             }
           ]
@@ -7583,24 +8537,6 @@
               "path": "composio-skills/finerworks-automation/SKILL.md",
               "size": 2967,
               "sha": "eb4db421be12df85a2c44cd298fc53a505935b69",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "fingertip-automation",
-          "path": "composio-skills/fingertip-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Fingertip tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2950,
-          "files": [
-            {
-              "path": "composio-skills/fingertip-automation/SKILL.md",
-              "size": 2952,
-              "sha": "bdf84cd5fcf7d2a0546f6a0132c39ab2dd43b81b",
               "type": "blob"
             }
           ]
@@ -8218,24 +9154,6 @@
           ]
         },
         {
-          "name": "geokeo-automation",
-          "path": "composio-skills/geokeo-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Geokeo tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2905,
-          "files": [
-            {
-              "path": "composio-skills/geokeo-automation/SKILL.md",
-              "size": 2907,
-              "sha": "f47bf189f2913b20a5a728fbcb2eaf1953bf477b",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "getform-automation",
           "path": "composio-skills/getform-automation/SKILL.md",
           "category": "general",
@@ -8285,24 +9203,6 @@
               "path": "composio-skills/gigasheet-automation/SKILL.md",
               "size": 2952,
               "sha": "30d89c22ab7da9e6e6c10522c19cd96358252a54",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "giphy-automation",
-          "path": "composio-skills/giphy-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Giphy tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2890,
-          "files": [
-            {
-              "path": "composio-skills/giphy-automation/SKILL.md",
-              "size": 2892,
-              "sha": "57197ff5edd8b045abc12dd06bb77d86c59fe7ba",
               "type": "blob"
             }
           ]
@@ -9437,24 +10337,6 @@
               "path": "composio-skills/hyperise-automation/SKILL.md",
               "size": 2937,
               "sha": "1dc6e5c1dd442ca959962da4f91e3a0ca8774485",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "hystruct-automation",
-          "path": "composio-skills/hystruct-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Hystruct tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2935,
-          "files": [
-            {
-              "path": "composio-skills/hystruct-automation/SKILL.md",
-              "size": 2937,
-              "sha": "d318a8c83d37c8e51d17173b3c3f8c89b186ec46",
               "type": "blob"
             }
           ]
@@ -11386,24 +12268,6 @@
           ]
         },
         {
-          "name": "moz-automation",
-          "path": "composio-skills/moz-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Moz tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2860,
-          "files": [
-            {
-              "path": "composio-skills/moz-automation/SKILL.md",
-              "size": 2862,
-              "sha": "5133ac1d4adbed86f9ed00b873f4af509967e592",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "msg91-automation",
           "path": "composio-skills/msg91-automation/SKILL.md",
           "category": "general",
@@ -11723,24 +12587,6 @@
               "path": "composio-skills/news-api-automation/SKILL.md",
               "size": 2937,
               "sha": "b5ea0d874fe3a7e1a288c64bda88d4585dec025f",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "nextdns-automation",
-          "path": "composio-skills/nextdns-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Nextdns tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2920,
-          "files": [
-            {
-              "path": "composio-skills/nextdns-automation/SKILL.md",
-              "size": 2922,
-              "sha": "f6e87cd4ccc1cc9ca3a632308a4f78724d6a302e",
               "type": "blob"
             }
           ]
@@ -12196,24 +13042,6 @@
           ]
         },
         {
-          "name": "parallel-automation",
-          "path": "composio-skills/parallel-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Parallel tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2935,
-          "files": [
-            {
-              "path": "composio-skills/parallel-automation/SKILL.md",
-              "size": 2937,
-              "sha": "6182042f3ea5ee8c0f2438a42ca6b8c8ef7e5aca",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "parma-automation",
           "path": "composio-skills/parma-automation/SKILL.md",
           "category": "general",
@@ -12371,24 +13199,6 @@
               "path": "composio-skills/pdf-co-automation/SKILL.md",
               "size": 2907,
               "sha": "027462ba46dec3d2099a85899b9c9e4b2aca2cac",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "pdf4me-automation",
-          "path": "composio-skills/pdf4me-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Pdf4me tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2905,
-          "files": [
-            {
-              "path": "composio-skills/pdf4me-automation/SKILL.md",
-              "size": 2907,
-              "sha": "75d6b89cd4b18f24838140c7176dcb4981432b74",
               "type": "blob"
             }
           ]
@@ -12754,24 +13564,6 @@
           ]
         },
         {
-          "name": "polygon-io-automation",
-          "path": "composio-skills/polygon-io-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Polygon IO tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2965,
-          "files": [
-            {
-              "path": "composio-skills/polygon-io-automation/SKILL.md",
-              "size": 2967,
-              "sha": "7681dd57e0de44ed4c6b2389d4bff16a3b47e8c5",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "poptin-automation",
           "path": "composio-skills/poptin-automation/SKILL.md",
           "category": "general",
@@ -13055,24 +13847,6 @@
               "path": "composio-skills/pushbullet-automation/SKILL.md",
               "size": 2967,
               "sha": "5118f82b86aa327af50c0d7c8f2e55f04ffa8acb",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "pushover-automation",
-          "path": "composio-skills/pushover-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Pushover tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2935,
-          "files": [
-            {
-              "path": "composio-skills/pushover-automation/SKILL.md",
-              "size": 2937,
-              "sha": "2d23ad0c05f29df96e89082691cc5eae57c0c620",
               "type": "blob"
             }
           ]
@@ -14482,24 +15256,6 @@
           ]
         },
         {
-          "name": "shortpixel-automation",
-          "path": "composio-skills/shortpixel-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Shortpixel tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2965,
-          "files": [
-            {
-              "path": "composio-skills/shortpixel-automation/SKILL.md",
-              "size": 2967,
-              "sha": "c412ed0cb23e082ec8b7fdbf2ffed81b2a0b4734",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "shotstack-automation",
           "path": "composio-skills/shotstack-automation/SKILL.md",
           "category": "general",
@@ -14963,6 +15719,24 @@
               "path": "composio-skills/sslmate-cert-spotter-api-automation/SKILL.md",
               "size": 3177,
               "sha": "1d6c54888bb52d594fee88de92fee20d4c6229ff",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "stack-exchange-automation",
+          "path": "composio-skills/stack-exchange-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Stack Exchange tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 3025,
+          "files": [
+            {
+              "path": "composio-skills/stack-exchange-automation/SKILL.md",
+              "size": 3027,
+              "sha": "2b6ff3bc3773d8d0eb83f558a28ef278767a816b",
               "type": "blob"
             }
           ]
@@ -15976,24 +16750,6 @@
           ]
         },
         {
-          "name": "twocaptcha-automation",
-          "path": "composio-skills/twocaptcha-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Twocaptcha tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2965,
-          "files": [
-            {
-              "path": "composio-skills/twocaptcha-automation/SKILL.md",
-              "size": 2967,
-              "sha": "5970ab6a2f67ef7cf54b343f061f230f8482d775",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "typefully-automation",
           "path": "composio-skills/typefully-automation/SKILL.md",
           "category": "general",
@@ -16318,6 +17074,24 @@
           ]
         },
         {
+          "name": "wachete-automation",
+          "path": "composio-skills/wachete-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Wachete tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2920,
+          "files": [
+            {
+              "path": "composio-skills/wachete-automation/SKILL.md",
+              "size": 2922,
+              "sha": "2e5842a4822ad2e0a1fa3506a8bf2753dedeb63a",
+              "type": "blob"
+            }
+          ]
+        },
+        {
           "name": "waiverfile-automation",
           "path": "composio-skills/waiverfile-automation/SKILL.md",
           "category": "general",
@@ -16421,6 +17195,42 @@
               "path": "composio-skills/weathermap-automation/SKILL.md",
               "size": 2967,
               "sha": "4d286b9bc6a09573bab44221e68c4f343b1bfb15",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "Webex Automation",
+          "path": "composio-skills/webex-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Cisco Webex messaging, rooms, teams, webhooks, and people management through natural language commands",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 6879,
+          "files": [
+            {
+              "path": "composio-skills/webex-automation/SKILL.md",
+              "size": 6879,
+              "sha": "d098ae7b2a8b9df26ae8429dec3baee487b3a0f1",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "webscraping-ai-automation",
+          "path": "composio-skills/webscraping-ai-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Webscraping AI tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 3025,
+          "files": [
+            {
+              "path": "composio-skills/webscraping-ai-automation/SKILL.md",
+              "size": 3027,
+              "sha": "11f406cad0cf1864d9b6e2ac6cceda1c2cefe77e",
               "type": "blob"
             }
           ]
@@ -16696,24 +17506,6 @@
           ]
         },
         {
-          "name": "yelp-automation",
-          "path": "composio-skills/yelp-automation/SKILL.md",
-          "category": "general",
-          "description": "Automate Yelp tasks via Rube MCP (Composio). Always search tools first for current schemas.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 2875,
-          "files": [
-            {
-              "path": "composio-skills/yelp-automation/SKILL.md",
-              "size": 2877,
-              "sha": "091b044c5296cea4e18b9c3e7022466c4e4a0d05",
-              "type": "blob"
-            }
-          ]
-        },
-        {
           "name": "ynab-automation",
           "path": "composio-skills/ynab-automation/SKILL.md",
           "category": "general",
@@ -16817,6 +17609,24 @@
               "path": "composio-skills/zerobounce-automation/SKILL.md",
               "size": 2967,
               "sha": "a75677d6e76dad116b51c167bbca7f964f3b1b4e",
+              "type": "blob"
+            }
+          ]
+        },
+        {
+          "name": "zoho-automation",
+          "path": "composio-skills/zoho-automation/SKILL.md",
+          "category": "general",
+          "description": "Automate Zoho tasks via Rube MCP (Composio). Always search tools first for current schemas.",
+          "version": "0.0.0",
+          "tags": [],
+          "quarantined_reason": null,
+          "size_bytes": 2875,
+          "files": [
+            {
+              "path": "composio-skills/zoho-automation/SKILL.md",
+              "size": 2877,
+              "sha": "44a70f51e68ef5e6b94d08dfd29ab139e216a437",
               "type": "blob"
             }
           ]
@@ -18485,24 +19295,6 @@
               "path": "tailored-resume-generator/SKILL.md",
               "size": 12408,
               "sha": "0dac8467d258a8023e017a5a43980ecb571ddb0a",
-              "type": "blob"
-            }
-          ]
-        },
-        {
-          "name": "template-skill",
-          "path": "template-skill/SKILL.md",
-          "category": "general",
-          "description": "Replace with description of the skill and when Claude should use it.",
-          "version": "0.0.0",
-          "tags": [],
-          "quarantined_reason": null,
-          "size_bytes": 140,
-          "files": [
-            {
-              "path": "template-skill/SKILL.md",
-              "size": 140,
-              "sha": "50a4f9b104357d96361e257adb70454604cd15c0",
               "type": "blob"
             }
           ]

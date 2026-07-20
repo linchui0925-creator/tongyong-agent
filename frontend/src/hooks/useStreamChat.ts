@@ -53,7 +53,7 @@ export interface UseStreamChatReturn {
   pendingContinue: { prompt: string; reason: string } | null;
   setErrorMessage: (msg: string | null) => void;
   loadMessages: (sid: string) => Promise<void>;
-  handleSend: (text: string, attachments?: Attachment[]) => Promise<void>;
+  handleSend: (text: string, attachments?: Attachment[], planId?: string) => Promise<void>;
   handleStop: () => void;
   handleCompress: (force?: boolean) => Promise<void>;
   handleDelete: (id: string) => void;
@@ -319,7 +319,7 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
   };
   const markActive = () => { lastEventTimeRef.current = Date.now(); };
 
-  const startStream = useCallback((text: string, msgId: string, clarifyQId?: string, clarifyAns?: string, attachmentIds?: string[]) => {
+  const startStream = useCallback((text: string, msgId: string, clarifyQId?: string, clarifyAns?: string, attachmentIds?: string[], planId?: string) => {
     abortRef.current?.abort();
     abortRef.current = streamChat(text, sessionId || undefined, true, {
       onStart: () => {
@@ -395,6 +395,7 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
         setProgressText('等待回答...');
         markActive();
       },
+      onPlanLoaded: (plan) => { window.dispatchEvent(new CustomEvent('weizhi:plan_loaded', { detail: plan })); },
       onUsage: (input, output, total) => {
         setTokenUsage({ input, output, total });
       },
@@ -438,9 +439,16 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
             }));
           }
         }
-        setMessages((prev) => prev.map((m) =>
-          m.id === msgId ? {
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== msgId) return m;
+          // 兜底: done 到达但气泡仍为空 (后端未 emit content) — 避免空白消息
+          const hasTrace = (m.trace || []).some((s) => s.kind === 'text' && (s.content || '').trim());
+          const fallbackContent = (!m.content || !m.content.trim()) && !hasTrace
+            ? '（本轮没有生成可显示的回复，请重试或换个问法。）'
+            : m.content;
+          return {
             ...m,
+            content: fallbackContent,
             status: 'completed' as const,
             toolsUsed: data.tools_used || [],
             commandsExecuted: data.commands_executed || [],
@@ -450,8 +458,8 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
             continuePrompt: data.continue_prompt || undefined,
             endedBy: data.ended_by || undefined,
             executionClaimMismatch: looksLikeExecutionClaim(m.content) && !((data.tools_used && data.tools_used.length > 0) || (data.commands_executed && data.commands_executed.length > 0)),
-          } : m
-        ));
+          };
+        }));
         if (data.needs_continue) {
           setPendingContinue({
             prompt: data.continue_prompt || '继续上一个任务，从未完成的下一步继续执行。',
@@ -501,10 +509,10 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
         abortRef.current = null;
         onError?.(err);
       },
-    }, clarifyQId, clarifyAns, attachmentIds);
+    }, clarifyQId, clarifyAns, attachmentIds, planId);
   }, [sessionId, onError]);
 
-  const handleSend = useCallback(async (text: string, attachments: Attachment[] = []) => {
+  const handleSend = useCallback(async (text: string, attachments: Attachment[] = [], planId?: string) => {
     const trimmed = text.trim();
     if ((!trimmed && attachments.length === 0) || isLoading || isStreaming) return;
 
@@ -530,7 +538,7 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
       setToolElapsed((p) => p + 100);
     }, 100);
 
-    startStream(displayText, aid, undefined, undefined, attachmentIds);
+    startStream(displayText, aid, undefined, undefined, attachmentIds, planId);
   }, [isLoading, isStreaming, startStream]);
 
   const handleContinue = useCallback(async () => {

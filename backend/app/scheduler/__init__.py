@@ -216,6 +216,20 @@ async def scheduled_cleanup():
         conn.close()
         
         logger.info(f"定时清理完成: 删除 {expired_deleted} 个过期候选, {logs_deleted} 条使用日志, {audit_deleted} 条审计日志, {approvals_deleted} 个审批记录")
-        
+
+        # W5-7: runtime trace 保留期清理 (独立 runtime_trace.db, 失败不影响主清理)
+        try:
+            import time as _time
+            from app.config import settings as _settings
+            from app.core.runtime import trace as _rt
+            _store = _rt.get_store()
+            if _store is not None:
+                _days = getattr(_settings, "runtime_trace_retention_days", 14)
+                _cutoff = _time.time() - _days * 86400
+                _purged = _store.purge_older_than(_cutoff)
+                logger.info(f"runtime trace 清理: 删除 {_purged} 条过期 trace (保留 {_days} 天)")
+        except Exception as _rt_err:
+            logger.debug(f"runtime trace 清理跳过: {_rt_err}")
+
     except Exception as e:
         logger.error(f"定时清理失败: {e}", exc_info=True)

@@ -5,6 +5,7 @@ Google Gemini LLM实现
 from typing import List, Optional, AsyncIterator, Dict
 from app.llm.base import BaseLLM, LLMError, LLMResponse
 from app.core.base import Message
+from app.llm.request_contract import ModelRequestOptions
 import logging
 import httpx
 import json
@@ -26,12 +27,13 @@ class GeminiLLM(BaseLLM):
         self.api_base = self.DEFAULT_API_BASE
         logger.info(f"Google Gemini LLM初始化完成，模型: {self.model}")
     
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> LLMResponse:
+    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None, request_options: Optional[ModelRequestOptions] = None, **kwargs) -> LLMResponse:
         """发送对话请求到Gemini"""
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")
         
         try:
+            effective_options = request_options or ModelRequestOptions(model=self.model, provider="google", api_format="gemini")
             contents = self._convert_messages(messages)
             
             logger.info(f"发送请求到Gemini，消息数: {len(messages)}")
@@ -40,7 +42,7 @@ class GeminiLLM(BaseLLM):
                 for attempt in range(self.MAX_RETRIES):
                     try:
                         response = await client.post(
-                            f"{self.api_base}/{self.model}:generateContent",
+                            f"{self.api_base}/{effective_options.model}:generateContent",
                             headers={
                                 "Content-Type": "application/json"
                             },
@@ -48,8 +50,8 @@ class GeminiLLM(BaseLLM):
                             json={
                                 "contents": contents,
                                 "generationConfig": {
-                                    "temperature": 0.7,
-                                    "maxOutputTokens": 2048
+                                    "temperature": effective_options.controls.temperature if effective_options.controls.temperature is not None else 0.7,
+                                    "maxOutputTokens": effective_options.controls.max_tokens if effective_options.controls.max_tokens is not None else 2048
                                 }
                             }
                         )
@@ -120,7 +122,7 @@ class GeminiLLM(BaseLLM):
             logger.error(f"获取嵌入失败: {e}")
             return self._generate_fallback_embedding(text)
     
-    async def stream_chat(self, messages: List[Message]) -> AsyncIterator[str]:
+    async def stream_chat(self, messages: List[Message], request_options: Optional[ModelRequestOptions] = None) -> AsyncIterator[str]:
         """流式发送对话请求到Gemini"""
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")

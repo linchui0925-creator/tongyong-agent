@@ -237,7 +237,12 @@ class TongYongLLMAdapter(BaseChatModel):
         #   修法: 先把 thinking 用 <think>...</think> 包起来逐字 yield,
         #   下游 langchain_agent.on_chat_model_stream 会切成 thinking_delta 事件,
         #   前端折叠成"💭 思考过程"面板; 再 yield content 作为正式答案。
-        thinking_text = "".join(llm_response.thinking or []).strip()
+        thinking_chunks = []
+        for chunk in llm_response.thinking or []:
+            text = getattr(chunk, "text", chunk)
+            if text:
+                thinking_chunks.append(text if isinstance(text, str) else str(text))
+        thinking_text = "".join(thinking_chunks).strip()
         if thinking_text:
             # 逐 chunk yield: "<think>" 整段 → 思考正文逐字 → "</think>" 整段。
             # 不逐字拆 "<think>" (否则 on_chat_model_stream 里 THINK_OPEN.search 每次

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 import logging
 
+from app.core.base import Message
 from app.tools.registry import registry, discover_builtin_tools
 from app.tools.approval import ApprovalManager
 
@@ -33,6 +34,56 @@ def _ensure_tools_discovered():
     """确保工具已加载"""
     if not registry.get_all_tool_names():
         discover_builtin_tools()
+
+
+def _should_ask_for_clarification(message: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    text = (message or "").strip()
+    if not text:
+        return {
+            "should_ask": True,
+            "reason": "用户输入为空",
+            "questions": ["你希望我先处理什么任务？"],
+        }
+
+    questions: List[str] = []
+    lowered = text.lower()
+
+    if len(text) < 8:
+        questions.append("你希望我具体帮你完成什么？")
+
+    vague_markers = ["优化一下", "帮我弄", "处理一下", "看看这个", "改一下", "做一下", "整理一下", "分析一下"]
+    if any(marker in text for marker in vague_markers):
+        questions.append("你希望我优化/处理的具体对象是什么？")
+
+    if any(marker in text for marker in ["前端", "后端", "接口", "页面", "组件", "数据库", "脚本", "文档"]) is False:
+        questions.append("这次任务主要作用于哪个范围或模块？")
+
+    if any(marker in text for marker in ["代码", "配置", "页面", "接口", "文档", "数据", "图表"]) and not any(
+        marker in text for marker in ["路径", "文件", "仓库", "项目", "接口地址"]
+    ):
+        questions.append("如果需要修改现有内容，请给我相关文件、路径或链接。")
+
+    if any(marker in lowered for marker in ["方案", "架构", "设计", "选型", "实现方式"]) :
+        questions.append("如果有多个方案，你更偏向哪一种，还是让我推荐一个？")
+
+    if any(marker in text for marker in ["完成", "交付", "验收", "输出"]):
+        questions.append("你希望我按什么标准判断这次任务完成？")
+
+    unique_questions = []
+    for q in questions:
+        if q not in unique_questions:
+            unique_questions.append(q)
+
+    should_ask = len(unique_questions) > 0 and len(text) < 80
+    if not should_ask and len(unique_questions) >= 2:
+        should_ask = True
+
+    return {
+        "should_ask": should_ask,
+        "reason": "存在关键上下文缺口" if should_ask else "信息看起来足够",
+        "questions": unique_questions[:3],
+        "session_id": session_id,
+    }
 
 
 @router.get("")
@@ -62,6 +113,15 @@ async def execute_tool(request: ToolExecutionRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"工具执行失败: {request.tool_name}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ask")
+async def ask_clarification(message: Dict[str, Any]) -> Dict[str, Any]:
+    """轻量追问判断入口"""
+    raw_message = str(message.get("message") or "")
+    session_id = message.get("session_id")
+    decision = _should_ask_for_clarification(raw_message, session_id=session_id)
+    return decision
 
 
 @router.get("/approvals/pending")

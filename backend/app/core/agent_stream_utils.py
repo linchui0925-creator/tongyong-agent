@@ -12,6 +12,34 @@ from typing import Any, AsyncGenerator, Dict, Iterable, List, Tuple
 
 from app.tools.registry import registry as _tool_registry
 
+
+def response_usage_dict(response: Any) -> Dict[str, int]:
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    if hasattr(response, "usage_legacy"):
+        return response.usage_legacy
+    if isinstance(usage, dict):
+        return {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+    return {
+        "input_tokens": getattr(usage, "input_tokens", 0),
+        "output_tokens": getattr(usage, "output_tokens", 0),
+        "total_tokens": getattr(usage, "total_tokens", 0),
+    }
+
+
+def iter_thinking_text(response: Any) -> Iterable[str]:
+    for chunk in getattr(response, "thinking", []) or []:
+        text = getattr(chunk, "text", chunk)
+        if isinstance(text, str):
+            yield text
+        else:
+            yield str(text)
+
 MUST_USE_TOOL_TRIGGERS: Tuple[str, ...] = (
     "请使用", "务必调用", "必须调用", "用工具", "调用工具",
     "打开网页", "访问", "截图", "读取文件",
@@ -84,7 +112,7 @@ def format_tool_result_text(
         "error": error_msg if not success else "",
         "error_type": error_type if not success else "",
         "suggestion": suggestion if not success else "",
-        "elapsed": round(float(elapsed or 0.0), 3),
+        "elapsed": round(float(elapsed or 0.0), 4),
     }
     return _json.dumps(payload, ensure_ascii=False)
 

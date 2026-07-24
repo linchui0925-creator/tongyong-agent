@@ -36,6 +36,13 @@ import uuid
 
 from app.core.base import Message, Session, Memory
 from app.core.context import ContextManager
+from app.core.context_source import ContextSource, ContextSnapshot
+from app.core.context_assembler import ContextAssembler
+from app.core.agent_runtime import AgentRuntimeState, AgentTurnState
+from app.core.agent_policy import AgentPolicy, TurnStrategy
+from app.core.turn_prompt import build_turn_prompt
+from app.core.artifact_store import LocalArtifactStore
+from app.tools.settlement import ToolSettlement
 from app.core.context_compressor import ContextCompressor
 from app.core.iteration_budget import IterationBudget
 from app.core.agent_hooks import (
@@ -55,6 +62,8 @@ from app.core.agent_stream_utils import (
     clean_thinking,
     format_tool_result_text,
     with_heartbeat,
+    response_usage_dict,
+    iter_thinking_text,
 )
 from app.memory.storage import MemoryStorage
 from app.memory.vector import VectorStore
@@ -104,12 +113,14 @@ class AgentEngine:
         self.memory_storage = MemoryStorage()
         self.vector_store = VectorStore()
         self._cli_executor = None  # 延迟初始化
+        self._active_turn_state: Optional[AgentTurnState] = None
         # ask 交互状态 — W4-25 P1-4: 用 SQLite store 替代内存 dict, 多 worker 共享
         from app.core.ask_store import get_ask_pending_store
         self._ask_pending = get_ask_pending_store()
         # 约束引擎：防止 agent 幻觉式自我欺骗
         # 延迟导入，模块不存在时降级为无约束模式
         self._constraint_engine = None
+        self.agent_policy = AgentPolicy()
         try:
             from app.hermes.constraint import HermesConstraintEngine
             self._constraint_engine = HermesConstraintEngine()
@@ -133,6 +144,7 @@ class AgentEngine:
         # stream_chat_langchain 都能复用同一个 budget 实例。
         # IterationBudget.__post_init__ 会自动从 env 读 ITERATION_MAX_ROUNDS 等。
         self.budget = IterationBudget()
+        self.artifact_store = LocalArtifactStore()
         # W4-16: 注册 agent 默认 hook (s04_hooks 模式: 循环外注册, 循环内 trigger)
         setup_default_hooks()
 
@@ -162,6 +174,11 @@ class AgentEngine:
     async def _ensure_domain_prompts(self, session_id: str):
         return await inject_domain_prompts(self, session_id)
 
+    async def _inject_domain_prompts(self, session_id: str):
+        # Compatibility shim: older call sites and live-reloaded workers may
+        # still reference the historical private method name.
+        return await inject_domain_prompts(self, session_id)
+
     def _inject_base_system_prompt(self):
         return inject_base_system_prompt(self)
 
@@ -186,32 +203,263 @@ class AgentEngine:
         """
         return
 
+    async def _build_context_snapshot(self, session_id: str):
+        assembler = ContextAssembler()
+        for source in await self._collect_context_sources(session_id):
+            assembler.add(source)
+        return assembler.build()
+
+    async def _collect_context_sources(self, session_id: str):
+        sources = []
+        sources.extend(await self._inject_memory(session_id))
+        sources.extend(await self._inject_domain_prompts(session_id))
+        sources.extend(self._inject_base_system_prompt())
+        sources.extend(self._inject_env_context())
+        sources.extend(self._inject_skill_context())
+        return sources
+
+    def _inject_env_context(self):
+        try:
+            from app.core.env_capabilities import get_env_prompt
+            env_prompt = get_env_prompt()
+            if env_prompt:
+                return [ContextSource(key="env", order=30, render=env_prompt, source_type="dynamic")]
+        except Exception:
+            pass
+        return []
+
+    def _inject_skill_context(self):
+        sources = []
+        try:
+            from app.core.skills_index import get_system_skills_content, get_skills_prompt
+            system_skills = get_system_skills_content()
+            if system_skills:
+                sources.append(ContextSource(key="system_skills", order=35, render=system_skills, source_type="dynamic"))
+            skills_prompt = get_skills_prompt()
+            if skills_prompt:
+                sources.append(ContextSource(key="skills_prompt", order=36, render=skills_prompt, source_type="dynamic"))
+        except Exception:
+            pass
+        return sources
+
     async def _prepare_turn_context(
         self,
         session_id: str,
         message: str,
         include_history: bool = True,
         include_env: bool = True,
-    ) -> None:
+        turn_strategy: Optional[TurnStrategy] = None,
+    ) -> Any:
         """Prepare a turn context shared by chat() and stream_chat()."""
-        # 每轮请求都从干净上下文开始，避免上一轮消息污染当前会话。
         self.context.clear()
-        await self._ensure_domain_prompts(session_id)
-        await self._inject_memory(session_id)
-        self._inject_base_system_prompt()
-
-        if include_env:
-            from app.core.env_capabilities import get_env_prompt
-            env_prompt = get_env_prompt()
-            if env_prompt:
-                self.context.add_message("system", env_prompt)
+        source_list = await self._collect_context_sources(session_id)
+        source_list.extend(build_turn_prompt(turn_strategy))
+        assembly = ContextAssembler(source_list).build()
+        for src in assembly.snapshot.sources:
+            self.context.add_message("system", src.render)
 
         if include_history:
             historical_messages = await self.memory_storage.get_messages(session_id)
+            # 只把 user/assistant 作为会话历史载入；system/tool 不混入「第 N 句」语义。
+            # 用独立序号标记「用户第 N 句」，避免把 assistant/系统消息算进用户提问序号。
+            user_turn = 0
             for msg in historical_messages:
-                self.context.add_message(msg.role, msg.content)
+                role = (msg.role or "").lower()
+                if role not in ("user", "assistant"):
+                    continue
+                content = msg.content or ""
+                if role == "user":
+                    user_turn += 1
+                    content = f"[user_turn={user_turn}] {content}"
+                self.context.add_message(msg.role, content)
 
         self.context.add_message("user", message)
+        runtime = AgentRuntimeState(
+            provider=getattr(self.llm, "provider", "unknown") if self.llm else "unknown",
+            model=getattr(self.llm, "model", "unknown") if self.llm else "unknown",
+            agent_name=getattr(self, "agent_name", "default"),
+            tool_policy=getattr(self, "tool_policy", "default"),
+            session_id=session_id,
+            api_format=getattr(self.llm, "request_config", {}).get("api_format", "chat_completions") if self.llm else "chat_completions",
+            stream_mode=getattr(self.llm, "request_config", {}).get("stream_mode", "native") if self.llm else "native",
+            request_config=getattr(self.llm, "request_config", {}) if self.llm else {},
+            trace_id=str(uuid.uuid4()),
+            turn_index=getattr(self, "_turn_index", 0),
+            context_epoch=getattr(self, "_context_epoch", 0),
+            prompt_revision=0,
+            metadata={"include_history": include_history, "include_env": include_env},
+        )
+        self._active_turn_state = AgentTurnState(
+            runtime=runtime,
+            context_snapshot=assembly.snapshot,
+            context_trace=assembly.trace_items,
+            prompt_revision=0,
+            turn_stage="preflight",
+        )
+        return assembly
+
+    def _build_turn_strategy(self, message: str, has_attachments: bool = False, is_plan_mode: bool = False) -> TurnStrategy:
+        return self.agent_policy.choose_strategy(message, has_attachments=has_attachments, is_plan_mode=is_plan_mode)
+
+    def _build_clarify_question(self, message: str) -> tuple[str, list[str], str]:
+        text = (message or "").strip()
+        if not text:
+            return (
+                "请补充你想让我做什么，以及希望的输出形式。",
+                [],
+                "empty_message",
+            )
+        if any(token in text for token in ("帮我", "处理", "做一下", "分析", "总结")):
+            return (
+                "为了避免理解偏差，请补充这次任务的范围、目标和优先级。",
+                ["只要结论", "结论 + 过程", "结论 + 可执行步骤"],
+                "task_scope_missing",
+            )
+        return (
+            "请补充更多上下文，我再继续执行。",
+            [],
+            "insufficient_context",
+        )
+
+    def _build_plan_hint(self, message: str) -> tuple[str, str]:
+        text = (message or "").strip()
+        if not text:
+            return (
+                "## 当前轮次模式：plan / planner\n请先补充目标，再生成最小可执行计划。",
+                "empty_message",
+            )
+        return (
+            "## 当前轮次模式：plan / planner\n先拆分任务、比较方案、明确步骤，再进入执行。\n计划要尽量短，聚焦可执行步骤和关键依赖。",
+            "plan_mode",
+        )
+
+    def _attach_turn_strategy(self, turn_strategy: TurnStrategy) -> None:
+        if not self._active_turn_state:
+            return
+        self._active_turn_state.runtime.metadata["turn_strategy"] = {
+            "mode": turn_strategy.mode,
+            "should_use_tools": turn_strategy.should_use_tools,
+            "should_plan": turn_strategy.should_plan,
+            "should_ask": turn_strategy.should_ask,
+            "should_summarize": turn_strategy.should_summarize,
+            "sandbox_mode": turn_strategy.sandbox_mode,
+            "sandbox_preset": turn_strategy.sandbox_preset,
+            "notes": list(turn_strategy.notes),
+            "metadata": dict(turn_strategy.metadata),
+        }
+
+    def _current_turn_id(self) -> str:
+        if self._active_turn_state and self._active_turn_state.runtime.trace_id:
+            return self._active_turn_state.runtime.trace_id
+        return f"turn-{getattr(self, '_turn_index', 0)}"
+
+    def _persist_turn_artifact(self, artifact_type: str, payload: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+        if not self._active_turn_state:
+            return
+        try:
+            self.artifact_store.store_json(
+                session_id=self._active_turn_state.runtime.session_id,
+                turn_id=self._current_turn_id(),
+                artifact_type=artifact_type,
+                payload=payload,
+                metadata=metadata or {},
+            )
+        except Exception as exc:
+            logger.warning("artifact persist failed (%s): %s", artifact_type, exc)
+
+    def _persist_context_snapshot(self, assembly: Any) -> None:
+        if not self._active_turn_state:
+            return
+        self._persist_turn_artifact(
+            "context_snapshot",
+            {
+                "runtime": self._active_turn_state.runtime.__dict__,
+                "context_keys": assembly.snapshot.keys(),
+                "context_trace": [item.__dict__ for item in assembly.trace_items],
+                "rendered": assembly.snapshot.render(),
+            },
+            metadata={"stage": self._active_turn_state.turn_stage},
+        )
+
+    def _persist_model_request(self, round_num: int, llm_messages: List[Message], tool_schemas: List[Dict[str, Any]], request_options: Any) -> None:
+        self._persist_turn_artifact(
+            "model_request",
+            {
+                "round": round_num,
+                "messages": [m.model_dump() if hasattr(m, "model_dump") else {"role": m.role, "content": m.content} for m in llm_messages],
+                "tools": tool_schemas,
+                "request_options": request_options.model_dump() if hasattr(request_options, "model_dump") else str(request_options),
+            },
+            metadata={"stage": "before_model_call"},
+        )
+
+    def _persist_model_response(self, round_num: int, llm_response: Any, usage: Dict[str, int]) -> None:
+        self._persist_turn_artifact(
+            "model_response",
+            {
+                "round": round_num,
+                "content": getattr(llm_response, "content", ""),
+                "usage": usage,
+                "has_tool_calls": getattr(llm_response, "has_tool_calls", False),
+                "tool_calls": [tc.model_dump() if hasattr(tc, "model_dump") else {"tool_name": tc.tool_name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id} for tc in getattr(llm_response, "tool_calls", []) or []],
+                "thinking": [getattr(chunk, "text", chunk) for chunk in getattr(llm_response, "thinking", []) or []],
+                "raw": getattr(llm_response, "raw", None),
+            },
+            metadata={"stage": "after_model_call"},
+        )
+
+    def _persist_tool_settlement(self, stage: str, settlement: ToolSettlement) -> None:
+        self._persist_turn_artifact(
+            "tool_settlement",
+            {
+                "tool_name": settlement.tool_name,
+                "tool_call_id": settlement.tool_call_id,
+                "success": settlement.success,
+                "preview": settlement.preview,
+                "full_result": settlement.full_result,
+                "error": settlement.error,
+                "error_type": settlement.error_type,
+                "suggestion": settlement.suggestion,
+                "emoji": settlement.emoji,
+                "elapsed": settlement.elapsed,
+            },
+            metadata={"stage": stage, "tool_name": settlement.tool_name},
+        )
+
+    def _persist_ask_prompt(self, question_id: str, question: str, choices: List[str], reason: str) -> None:
+        self._persist_turn_artifact(
+            "ask_prompt",
+            {
+                "question_id": question_id,
+                "question": question,
+                "choices": choices,
+                "reason": reason,
+                "session_id": self._active_turn_state.runtime.session_id if self._active_turn_state else None,
+                "turn_id": self._current_turn_id(),
+            },
+            metadata={"stage": "ask", "kind": "question"},
+        )
+
+    def _persist_turn_manifest(self, session_id: str, reply: str, tools_used: List[str], commands_executed: List[str], cumulative_usage: Dict[str, int], extra: Optional[Dict[str, Any]] = None) -> None:
+        manifest = {
+            "session_id": session_id,
+            "turn_id": self._current_turn_id(),
+            "trace_id": self._active_turn_state.runtime.trace_id if self._active_turn_state else None,
+            "reply": reply,
+            "tools_used": tools_used,
+            "commands_executed": commands_executed,
+            "usage": cumulative_usage,
+            "context_keys": self._active_turn_state.context_snapshot.keys() if self._active_turn_state and self._active_turn_state.context_snapshot else [],
+            "turn_stage": self._active_turn_state.turn_stage if self._active_turn_state else "finalization",
+            "turn_strategy": (self._active_turn_state.runtime.metadata.get("turn_strategy") if self._active_turn_state else None),
+        }
+        if extra:
+            manifest.update(extra)
+        self._persist_turn_artifact("final_answer", manifest, metadata={"stage": manifest.get("ended_by", "finalization")})
+        self._persist_turn_artifact("turn_manifest", manifest, metadata={"stage": manifest.get("ended_by", "finalization"), "kind": "manifest"})
+
+    def _finalize_turn(self, session_id: str, reply: str, tools_used: List[str], commands_executed: List[str], cumulative_usage: Dict[str, int], extra: Optional[Dict[str, Any]] = None) -> None:
+        self._persist_turn_manifest(session_id, reply, tools_used, commands_executed, cumulative_usage, extra=extra)
 
     def _maybe_preflight_compress(self, budget: IterationBudget, llm: Any) -> Optional[str]:
         """Stream preflight compression decision.
@@ -242,19 +490,28 @@ class AgentEngine:
     ) -> Dict[str, Any]:
         # 保留兼容层：核心上下文准备与 stream_chat 对齐。
         self.context.clear()
+        self._turn_index = getattr(self, "_turn_index", 0) + 1
+        self._context_epoch = getattr(self, "_context_epoch", 0) + 1
 
         if not session_id:
             session_id = await self._get_or_create_session()
             logger.info(f"创建新会话: {session_id}")
 
-        await self._prepare_turn_context(session_id, message, include_history=True, include_env=True)
+        turn_strategy = self._build_turn_strategy(message)
+        self._attach_turn_strategy(turn_strategy)
+        assembly = await self._prepare_turn_context(session_id, message, include_history=True, include_env=True, turn_strategy=turn_strategy)
 
         # DEBUG: log message order after loading history
         ctx_msgs = self.context.get_messages()
+        if self._active_turn_state and self._active_turn_state.context_snapshot:
+            self._persist_context_snapshot(assembly)
         logger.warning(f"[CHAT] message_order | count={len(ctx_msgs)}, roles={[m.role for m in ctx_msgs]}")
+        if self._active_turn_state:
+            logger.info(f"[TURN] {self._active_turn_state.describe()}")
 
         # 保持与 stream_chat 一致：压缩由流式主链路统一控制。
         logger.warning(f"[CHAT] before_llm_call | count={len(self.context.messages)}, last3_roles={[m.role for m in self.context.messages[-3:]]}")
+        logger.info(f"[TURN_STRATEGY] {turn_strategy.__dict__}")
 
         # 记忆检索不再自动注入；需要历史/跨会话信息时由模型显式调用
         # memory_search / memory_list 工具获取，避免新会话被其它会话内容污染。
@@ -263,25 +520,91 @@ class AgentEngine:
         tools_used = []
         commands_executed = []
         MAX_TOOL_ROUNDS = 20
+        should_prefer_summary = turn_strategy.should_summarize
+        should_prefer_plan = turn_strategy.should_plan
+        should_prefer_ask = turn_strategy.should_ask
+        logger.info(f"[TURN_ROUTE] plan={should_prefer_plan}, ask={should_prefer_ask}, summary={should_prefer_summary}, tools={turn_strategy.should_use_tools}")
+
+        if turn_strategy.should_ask:
+            question, choices, reason = self._build_clarify_question(message)
+            question_id = str(uuid.uuid4())
+            self._ask_pending[question_id] = {
+                "question": question,
+                "choices": choices,
+                "user_response": None,
+                "timeout": False,
+            }
+            self._persist_ask_prompt(question_id, question, choices, reason)
+            self._finalize_turn(session_id, "", [], [], {}, extra={"ended_by": "ask", "reason": reason, "question_id": question_id})
+            self.context.clear()
+            return {
+                "reply": "",
+                "session_id": session_id,
+                "memory_added": [],
+                "tools_used": [],
+                "commands_executed": [],
+                "ended_by": "ask",
+                "question_id": question_id,
+                "question": question,
+                "choices": choices,
+            }
 
         if self.llm:
             try:
                 import json as _json
                 from app.tools.manager import get_tool_manager
+                from app.services.llm_manager import get_llm_manager
+                llm_mgr = get_llm_manager()
                 tool_mgr = get_tool_manager()
                 tool_schemas = tool_mgr.get_schemas()
+                request_options = llm_mgr.build_request_options()
                 logger.info(f"Agent 可用工具: {tool_mgr.list_tools()}")
+
+                if should_prefer_plan:
+                    logger.info("[TURN_ROUTE] plan mode requested")
+                    plan_hint, plan_reason = self._build_plan_hint(message)
+                    self.context.add_message("system", plan_hint)
+                    self._persist_turn_artifact(
+                        "turn_mode_hint",
+                        {
+                            "mode": "plan",
+                            "reason": plan_reason,
+                            "hint": plan_hint,
+                            "turn_id": self._current_turn_id(),
+                        },
+                        metadata={"stage": "plan_hint"},
+                    )
+                if should_prefer_ask:
+                    logger.info("[TURN_ROUTE] ask-first requested")
+                if should_prefer_summary:
+                    logger.info("[TURN_ROUTE] summary-first requested")
+                    summary_hint = (
+                        "## 当前轮次模式：summary / reporter\n"
+                        "优先给出结构化结论、关键发现和下一步建议。\n"
+                        "避免冗长铺陈，结论先行。"
+                    )
+                    self.context.add_message("system", summary_hint)
+                    self._persist_turn_artifact(
+                        "turn_mode_hint",
+                        {
+                            "mode": "summary",
+                            "reason": "summary_first",
+                            "hint": summary_hint,
+                            "turn_id": self._current_turn_id(),
+                        },
+                        metadata={"stage": "summary_hint"},
+                    )
 
                 # 工具调用循环 — 每轮都传递工具 schema，让 LLM 可在任意轮次调用工具
                 for round_num in range(MAX_TOOL_ROUNDS):
                     llm_messages = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
                     logger.warning(f"[LLM_CALL] round={round_num} | msg_count={len(llm_messages)}, last3={[m.role for m in llm_messages[-3:]]}")
                     try:
-                        llm_response = await self.llm.chat(messages=llm_messages, tools=tool_schemas)
+                        llm_response = await self.llm.chat(messages=llm_messages, tools=tool_schemas, request_options=request_options)
                     except Exception as _tool_err:
                         # 部分模型（如 deepseek-reasoner）不支持工具调用，降级为无工具请求
                         logger.warning(f"带工具的 LLM 调用失败，降级为无工具请求: {_tool_err}")
-                        llm_response = await self.llm.chat(messages=llm_messages, tools=None)
+                        llm_response = await self.llm.chat(messages=llm_messages, tools=None, request_options=request_options)
                         # 降级后直接取文本回复，不再尝试工具调用
                         response = llm_response.content
                         break
@@ -351,19 +674,34 @@ class AgentEngine:
                         })
 
                         # 将工具结果以 JSON 格式追加到上下文（含 tool_call_id 供 DashScope 使用）
-                        tool_msg_content = _json.dumps({
-                            "tool_call_id": tc.tool_call_id,
-                            "content": f"[工具 {tc.tool_name} 的返回结果]\n{tool_result}"
-                        }, ensure_ascii=False)
-                        self.context.add_tool_message(
+                        settlement = ToolSettlement(
                             tool_name=tc.tool_name,
                             tool_call_id=tc.tool_call_id,
                             success=not _err,
-                            content=tool_msg_content,
-                            result_full=tool_result,
+                            preview=f"[工具 {tc.tool_name} 的返回结果]\n{tool_result}",
+                            full_result=tool_result,
                             error=tool_result if _err else "",
+                            error_type=_classify_error_type(tool_result) if _err else "",
+                            suggestion="",
                             emoji=_tool_registry.get_emoji(tc.tool_name),
                             elapsed=_elapsed,
+                        )
+                        tool_msg_content = _json.dumps({
+                            "tool_call_id": tc.tool_call_id,
+                            "content": settlement.preview
+                        }, ensure_ascii=False)
+                        self._persist_tool_settlement("tool_loop", settlement)
+                        self.context.add_tool_message(
+                            tool_name=tc.tool_name,
+                            tool_call_id=tc.tool_call_id,
+                            success=settlement.success,
+                            content=tool_msg_content,
+                            result_full=settlement.full_result,
+                            error=settlement.error,
+                            error_type=settlement.error_type,
+                            suggestion=settlement.suggestion,
+                            emoji=settlement.emoji,
+                            elapsed=settlement.elapsed,
                         )
 
                     logger.info(f"工具调用轮次 {round_num + 1}/{MAX_TOOL_ROUNDS}，工具: {[tc.tool_name for tc in llm_response.tool_calls]}")
@@ -392,6 +730,7 @@ class AgentEngine:
             response += tool_summary
 
         self.context.add_message("assistant", response)
+        self._persist_turn_manifest(session_id, response, tools_used, commands_executed, cumulative_usage if 'cumulative_usage' in locals() else {})
 
         # W4-17: Stop hook (chat() 路径)
         await trigger_hooks_async("Stop", {
@@ -486,8 +825,9 @@ class AgentEngine:
             _full_trunc = _full[:4000]
             if len(_full) > 4000:
                 _full_trunc += "\n…（已截断，剩余 %d 字符）" % (len(_full) - 4000)
+            # 毫秒级精度：短命令 (如 date) 不再被 round(, 2) 抹成 0.0
             return {"type": "tool_complete", "tool_name": name,
-                    "result_preview": preview, "duration": round(duration, 2),
+                    "result_preview": preview, "duration": round(float(duration or 0.0), 3),
                     "result_full": _full_trunc,
                     "error": error, "emoji": emoji, "timestamp": _time.time()}
 
@@ -496,60 +836,23 @@ class AgentEngine:
             return {"type": "tool_error", "tool_name": name, "error": error_msg,
                     "emoji": emoji, "timestamp": _time.time()}
 
-        def _tool_result_structured(name: str, tool_call_id: str, success: bool,
-                                    result: str = "", error_msg: str = "",
-                                    error_type: str = "") -> dict:
-            """构建结构化的工具执行结果，供模型自我修正参考"""
-            emoji = _tool_registry.get_emoji(name)
-            content = result if success else error_msg
-            # 根据错误类型提供建议
-            suggestion = ""
-            if not success:
-                if error_type == "not_found":
-                    suggestion = "可尝试检查路径是否正确，或使用其他工具获取信息"
-                elif error_type == "policy_blocked":
-                    suggestion = "该路径被策略阻止，请停止绕过调用，直接基于当前失败原因回复用户"
-                elif error_type == "permission":
-                    suggestion = "请检查权限设置，或尝试其他操作方式"
-                elif error_type == "environment_missing":
-                    suggestion = "运行环境缺少所需浏览器依赖，请停止继续试错，直接告知用户需要先安装或配置环境"
-                elif error_type == "timeout":
-                    suggestion = "可尝试减小操作范围或增加超时时间"
-                elif error_type == "invalid_args":
-                    suggestion = "请检查参数格式是否正确"
-            return {
-                "tool_call_id": tool_call_id,
-                "tool_name": name,
-                "success": success,
-                "content": content,
-                "error_type": error_type,
-                "suggestion": suggestion,
-                "emoji": emoji,
-            }
-
-        def _format_tool_result_text(name: str, success: bool, result: str, error_msg: str = "", error_type: str = "", suggestion: str = "", tool_call_id: str = "") -> str:
-            """将工具结果格式化为易读的纯文本，包含 tool_call_id 供 MiniMax 等 API 解析"""
-            emoji = _tool_registry.get_emoji(name)
-            if success:
-                # 成功：简洁的结果描述
-                preview = result.strip()[:500]
-                if len(result.strip()) > 500:
-                    preview += "\n...[结果已截断]"
-                content = f"[{emoji} {name}] 执行成功:\n{preview}"
+        def _format_tool_result_text(settlement: ToolSettlement) -> str:
+            payload = settlement.to_message_payload()
+            emoji = settlement.emoji
+            if settlement.success:
+                preview = settlement.preview.strip()
+                if len(preview) > 500:
+                    preview = preview[:500] + "\n...[结果已截断]"
+                content = f"[{emoji} {settlement.tool_name}] 执行成功:\n{preview}"
             else:
-                # 失败：错误描述 + 建议
-                lines = [f"[{emoji} {name}] 执行失败: {error_msg}"]
-                if error_type:
-                    lines.append(f"错误类型: {error_type}")
-                if suggestion:
-                    lines.append(f"建议: {suggestion}")
+                lines = [f"[{emoji} {settlement.tool_name}] 执行失败: {settlement.error}"]
+                if settlement.error_type:
+                    lines.append(f"错误类型: {settlement.error_type}")
+                if settlement.suggestion:
+                    lines.append(f"建议: {settlement.suggestion}")
                 content = "\n".join(lines)
-
-            # 返回包含 tool_call_id 的 JSON 格式，供 MiniMax 等 API 解析
-            return _json.dumps({
-                "tool_call_id": tool_call_id,
-                "content": content
-            }, ensure_ascii=False)
+            payload["content"] = content
+            return _json.dumps({"tool_call_id": settlement.tool_call_id, "content": content}, ensure_ascii=False)
 
         # _classify_error_type, _is_error_result, _has_execution_claim 已提到模块级
         # _validate_final_text 改为调用模块级 _validate_execution_claim
@@ -591,7 +894,8 @@ class AgentEngine:
             )
             summary_messages = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
             try:
-                _llm_coro = self.llm.chat(messages=summary_messages, tools=None)
+                from app.services.llm_manager import get_llm_manager
+                _llm_coro = self.llm.chat(messages=summary_messages, tools=None, request_options=get_llm_manager().build_request_options())
                 async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型总结", interval=15.0):
                     if _ev_type == "heartbeat":
                         yield _progress(_ev_val)
@@ -722,7 +1026,8 @@ class AgentEngine:
         _content_emitted = [False]
         budget = IterationBudget()
         cumulative_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}  # Token 使用量追踪
-        must_use_tool = _message_requires_tool_call(message)
+        turn_strategy = self._build_turn_strategy(message)
+        must_use_tool = _message_requires_tool_call(message) or turn_strategy.should_use_tools
         forced_tool_retry_done = False
         final_claim_retry_done = False
         needs_continue = False
@@ -803,8 +1108,14 @@ class AgentEngine:
 
         # ── 阶段 1: 加载上下文 ──
         yield _progress("加载身份认知...")
-        await self._prepare_turn_context(session_id, message, include_history=True, include_env=True)
+        turn_strategy = self._build_turn_strategy(message)
+        self._attach_turn_strategy(turn_strategy)
+        assembly = await self._prepare_turn_context(session_id, message, include_history=True, include_env=True, turn_strategy=turn_strategy)
         yield _progress("上下文装配完成")
+        self._persist_context_snapshot(assembly)
+        if self._active_turn_state:
+            logger.info(f"[TURN] {self._active_turn_state.describe()}")
+        logger.info(f"[TURN_STRATEGY] {turn_strategy.__dict__}")
 
         if _message_requires_visible_chrome(message) and not _has_cdp_url(message):
             question_id = str(uuid.uuid4())
@@ -821,7 +1132,19 @@ class AgentEngine:
                 "user_response": None,
                 "timeout": False,
             }
+            self._persist_turn_artifact(
+                "ask_prompt",
+                {
+                    "question_id": question_id,
+                    "question": question,
+                    "choices": [],
+                    "reason": "missing_cdp_url",
+                    "session_id": session_id,
+                },
+                metadata={"stage": "preflight", "kind": "ask"},
+            )
             yield _progress("等待用户提供可视化 Chrome 的 CDP 连接地址...")
+            self._persist_ask_prompt(question_id, question, [], "visible_chrome_requires_cdp_url")
             yield {
                 "type": "ask",
                 "question": question,
@@ -829,6 +1152,7 @@ class AgentEngine:
                 "question_id": question_id,
                 "timestamp": _time.time(),
             }
+            self._finalize_turn(session_id, "", [], [], cumulative_usage, extra={"ended_by": "ask", "reason": "visible_chrome_requires_cdp_url"})
             yield _done()
             self.context.clear()
             return
@@ -848,8 +1172,9 @@ class AgentEngine:
         try:
             import json as _json
             from app.tools.manager import get_tool_manager
-            from app.tools.runtime_context import set_tool_session_id, reset_tool_session_id
+            from app.tools.runtime_context import set_tool_session_id, reset_tool_session_id, set_tool_turn_strategy, reset_tool_turn_strategy
             _tool_session_token = set_tool_session_id(session_id)
+            _tool_strategy_token = set_tool_turn_strategy(self._active_turn_state.runtime.metadata.get("turn_strategy") if self._active_turn_state else None)
             tool_mgr = get_tool_manager()
             tool_schemas = tool_mgr.get_schemas()
             logger.info(f"Agent stream_chat 可用工具: {tool_mgr.list_tools()}")
@@ -871,6 +1196,7 @@ class AgentEngine:
                             yield _ev
                     final_response_chunks.append(final_text)
                     yield _content(final_text)
+                    self._finalize_turn(session_id, final_text, tools_used, commands_executed, cumulative_usage, extra={"ended_by": "budget"})
                     yield _done({"ended_by": "budget"})
                     break
 
@@ -942,13 +1268,13 @@ class AgentEngine:
                             self.context.add_message("system", cached_prompt_marker)
 
                     _rt_llm_t0 = _time.time()
-                    _llm_coro = self.llm.chat(messages=llm_messages, tools=tool_schemas)
+                    self._persist_model_request(round_num, llm_messages, tool_schemas, request_options)
+                    _llm_coro = self.llm.chat(messages=llm_messages, tools=tool_schemas, request_options=request_options)
                     async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应", interval=15.0):
                         if _ev_type == "heartbeat":
                             yield _progress(_ev_val)
                         else:
                             llm_response = _ev_val
-                    # W5-7: LLM 调用 span (失败绝不影响主流程)
                     try:
                         from app.core.runtime import trace as _rt
                         _rt.record_span(
@@ -965,14 +1291,16 @@ class AgentEngine:
                         pass
                     # 追踪 token 使用量
                     if llm_response.usage:
-                        cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
-                        cumulative_usage["output_tokens"] += llm_response.usage.get("output_tokens", 0)
-                        cumulative_usage["total_tokens"] += llm_response.usage.get("total_tokens", 0)
-                        # 实时推送 usage 事件给前端 TokenUsageBar（不等 done）
-                        yield _usage(llm_response.usage)
+                        usage = response_usage_dict(llm_response)
+                        cumulative_usage["input_tokens"] += usage.get("input_tokens", 0)
+                        cumulative_usage["output_tokens"] += usage.get("output_tokens", 0)
+                        cumulative_usage["total_tokens"] += usage.get("total_tokens", 0)
+                        self._persist_model_response(budget.current_round, llm_response, usage)
+                        yield _usage(usage)
                     if llm_response.has_thinking:
-                        for chunk in llm_response.thinking:
-                            yield _thinking_delta(chunk)
+                        for chunk_text in iter_thinking_text(llm_response):
+                            if isinstance(chunk_text, str) and chunk_text:
+                                yield _thinking_delta(chunk_text)
                         yield _thinking_done()
                 except Exception as _tool_err:
                     # LLM API 调用失败，尝试 fallback provider
@@ -980,7 +1308,7 @@ class AgentEngine:
                     fallback_llm = self._try_fallback_llm()
                     if fallback_llm:
                         try:
-                            _llm_coro = fallback_llm.chat(messages=llm_messages, tools=tool_schemas)
+                            _llm_coro = fallback_llm.chat(messages=llm_messages, tools=tool_schemas, request_options=request_options)
                             async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应(fallback)", interval=15.0):
                                 if _ev_type == "heartbeat":
                                     yield _progress(_ev_val)
@@ -988,15 +1316,16 @@ class AgentEngine:
                                     llm_response = _ev_val
                             # 追踪 fallback token 使用量
                             if llm_response.usage:
-                                cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
-                                cumulative_usage["output_tokens"] += llm_response.usage.get("output_tokens", 0)
-                                cumulative_usage["total_tokens"] += llm_response.usage.get("total_tokens", 0)
-                                yield _usage(llm_response.usage)
+                                usage = response_usage_dict(llm_response)
+                                cumulative_usage["input_tokens"] += usage.get("input_tokens", 0)
+                                cumulative_usage["output_tokens"] += usage.get("output_tokens", 0)
+                                cumulative_usage["total_tokens"] += usage.get("total_tokens", 0)
+                                yield _usage(usage)
                             self.llm = fallback_llm  # 切换成功，更新主 LLM
                             logger.info("LLM fallback 成功，已切换 provider")
                         except Exception as fallback_err:
                             logger.error(f"LLM fallback 也失败: {fallback_err}")
-                            _llm_coro = self.llm.chat(messages=llm_messages, tools=None)
+                            _llm_coro = self.llm.chat(messages=llm_messages, tools=None, request_options=request_options)
                             async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应(降级)", interval=15.0):
                                 if _ev_type == "heartbeat":
                                     yield _progress(_ev_val)
@@ -1004,7 +1333,7 @@ class AgentEngine:
                                     llm_response = _ev_val
                     else:
                         # 无 fallback，降级为无工具请求
-                        _llm_coro = self.llm.chat(messages=llm_messages, tools=None)
+                        _llm_coro = self.llm.chat(messages=llm_messages, tools=None, request_options=request_options)
                         async for _ev_type, _ev_val in _with_heartbeat(_llm_coro, "🤔 等待模型响应(降级)", interval=15.0):
                             if _ev_type == "heartbeat":
                                 yield _progress(_ev_val)
@@ -1012,9 +1341,10 @@ class AgentEngine:
                                 llm_response = _ev_val
                     # 追踪降级调用 token 使用量
                     if llm_response.usage:
-                        cumulative_usage["input_tokens"] += llm_response.usage.get("input_tokens", 0)
-                        cumulative_usage["output_tokens"] += llm_response.usage.get("output_tokens", 0)
-                        cumulative_usage["total_tokens"] += llm_response.usage.get("total_tokens", 0)
+                        usage = response_usage_dict(llm_response)
+                        cumulative_usage["input_tokens"] += usage.get("input_tokens", 0)
+                        cumulative_usage["output_tokens"] += usage.get("output_tokens", 0)
+                        cumulative_usage["total_tokens"] += usage.get("total_tokens", 0)
                     full_text = llm_response.content
                     if full_text:
                         cleaned, thinking = _clean_thinking(full_text)
@@ -1031,6 +1361,7 @@ class AgentEngine:
                                 choices = []
                             yield _progress("等待用户回答...")
                             yield {"type": "ask", "question": question, "choices": choices, "question_id": question_id, "timestamp": _time.time()}
+                            self._finalize_turn(session_id, "", tools_used, commands_executed, cumulative_usage, extra={"ended_by": "ask", "question_id": question_id})
                             yield _done({"ended_by": "ask"})
                             break
                         executor = self._get_cli_executor()
@@ -1063,21 +1394,36 @@ class AgentEngine:
                                     "commands_executed": commands_executed,
                                     "tool_results_for_hermes": tool_results_for_hermes,
                                 })
-                                self.context.add_tool_message(
+                                tool_settlement = ToolSettlement(
                                     tool_name="terminal",
                                     tool_call_id="fallback",
                                     success=not is_error,
-                                    content=_json.dumps({
-                                        "tool_call_id": "fallback",
-                                        "content": f"[命令执行结果]\n{result}"
-                                    }, ensure_ascii=False),
-                                    result_full=result,
+                                    preview=f"[命令执行结果]\n{result}",
+                                    full_result=result,
                                     error=result if is_error else "",
+                                    error_type=_classify_error_type(result) if is_error else "",
+                                    suggestion="",
                                     emoji=_tool_registry.get_emoji("terminal"),
                                     elapsed=elapsed,
                                 )
+                                self._persist_tool_settlement("fallback_terminal", tool_settlement)
+                                self.context.add_tool_message(
+                                    tool_name="terminal",
+                                    tool_call_id="fallback",
+                                    success=tool_settlement.success,
+                                    content=_json.dumps({
+                                        "tool_call_id": "fallback",
+                                        "content": tool_settlement.preview
+                                    }, ensure_ascii=False),
+                                    result_full=tool_settlement.full_result,
+                                    error=tool_settlement.error,
+                                    error_type=tool_settlement.error_type,
+                                    suggestion=tool_settlement.suggestion,
+                                    emoji=tool_settlement.emoji,
+                                    elapsed=tool_settlement.elapsed,
+                                )
                                 llm_messages2 = [Message(role=m.role, content=m.content) for m in self.context.get_messages()]
-                                _llm_coro2 = self.llm.chat(messages=llm_messages2, tools=None)
+                                _llm_coro2 = self.llm.chat(messages=llm_messages2, tools=None, request_options=request_options)
                                 async for _ev_type, _ev_val in _with_heartbeat(_llm_coro2, "🤔 等待模型响应", interval=15.0):
                                     if _ev_type == "heartbeat":
                                         yield _progress(_ev_val)
@@ -1125,6 +1471,7 @@ class AgentEngine:
                             )
                             yield _content(fallback_msg)
                             final_response_chunks.append(fallback_msg)
+                            self._finalize_turn(session_id, fallback_msg, tools_used, commands_executed, cumulative_usage, extra={"ended_by": "evidence_missing"})
                             yield _done({"ended_by": "evidence_missing"})
                             break
                         required_evidence_retry_count += 1
@@ -1173,6 +1520,7 @@ class AgentEngine:
                         )
                         yield _content(fallback_msg)
                         final_response_chunks.append(fallback_msg)
+                        self._finalize_turn(session_id, fallback_msg, tools_used, commands_executed, cumulative_usage, extra={"ended_by": "tool_required_retry_exhausted"})
                         yield _done({"ended_by": "tool_required_retry_exhausted"})
                         break
                     if full_text:
@@ -1335,8 +1683,23 @@ class AgentEngine:
                             preview = _artifact_preview_from_write_result(tool_result)
                             if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
                                 artifact_previews.append(preview)
-                        result_structured = _tool_result_structured(tool_name, tc["id"], not is_error, result=tool_result if not is_error else "",
-                            error_msg=tool_result if is_error else "", error_type=_classify_error_type(tool_result) if is_error else "")
+                        settlement = ToolSettlement(
+                            tool_name=tool_name,
+                            tool_call_id=tc["id"],
+                            success=not is_error,
+                            preview=tool_result if not is_error else "",
+                            full_result=tool_result,
+                            error=tool_result if is_error else "",
+                            error_type=_classify_error_type(tool_result) if is_error else "",
+                            suggestion="",
+                            emoji=_tool_registry.get_emoji(tool_name),
+                            elapsed=_elapsed,
+                        )
+                        if not is_error:
+                            preview = _artifact_preview_from_write_result(tool_result)
+                            if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
+                                artifact_previews.append(preview)
+                            settlement.artifact_previews = ([preview] if preview else [])
                         # 检测 ask 交互
                         ask_events = _build_ask_events(tool_result, args)
                         if ask_events:
@@ -1350,33 +1713,33 @@ class AgentEngine:
                         error_type = _classify_error_type(error_msg)
                         yield _tool_error(tool_name, error_msg)
                         tool_result = f"工具执行失败: {_tool_exec_err}"
-                        result_structured = _tool_result_structured(
-                            tool_name, tc["id"], False, error_msg=error_msg, error_type=error_type
+                        settlement = ToolSettlement(
+                            tool_name=tool_name,
+                            tool_call_id=tc["id"],
+                            success=False,
+                            preview="",
+                            full_result=tool_result,
+                            error=error_msg,
+                            error_type=error_type,
+                            suggestion="",
+                            emoji=_tool_registry.get_emoji(tool_name),
+                            elapsed=_elapsed,
                         )
 
-                    # 存储易读的纯文本
-                    tool_text = _format_tool_result_text(
-                        name=tool_name,
-                        success=not is_error,
-                        result=tool_result if not is_error else "",
-                        error_msg=tool_result if is_error else "",
-                        error_type=_classify_error_type(tool_result) if is_error else "",
-                        suggestion=result_structured.get("suggestion", "") if is_error else "",
-                        tool_call_id=tc["id"],
-                        elapsed=_elapsed,
-                    )
+                    settlement.artifact_previews = ([preview] if (not is_error and preview) else [])
+                    tool_text = _format_tool_result_text(settlement)
                     self.context.add_tool_message(
                         tool_name=tool_name,
                         tool_call_id=tc["id"],
-                        success=not is_error,
+                        success=settlement.success,
                         content=tool_text,
-                        result_full=tool_result,
-                        error=tool_result if is_error else "",
-                        error_type=_classify_error_type(tool_result) if is_error else "",
-                        suggestion=result_structured.get("suggestion", "") if is_error else "",
-                        emoji=_tool_registry.get_emoji(tool_name),
-                        elapsed=_elapsed,
-                        artifact_previews=([preview] if (not is_error and preview) else []),
+                        result_full=settlement.full_result,
+                        error=settlement.error,
+                        error_type=settlement.error_type,
+                        suggestion=settlement.suggestion,
+                        emoji=settlement.emoji,
+                        elapsed=settlement.elapsed,
+                        artifact_previews=settlement.artifact_previews,
                     )
 
                     # 约束：记录工具执行结果，防止 agent 幻觉
@@ -1426,9 +1789,17 @@ class AgentEngine:
                             preview = _artifact_preview_from_write_result(tool_result)
                             if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
                                 artifact_previews.append(preview)
-                        result_structured = _tool_result_structured(
-                            tool_name, tc["id"], not is_error, result=tool_result if not is_error else "",
-                            error_msg=tool_result if is_error else "", error_type=_classify_error_type(tool_result) if is_error else ""
+                        settlement = ToolSettlement(
+                            tool_name=tool_name,
+                            tool_call_id=tc["id"],
+                            success=not is_error,
+                            preview=tool_result if not is_error else "",
+                            full_result=tool_result,
+                            error=tool_result if is_error else "",
+                            error_type=_classify_error_type(tool_result) if is_error else "",
+                            suggestion="",
+                            emoji=_tool_registry.get_emoji(tool_name),
+                            elapsed=_elapsed,
                         )
                         # 检测 ask 交互
                         if not is_error:
@@ -1439,17 +1810,8 @@ class AgentEngine:
                                     yield ev
                                 break  # 跳出 safe 执行循环
 
-                        # 存储易读的纯文本
-                        tool_text = _format_tool_result_text(
-                            name=tool_name,
-                            success=not is_error,
-                            result=tool_result if not is_error else "",
-                            error_msg=tool_result if is_error else "",
-                            error_type=_classify_error_type(tool_result) if is_error else "",
-                            suggestion=result_structured.get("suggestion", "") if is_error else "",
-                            tool_call_id=tc["id"],
-                            elapsed=_elapsed,
-                        )
+                        settlement.artifact_previews = ([preview] if (not is_error and preview) else [])
+                        tool_text = _format_tool_result_text(settlement)
                         self.context.add_tool_message(
                             tool_name=tool_name,
                             tool_call_id=tc["id"],
@@ -1458,10 +1820,10 @@ class AgentEngine:
                             result_full=tool_result,
                             error=tool_result if is_error else "",
                             error_type=_classify_error_type(tool_result) if is_error else "",
-                            suggestion=result_structured.get("suggestion", "") if is_error else "",
+                            suggestion=settlement.suggestion if is_error else "",
                             emoji=_tool_registry.get_emoji(tool_name),
                             elapsed=_elapsed,
-                            artifact_previews=([preview] if (not is_error and preview) else []),
+                            artifact_previews=settlement.artifact_previews,
                         )
 
                         # W4-16: PostToolUse hook (safe 模式 24 空格)
@@ -1518,8 +1880,18 @@ class AgentEngine:
                             preview = _artifact_preview_from_write_result(tool_result)
                             if preview and not any(a["path"] == preview["path"] for a in artifact_previews):
                                 artifact_previews.append(preview)
-                        result_structured = _tool_result_structured(tool_name, tc["id"], not is_error, result=tool_result if not is_error else "",
-                            error_msg=tool_result if is_error else "", error_type=_classify_error_type(tool_result) if is_error else "")
+                        settlement = ToolSettlement(
+                            tool_name=tool_name,
+                            tool_call_id=tc["id"],
+                            success=not is_error,
+                            preview=tool_result if not is_error else "",
+                            full_result=tool_result,
+                            error=tool_result if is_error else "",
+                            error_type=_classify_error_type(tool_result) if is_error else "",
+                            suggestion="",
+                            emoji=_tool_registry.get_emoji(tool_name),
+                            elapsed=_elapsed,
+                        )
                         # 检测 ask 交互
                         ask_events = _build_ask_events(tool_result, args)
                         if ask_events:
@@ -1533,34 +1905,35 @@ class AgentEngine:
                         error_type = _classify_error_type(error_msg)
                         yield _tool_error(tool_name, error_msg)
                         tool_result = f"工具执行失败: {_tool_exec_err}"
-                        result_structured = _tool_result_structured(
-                            tool_name, tc["id"], False, error_msg=error_msg, error_type=error_type
+                        settlement = ToolSettlement(
+                            tool_name=tool_name,
+                            tool_call_id=tc["id"],
+                            success=False,
+                            preview="",
+                            full_result=tool_result,
+                            error=error_msg,
+                            error_type=error_type,
+                            suggestion="",
+                            emoji=_tool_registry.get_emoji(tool_name),
+                            elapsed=_elapsed,
                         )
 
                     # 存储易读的纯文本
                     # W4-35 修: 旧实现 success=False hardcode + error_msg=error_msg 在 try 成功路径 unbound.
                     # path_scoped 模式应跟 line_scoped (L1376 区域) 一致, 用 is_error 决 success / result / error_msg.
-                    tool_text = _format_tool_result_text(
-                        name=tool_name,
-                        success=not is_error,
-                        result=tool_result if not is_error else "",
-                        error_msg=tool_result if is_error else "",
-                        error_type=_classify_error_type(tool_result) if is_error else "",
-                        suggestion=result_structured.get("suggestion", "") if is_error else "",
-                        tool_call_id=tc.get("id", ""),
-                        elapsed=_elapsed,
-                    )
+                    tool_text = _format_tool_result_text(settlement)
                     self.context.add_tool_message(
                         tool_name=tool_name,
                         tool_call_id=tc.get("id", ""),
-                        success=not is_error,
+                        success=settlement.success,
                         content=tool_text,
-                        result_full=tool_result,
-                        error=tool_result if is_error else "",
-                        error_type=_classify_error_type(tool_result) if is_error else "",
-                        suggestion=result_structured.get("suggestion", "") if is_error else "",
-                        emoji=_tool_registry.get_emoji(tool_name),
-                        elapsed=_elapsed,
+                        result_full=settlement.full_result,
+                        error=settlement.error,
+                        error_type=settlement.error_type,
+                        suggestion=settlement.suggestion,
+                        emoji=settlement.emoji,
+                        elapsed=settlement.elapsed,
+                        artifact_previews=settlement.artifact_previews,
                     )
 
                     # W4-16: PostToolUse hook (path_scoped, 跟 line_scoped 一样 is_error 反映真实结果)
@@ -1645,6 +2018,7 @@ class AgentEngine:
         finally:
             if "_tool_session_token" in locals():
                 reset_tool_session_id(_tool_session_token)
+                reset_tool_turn_strategy(_tool_strategy_token)
 
         # ── 附加工具反馈 ──
         if tools_used:
@@ -1715,6 +2089,7 @@ class AgentEngine:
             "memory_storage": self.memory_storage,
             "constraint_engine": self._constraint_engine,
         })
+        self._finalize_turn(session_id, final_reply, tools_used, commands_executed, cumulative_usage, extra={"reflection": reflection_verdict} if reflection_verdict else None)
         self.context.clear()
 
         yield _done({"reflection": reflection_verdict} if reflection_verdict else None)

@@ -5,6 +5,7 @@ Anthropic Claude LLM实现
 from typing import List, Optional, AsyncIterator, Dict
 from app.llm.base import BaseLLM, LLMError, LLMResponse
 from app.core.base import Message
+from app.llm.request_contract import ModelRequestOptions
 import logging
 import httpx
 import json
@@ -34,7 +35,7 @@ class AnthropicLLM(BaseLLM):
     def api_base(self, value: str):
         self._api_base = value or self.DEFAULT_API_BASE
     
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> LLMResponse:
+    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None, request_options: Optional[ModelRequestOptions] = None, **kwargs) -> LLMResponse:
         """发送对话请求到Claude"""
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")
@@ -47,6 +48,7 @@ class AnthropicLLM(BaseLLM):
             async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
                 for attempt in range(self.MAX_RETRIES):
                     try:
+                        effective_options = request_options or ModelRequestOptions(model=self.model, provider="anthropic", api_format="anthropic")
                         response = await client.post(
                             f"{self.api_base}/messages",
                             headers={
@@ -55,9 +57,9 @@ class AnthropicLLM(BaseLLM):
                                 "content-type": "application/json"
                             },
                             json={
-                                "model": self.model,
+                                "model": effective_options.model,
                                 "messages": anthropic_messages,
-                                "max_tokens": 4096
+                                "max_tokens": effective_options.controls.max_tokens if effective_options.controls.max_tokens is not None else 4096
                             }
                         )
                         
@@ -101,7 +103,7 @@ class AnthropicLLM(BaseLLM):
         logger.warning("Claude不提供嵌入API，使用降级向量")
         return self._generate_fallback_embedding(text)
     
-    async def stream_chat(self, messages: List[Message]) -> AsyncIterator[str]:
+    async def stream_chat(self, messages: List[Message], request_options: Optional[ModelRequestOptions] = None) -> AsyncIterator[str]:
         """流式发送对话请求到Claude"""
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")

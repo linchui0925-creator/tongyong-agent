@@ -21,7 +21,7 @@ export default function PlanModeToggle({ planMode, onToggle, disabled }: Props) 
       aria-label="计划模式"
     >
       <span className="plan-mode-pill-icon">📋</span>
-      <span className="plan-mode-pill-text">计划</span>
+      <span className="plan-mode-pill-text">计划{planMode ? '·开' : ''}</span>
     </button>
   );
 }

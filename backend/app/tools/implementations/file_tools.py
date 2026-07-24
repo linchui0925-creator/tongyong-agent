@@ -276,8 +276,8 @@ READ_FILE_SCHEMA = {
         },
         "limit": {
             "type": "integer",
-            "description": "最多读取行数（默认 200，-1 表示全部）",
-            "default": 200,
+            "description": "最多读取行数（默认 2000，-1 表示全部）",
+            "default": 2000,
         },
         "task_id": {
             "type": "string",
@@ -289,7 +289,7 @@ READ_FILE_SCHEMA = {
 }
 
 
-async def read_file_tool(path: str, offset: int = 1, limit: int = 200, task_id: str = "default") -> str:
+async def read_file_tool(path: str, offset: int = 1, limit: int = 2000, task_id: str = "default") -> str:
     resolved = _resolve_path(path)
     if not resolved:
         return f"路径无效或被禁止: {path}"
@@ -410,7 +410,7 @@ async def read_file_tool(path: str, offset: int = 1, limit: int = 200, task_id: 
     except OSError:
         file_size = 0
     hint = ""
-    if file_size > _LARGE_FILE_HINT_BYTES and limit > 200:
+    if file_size > _LARGE_FILE_HINT_BYTES and limit > 2000:
         hint = (
             f"\n💡 This file is large ({file_size:,} bytes). "
             "Consider reading only the section you need with offset and limit."

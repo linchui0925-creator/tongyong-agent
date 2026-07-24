@@ -238,7 +238,13 @@ def setup_default_hooks(get_time: Callable[[], float] = None) -> None:
         return None
 
     async def hook_memory_save(ctx: Dict[str, Any]) -> None:
-        """Stop: 收尾 - 保存 user / assistant 消息到 memory_storage, 重置约束引擎"""
+        """Stop: 收尾 - 保存 user / assistant 消息到 memory_storage, 重置约束引擎。
+
+        唯一落库出口约定：
+        - 各 agent 路径只应触发一次 Stop hook
+        - 这里是正式写入 DB 的唯一入口（user + assistant 成对）
+        - 对「同一 session 尾部已是相同 user 内容」做幂等保护，避免重复 Stop 叠写
+        """
         memory_storage = ctx.get("memory_storage")
         session_id = ctx.get("session_id")
         message = ctx.get("message")
@@ -254,14 +260,42 @@ def setup_default_hooks(get_time: Callable[[], float] = None) -> None:
             final_reply = re.sub(r'<think>[\s\S]*?</think>', '', final_reply, flags=re.DOTALL).strip()
             final_reply = re.sub(r'<think>[\s\S]*?</think>', '', final_reply, flags=re.DOTALL).strip()
             final_reply = re.sub(r'<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>', '', final_reply).strip()
-            tool_meta = {
-                "tools_used": list(dict.fromkeys(ctx.get("tools_used") or [])),
-                "commands_executed": list(dict.fromkeys(ctx.get("commands_executed") or [])),
-            }
-            final_reply_with_meta = f"{final_reply}\n\n<<<TOOL_META_JSON>>>" + __import__("json").dumps(tool_meta, ensure_ascii=False) + "<<<TOOL_META_JSON_END>>>"
             try:
-                await memory_storage.add_message(session_id, "user", message)
-                await memory_storage.add_message(session_id, "assistant", final_reply_with_meta)
+                # 幂等：若尾部已是同一 user 原文（且下一条已是 assistant），视为本轮已落库
+                already = False
+                try:
+                    existing = await memory_storage.get_messages(session_id)
+                    if len(existing) >= 2:
+                        last_a, last_b = existing[-2], existing[-1]
+                        # 完整一轮完全一致才视为重复 Stop（用户连发两次相同问题不应被跳过）
+                        if (
+                            last_a.role == "user"
+                            and last_b.role == "assistant"
+                            and (last_a.content or "") == (message or "")
+                            and (last_b.content or "") == (final_reply or "")
+                        ):
+                            already = True
+                            logger.info(
+                                "hook_memory_save skip duplicate turn | session=%s tail_seq=%s",
+                                session_id,
+                                getattr(last_b, "sequence", None),
+                            )
+                    elif len(existing) == 1:
+                        only = existing[-1]
+                        if only.role == "user" and (only.content or "") == (message or ""):
+                            # 仅 user 已写、缺 assistant：补写 assistant，不重写 user
+                            await memory_storage.add_message(session_id, "assistant", final_reply)
+                            already = True
+                            logger.info(
+                                "hook_memory_save complete partial turn | session=%s",
+                                session_id,
+                            )
+                except Exception as probe_err:
+                    logger.debug("hook_memory_save probe failed: %s", probe_err)
+
+                if not already:
+                    await memory_storage.add_message(session_id, "user", message)
+                    await memory_storage.add_message(session_id, "assistant", final_reply)
             except Exception as e:
                 logger.warning(f"memory save failed: {e}")
 

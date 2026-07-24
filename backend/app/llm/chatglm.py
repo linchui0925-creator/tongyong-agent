@@ -5,6 +5,7 @@ W4-34 改: 继承 OpenAICompatibleLLM,自动获得 tools 传 + tool_calls 解析
 """
 import logging
 from app.llm.openai_compatible import OpenAICompatibleLLM
+from app.llm.request_contract import ModelRequestOptions
 
 logger = logging.getLogger(__name__)
 

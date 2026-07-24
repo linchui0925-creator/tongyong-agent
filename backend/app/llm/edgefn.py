@@ -24,6 +24,7 @@ import logging
 from typing import Dict
 from app.llm.openai_compatible import OpenAICompatibleLLM
 from app.llm.base import LLMResponse
+from app.llm.request_contract import ModelRequestOptions
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ class EdgeFnLLM(OpenAICompatibleLLM):
             logger.info("EdgeFn LLM: 使用硬编码 API Key (W5-2 部署默认配置)")
         super().__init__(api_key, model)
         logger.info(f"EdgeFn LLM 初始化完成, model: {self.model}, api_base: {self.api_base}")
+
+    async def chat(self, messages, tools=None, request_options: ModelRequestOptions = None, **kwargs):
+        return await super().chat(messages, tools=tools, request_options=request_options, **kwargs)
+
+    async def stream_chat(self, messages, request_options: ModelRequestOptions = None):
+        async for chunk in super().stream_chat(messages, request_options=request_options):
+            yield chunk
 
     def _parse_response(self, result: Dict) -> LLMResponse:
         """EdgeFn 走 thinking 解析 (跟 DeepSeek 一样是 reasoning model)

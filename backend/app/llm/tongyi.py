@@ -5,6 +5,7 @@
 from typing import List, Optional, AsyncIterator, Dict, Any, Union
 from app.llm.base import BaseLLM, LLMError, LLMResponse, ToolCallResult
 from app.core.base import Message
+from app.llm.request_contract import ModelRequestOptions
 import logging
 import httpx
 import json
@@ -27,7 +28,7 @@ class TongyiLLM(BaseLLM):
         self.api_base = self.DEFAULT_API_BASE
         logger.info(f"通义千问LLM初始化完成，模型: {self.model}")
     
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> LLMResponse:
+    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None, request_options: Optional[ModelRequestOptions] = None, **kwargs) -> LLMResponse:
         """
         发送对话请求到通义千问
 
@@ -74,13 +75,14 @@ class TongyiLLM(BaseLLM):
                 else:
                     api_messages.append({"role": msg.role, "content": msg.content})
 
+            effective_options = request_options or ModelRequestOptions(model=self.model, provider="tongyi", api_format="chat_completions")
             use_tools = bool(tools)
             logger.info(f"发送请求到通义千问，消息数: {len(messages)}, 工具数: {len(tools) if tools else 0}, 兼容模式: {use_tools}")
 
             if use_tools:
-                return await self._chat_compatible(api_messages, tools)
+                return await self._chat_compatible(api_messages, tools, effective_options)
             else:
-                return await self._chat_native(api_messages)
+                return await self._chat_native(api_messages, effective_options)
 
         except LLMError:
             raise
@@ -88,15 +90,15 @@ class TongyiLLM(BaseLLM):
             logger.error(f"通义千问请求失败: {e}")
             raise LLMError(f"请求失败: {str(e)}", "REQUEST_FAILED", str(e))
 
-    async def _chat_compatible(self, messages: List[Dict], tools: List[Dict]) -> LLMResponse:
+    async def _chat_compatible(self, messages: List[Dict], tools: List[Dict], request_options: ModelRequestOptions) -> LLMResponse:
         """使用兼容模式 API（支持 function calling）"""
         url = f"{self.COMPATIBLE_API_BASE}/chat/completions"
         request_body = {
-            "model": self.model,
+            "model": request_options.model,
             "messages": messages,
             "tools": tools,
-            "temperature": 0.7,
-            "max_tokens": 2000
+            "temperature": request_options.controls.temperature if request_options.controls.temperature is not None else 0.7,
+            "max_tokens": request_options.controls.max_tokens if request_options.controls.max_tokens is not None else 2000
         }
 
         async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
@@ -177,15 +179,15 @@ class TongyiLLM(BaseLLM):
                         raise LLMError(f"请求失败: {str(e)}", "REQUEST_FAILED")
                     await asyncio.sleep(2 ** attempt)
 
-    async def _chat_native(self, messages: List[Dict]) -> LLMResponse:
+    async def _chat_native(self, messages: List[Dict], request_options: ModelRequestOptions) -> LLMResponse:
         """使用原生 API（不支持 function calling）"""
         url = f"{self.api_base}/services/aigc/text-generation/generation"
         request_body = {
             "model": self.model,
             "input": {"messages": messages},
             "parameters": {
-                "temperature": 0.7,
-                "max_tokens": 2000
+                "temperature": request_options.controls.temperature if request_options.controls.temperature is not None else 0.7,
+                "max_tokens": request_options.controls.max_tokens if request_options.controls.max_tokens is not None else 2000
             }
         }
 

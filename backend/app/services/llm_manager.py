@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 from app.llm.base import BaseLLM
 from app.llm.openai_compatible import OpenAICompatibleLLM
+from app.llm.request_contract import ModelRequestOptions, GenerationControls
 from app.services.provider_catalog import ENV_PREFIX_MAP, BUILTIN_CONFIGS
 from app.paths import data_path
 import logging
@@ -48,7 +49,10 @@ class LLMManager:
         self._agent_engine = engine
 
     def try_restore_saved_provider(self):
-        """尝试从 data/llm_config.json 恢复上次保存的 provider/model；返回 (provider, model) 或 None。"""
+        """Restore a complete runtime config from llm_config.json.
+
+        Backward compatible with old files that only stored provider/model.
+        """
         try:
             cfg_path = Path(data_path("llm_config.json"))
             if not cfg_path.exists():
@@ -57,12 +61,17 @@ class LLMManager:
             provider = saved.get("provider")
             if not provider:
                 return None
-            self._current_provider = provider
-            self._current_model = saved.get("model") or self._default_model_for(provider)
+            runtime = self.build_runtime_config(
+                provider=provider,
+                model=saved.get("model"),
+                api_key=(saved.get("api_key") or None),
+                api_endpoint=saved.get("api_endpoint") or saved.get("api_base"),
+                request_config=saved.get("request_config") or {},
+            )
             profile_id = saved.get("active_provider_profile_id")
             if profile_id:
-                self._current_provider_profile_id = profile_id
-            return (provider, self._current_model)
+                runtime["provider_profile_id"] = profile_id
+            return runtime
         except Exception as e:
             logger.warning(f"try_restore_saved_provider failed: {e}")
             return None
@@ -161,6 +170,59 @@ class LLMManager:
             "request_config": request_config,
         }
 
+    def build_request_options(self) -> ModelRequestOptions:
+        runtime = self.get_current_runtime_config()
+        request_cfg = runtime.get("request_config", {}) or {}
+        controls = GenerationControls(
+            temperature=request_cfg.get("temperature"),
+            top_p=request_cfg.get("top_p"),
+            max_tokens=request_cfg.get("max_tokens"),
+            stop=request_cfg.get("stop"),
+        )
+        return ModelRequestOptions(
+            model=runtime["model"],
+            provider=runtime["provider"],
+            api_format=runtime.get("api_format", "chat_completions"),
+            stream_mode=runtime.get("stream_mode", "native"),
+            controls=controls,
+            provider_fields={
+                "api_base": runtime.get("api_base"),
+                "provider_profile_id": runtime.get("provider_profile_id"),
+                **request_cfg,
+            },
+        )
+
+    def build_request_options_for(self, provider: str, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> ModelRequestOptions:
+        llm = self.get_llm(provider, model=model, api_endpoint=api_endpoint)
+        runtime = {
+            "provider": provider,
+            "model": model or getattr(llm, "model", self.get_current_model()),
+            "api_format": self._infer_api_format(llm),
+            "stream_mode": self._infer_stream_mode(llm),
+            "api_base": getattr(llm, "api_base", None),
+            "provider_profile_id": getattr(self, "_current_provider_profile_id", None),
+            "request_config": getattr(llm, "request_config", {}) or {},
+        }
+        request_cfg = runtime.get("request_config", {}) or {}
+        controls = GenerationControls(
+            temperature=request_cfg.get("temperature"),
+            top_p=request_cfg.get("top_p"),
+            max_tokens=request_cfg.get("max_tokens"),
+            stop=request_cfg.get("stop"),
+        )
+        return ModelRequestOptions(
+            model=runtime["model"],
+            provider=runtime["provider"],
+            api_format=runtime.get("api_format", "chat_completions"),
+            stream_mode=runtime.get("stream_mode", "native"),
+            controls=controls,
+            provider_fields={
+                "api_base": runtime.get("api_base"),
+                "provider_profile_id": runtime.get("provider_profile_id"),
+                **request_cfg,
+            },
+        )
+
     def get_current_config(self) -> Dict[str, Any]:
         runtime = self.get_current_runtime_config()
         return {
@@ -170,24 +232,70 @@ class LLMManager:
             "provider_profile_id": runtime["provider_profile_id"],
         }
 
+    @staticmethod
+    def _is_usable_api_key(key: Optional[str]) -> bool:
+        if not key or not isinstance(key, str):
+            return False
+        k = key.strip()
+        if not k:
+            return False
+        upper = k.upper()
+        if upper in {"YOUR_API_KEY", "YOUR..._KEY", "NONE", "NULL", "TODO"}:
+            return False
+        if "YOUR_API_KEY" in upper or upper.startswith("YOUR"):
+            return False
+        return True
+
     def get_api_key(self, provider: str) -> Optional[str]:
+        """Resolve API key from a single ordered chain.
+
+        Order:
+        1. true custom provider profile
+        2. llm_config.json api_keys
+        3. builtin provider dict / config.toml / env loaded into builtin_providers
+        4. environment variable PROVIDER_API_KEY
+        5. app.config settings (includes edgefn default)
+        """
         if not provider:
             return None
-        # 自定义供应商里保存的 key
+
         for p in getattr(self, "_custom_providers", []):
-            if p.get("id") == provider and p.get("api_key"):
+            if p.get("id") == provider and self._is_usable_api_key(p.get("api_key")):
                 return p["api_key"]
-        # builtin: 优先 data/llm_config.json api_keys，否则读环境变量
+
         try:
             cfg_path = Path(data_path("llm_config.json"))
             if cfg_path.exists():
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
                 k = (cfg.get("api_keys") or {}).get(provider)
-                if k:
+                if self._is_usable_api_key(k):
                     return k
         except Exception:
             pass
-        return os.environ.get(f"{provider.upper()}_API_KEY")
+
+        for p in getattr(self, "builtin_providers", []):
+            if p.get("id") == provider and self._is_usable_api_key(p.get("api_key")):
+                return p["api_key"]
+
+        env_key = os.environ.get(f"{provider.upper()}_API_KEY")
+        if self._is_usable_api_key(env_key):
+            return env_key
+
+        try:
+            from app.config import settings
+            from app.llm.factory import _get_default_api_key
+            settings_key = _get_default_api_key(provider)
+            if self._is_usable_api_key(settings_key):
+                return settings_key
+            # edgefn hardcoded fallback only when settings is empty
+            if provider == "edgefn":
+                from app.llm.edgefn import EdgeFnLLM
+                if self._is_usable_api_key(getattr(EdgeFnLLM, "HARDCODED_API_KEY", None)):
+                    return EdgeFnLLM.HARDCODED_API_KEY
+            _ = settings  # keep import used for future extension
+        except Exception:
+            pass
+        return None
 
     def get_saved_models(self) -> List[Dict[str, Any]]:
         """读取 data/llm_config.json 里的 saved_models 列表。"""
@@ -273,40 +381,175 @@ class LLMManager:
             })
         return result
 
-    def switch_model(self, provider: str, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs) -> bool:
-        """切换当前 LLM；同步 agent engine.llm；写入 data/llm_config.json。"""
-        try:
-            endpoint = kwargs.get("api_endpoint")
-            resolved_api_key = api_key or self.get_api_key(provider)
-            try:
-                llm = self._build_llm_for(provider, resolved_api_key, model, endpoint)
-            except ValueError:
-                logger.warning("switch_model: provider %s 不存在", provider)
-                return False
+    def _is_true_custom_provider(self, provider_id: str) -> bool:
+        return any(p.get("id") == provider_id for p in getattr(self, "_custom_providers", []))
 
-            cfg = self.get_custom_provider(provider) or {}
-            resolved_model = model or cfg.get("default_model") or getattr(llm, "model", None) or self._default_model_for(provider)
-            self._current_provider = provider
-            self._current_model = resolved_model
-            self._current_llm = llm
-            self._current_provider_profile_id = provider if any(p.get("id") == provider for p in self._custom_providers) else None
-            engine = getattr(self, "_agent_engine", None)
-            if engine is not None:
-                engine.llm = llm
+    def _is_builtin_provider(self, provider_id: str) -> bool:
+        return any(p.get("id") == provider_id for p in getattr(self, "builtin_providers", []))
 
+    def _default_api_base_for(self, provider_id: str) -> Optional[str]:
+        for p in getattr(self, "builtin_providers", []):
+            if p.get("id") == provider_id and p.get("base_url"):
+                return p.get("base_url")
+        for p in getattr(self, "_custom_providers", []):
+            if p.get("id") == provider_id and p.get("base_url"):
+                return p.get("base_url")
+        if provider_id == "edgefn":
+            return "https://api.edgefn.net/v1"
+        if provider_id == "openai":
+            return "https://api.openai.com/v1"
+        if provider_id == "deepseek":
+            return "https://api.deepseek.com/v1"
+        if provider_id == "minimax":
+            return "https://api.minimaxi.com/v1"
+        return None
+
+    def build_runtime_config(
+        self,
+        provider: str,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_endpoint: Optional[str] = None,
+        request_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build one complete runtime config blob used to rebuild the LLM."""
+        is_custom = self._is_true_custom_provider(provider)
+        profile = None
+        if is_custom:
+            profile = next((p for p in self._custom_providers if p.get("id") == provider), None)
+        else:
+            profile = next((p for p in self.builtin_providers if p.get("id") == provider), None)
+
+        resolved_model = (
+            model
+            or (profile or {}).get("default_model")
+            or self._default_model_for(provider)
+            or self._default_model()
+        )
+        resolved_key = api_key if self._is_usable_api_key(api_key) else self.get_api_key(provider)
+        resolved_base = (
+            api_endpoint
+            or (profile or {}).get("base_url")
+            or self._default_api_base_for(provider)
+        )
+        resolved_request = request_config if request_config is not None else dict((profile or {}).get("request_config") or {})
+
+        return {
+            "provider": provider,
+            "model": resolved_model,
+            "api_key": resolved_key or "",
+            "api_base": resolved_base,
+            "request_config": resolved_request,
+            "provider_profile_id": provider if is_custom else None,
+            "is_custom": is_custom,
+            "is_builtin": self._is_builtin_provider(provider) or (not is_custom),
+        }
+
+    def _llm_from_runtime_config(self, runtime: Dict[str, Any]) -> BaseLLM:
+        """Create a fresh LLM instance only from a complete runtime config."""
+        provider = runtime["provider"]
+        model = runtime.get("model")
+        api_key = runtime.get("api_key") or None
+        api_base = runtime.get("api_base")
+        request_config = runtime.get("request_config") or {}
+
+        # True custom profiles stay on OpenAI-compatible adapter.
+        if runtime.get("is_custom"):
+            llm = OpenAICompatibleLLM(api_key=api_key or "", model=model)
+            if api_base:
+                llm.api_base = api_base
+            llm.request_config = request_config
+            return llm
+
+        # Builtin / factory-registered providers must use their own class
+        # (EdgeFnLLM hardcode fallback, protocol specifics, etc.).
+        from app.llm.factory import get_llm as _factory_get_llm
+        llm = _factory_get_llm(provider, api_key=api_key if self._is_usable_api_key(api_key) else None, model=model)
+        # Factory implementations may normalize/replace the constructor key. Re-apply
+        # the resolved runtime key so test/chat/voice use the exact same credential.
+        if self._is_usable_api_key(api_key):
+            llm.api_key = api_key
+        if model:
+            llm.model = model
+        if api_base and hasattr(llm, "api_base"):
+            llm.api_base = api_base
+        if request_config is not None:
+            llm.request_config = request_config
+        # Final key safety net for edgefn if factory still got empty key
+        if provider == "edgefn" and not self._is_usable_api_key(getattr(llm, "api_key", None)):
+            from app.llm.edgefn import EdgeFnLLM
+            llm.api_key = EdgeFnLLM.HARDCODED_API_KEY
+        return llm
+
+    def apply_runtime_config(self, runtime: Dict[str, Any], persist: bool = True) -> BaseLLM:
+        """Replace current LLM runtime from one complete config and optionally persist."""
+        llm = self._llm_from_runtime_config(runtime)
+        self._current_provider = runtime["provider"]
+        self._current_model = runtime.get("model")
+        self._current_llm = llm
+        self._current_provider_profile_id = runtime.get("provider_profile_id")
+        self._current_runtime_config = dict(runtime)
+        # Never keep raw key in memory dump fields returned to clients
+        if isinstance(self._current_runtime_config, dict):
+            self._current_runtime_config = {
+                **self._current_runtime_config,
+                "api_key_configured": self._is_usable_api_key(runtime.get("api_key")),
+            }
+            self._current_runtime_config.pop("api_key", None)
+
+        engine = getattr(self, "_agent_engine", None)
+        if engine is not None:
+            engine.llm = llm
+
+        # Drop stale cache entries for this provider so later get_llm rebuilds cleanly
+        stale = [k for k in list(self._llm_cache.keys()) if k.startswith(f"{runtime['provider']}:")]
+        for k in stale:
+            self._llm_cache.pop(k, None)
+
+        if persist:
             try:
                 cfg_path = Path(data_path("llm_config.json"))
                 saved = json.loads(cfg_path.read_text(encoding="utf-8") or "{}") if cfg_path.exists() else {}
-                saved["provider"] = provider
-                saved["model"] = self._current_model
-                if any(p.get("id") == provider for p in self._custom_providers):
-                    saved["active_provider_profile_id"] = provider
+                saved["provider"] = runtime["provider"]
+                saved["model"] = runtime.get("model")
+                if runtime.get("provider_profile_id"):
+                    saved["active_provider_profile_id"] = runtime["provider_profile_id"]
+                else:
+                    saved.pop("active_provider_profile_id", None)
+                # Keep endpoint hint for non-default bases (no secrets)
+                if runtime.get("api_base"):
+                    saved["api_endpoint"] = runtime.get("api_base")
                 cfg_path.parent.mkdir(parents=True, exist_ok=True)
                 cfg_path.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as e:
-                logger.warning("switch_model 持久化失败: %s", e)
+                logger.warning("apply_runtime_config 持久化失败: %s", e)
+        return llm
 
-            self._llm_cache.pop(provider, None)
+    def switch_model(self, provider: str, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs) -> bool:
+        """切换当前 LLM：先组装完整 runtime config，再重建 LLM 实例。"""
+        try:
+            endpoint = kwargs.get("api_endpoint")
+            request_config = kwargs.get("request_config")
+            runtime = self.build_runtime_config(
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                api_endpoint=endpoint,
+                request_config=request_config,
+            )
+            # Builtin without any usable key: still allow edgefn hardcode path via factory
+            if not self._is_usable_api_key(runtime.get("api_key")) and provider != "edgefn" and not runtime.get("is_custom"):
+                # custom can still rely on empty and fail later; builtin needs key except edgefn
+                if not runtime.get("is_custom"):
+                    logger.warning("switch_model: provider %s 无可用 API key", provider)
+            self.apply_runtime_config(runtime, persist=True)
+            logger.info(
+                "switch_model rebuilt runtime | provider=%s model=%s api_base=%s key=%s",
+                runtime.get("provider"),
+                runtime.get("model"),
+                runtime.get("api_base"),
+                "yes" if self._is_usable_api_key(runtime.get("api_key")) else "no",
+            )
             return True
         except Exception as e:
             logger.error("switch_model 失败: %s", e, exc_info=True)
@@ -474,50 +717,63 @@ class LLMManager:
         return False
 
     def _custom_provider_to_llm(self, provider: Dict[str, Any], api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
-        """将自定义供应商配置转换为LLM实例"""
-        base_url = api_endpoint or provider.get('base_url', 'https://api.openai.com/v1')
-        final_api_key = api_key or provider.get('api_key') or ''
-        final_model = model or provider.get('default_model', 'gpt-4o-mini')
-        # 支持OpenAI/Responses/Anthropic三种API格式，自动检测
-        llm = OpenAICompatibleLLM(
-            api_key=final_api_key,
-            model=final_model,
+        """将真正的自定义供应商配置转换为LLM实例。"""
+        runtime = self.build_runtime_config(
+            provider=provider.get("id") or "custom",
+            model=model or provider.get("default_model"),
+            api_key=api_key or provider.get("api_key"),
+            api_endpoint=api_endpoint or provider.get("base_url"),
+            request_config=provider.get("request_config") or {},
         )
-        llm.api_base = base_url
-        llm.request_config = provider.get('request_config', {})
-        return llm
+        # Force custom path even if id collides
+        runtime["is_custom"] = True
+        runtime["is_builtin"] = False
+        return self._llm_from_runtime_config(runtime)
 
     def _build_llm_for(self, provider_id: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None):
-        """根据 provider_id 构造 LLM 实例。先查 custom/builtin dict，没命中再走 factory。"""
-        provider = self.get_custom_provider(provider_id)
-        if provider:
-            return self._custom_provider_to_llm(provider, api_key, model, api_endpoint)
-        # 兜底：factory.py 注册的 provider（tongyi/openai/anthropic/edgefn/...）
+        """根据 provider_id 构造 LLM 实例。
+
+        重要：builtin 不能再误走 custom OpenAICompatible 路径，
+        否则 edgefn 等会丢掉类级兜底 key / 协议细节。
+        """
+        runtime = self.build_runtime_config(
+            provider=provider_id,
+            model=model,
+            api_key=api_key,
+            api_endpoint=api_endpoint,
+        )
         try:
-            from app.llm.factory import get_llm as _factory_get_llm
-            llm = _factory_get_llm(provider_id, api_key=api_key)
-            if model:
-                llm.model = model
-            if api_endpoint and hasattr(llm, "api_base"):
-                llm.api_base = api_endpoint
-            return llm
+            return self._llm_from_runtime_config(runtime)
         except Exception as e:
             raise ValueError(f"供应商 {provider_id} 不存在或 factory 未注册: {e}")
 
     def get_llm(self, provider: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> BaseLLM:
         """获取LLM实例，优先从缓存读取"""
-        cache_key = f"{provider}:{model or 'default'}:{api_key or 'default'}:{api_endpoint or 'default'}"
+        resolved_key = api_key if self._is_usable_api_key(api_key) else self.get_api_key(provider)
+        cache_key = f"{provider}:{model or 'default'}:{resolved_key or 'default'}:{api_endpoint or 'default'}"
         if cache_key in self._llm_cache:
             return self._llm_cache[cache_key]
-        llm = self._build_llm_for(provider, api_key, model, api_endpoint)
+        llm = self._build_llm_for(provider, resolved_key, model, api_endpoint)
         self._llm_cache[cache_key] = llm
         return llm
 
     async def test_connection(self, provider: str, api_key: Optional[str] = None, model: Optional[str] = None, api_endpoint: Optional[str] = None) -> Dict[str, Any]:
-        """测试供应商连接"""
+        """测试供应商连接 — 与 switch 同一条 runtime 重建路径。"""
         try:
-            llm = self.get_llm(provider, api_key, model, api_endpoint)
-            # 发送简单测试请求
+            runtime = self.build_runtime_config(
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                api_endpoint=api_endpoint,
+            )
+            llm = self._llm_from_runtime_config(runtime)
+            # Validate the effective runtime credential, not a stale adapter field.
+            effective_key = getattr(llm, "api_key", None) or runtime.get("api_key")
+            if not self._is_usable_api_key(effective_key):
+                return {
+                    "success": False,
+                    "message": f"连接测试失败: API密钥未设置 (provider={provider})",
+                }
             resp = await llm.chat([{"role": "user", "content": "hi，只用回复ok"}])
             return {
                 "success": True,

@@ -29,10 +29,31 @@ function looksLikeExecutionClaim(content: string): boolean {
   return EXECUTION_CLAIM_PATTERNS.some((p) => text.includes(p));
 }
 
+function stripToolMeta(content: string): string {
+  const metaStart = '<<<TOOL_META_JSON>>>';
+  const metaEnd = '<<<TOOL_META_JSON_END>>>';
+  const startIdx = content.indexOf(metaStart);
+  if (startIdx >= 0) {
+    const endIdx = content.indexOf(metaEnd, startIdx + metaStart.length);
+    if (endIdx > startIdx) {
+      return content.slice(0, startIdx).trim() + content.slice(endIdx + metaEnd.length).trim();
+    }
+    return content.slice(0, startIdx).trim();
+  }
+  return content;
+}
+
+function stripToolMetaAndArtifacts(content: string): string {
+  return content
+    .replace(/<<<TOOL_META_JSON>>>[\s\S]*?(<<<TOOL_META_JSON_END>>>|$)/g, '')
+    .trim();
+}
+
 export interface UseStreamChatOptions {
   sessionId: string;
   onError?: (err: string) => void;
   onSessionCreated?: (sessionId: string) => void;
+  onAssistantSpeechReady?: (text: string) => void;
 }
 
 export interface UseStreamChatReturn {
@@ -64,7 +85,7 @@ export interface UseStreamChatReturn {
   refreshContextStats: () => Promise<void>;
 }
 
-export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStreamChatOptions): UseStreamChatReturn {
+export function useStreamChat({ sessionId, onError, onSessionCreated, onAssistantSpeechReady }: UseStreamChatOptions): UseStreamChatReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -141,7 +162,7 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
         const cleanedForThink = cleanedContent.replace(/<\|im_start\|[^|]*\|[^>]*>[\s\S]*?<\|im_end\|>/g, '');
         const thinkMatch = cleanedForThink.match(/<think>([\s\S]*?)<\/think>/);
         const thinking = thinkMatch ? thinkMatch[1] : '';
-        const displayContent = cleanedForThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        const displayContent = stripToolMetaAndArtifacts(cleanedForThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim());
 
         let toolMeta: Message['toolMeta'] | undefined;
         let artifactPreviews: Message['artifactPreviews'] | undefined;
@@ -351,6 +372,8 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
       },
       onToolComplete: (toolName, preview, duration, emoji, resultFull) => {
         setCurrentTool(null);
+        const elapsedMs = Math.max(0, Math.round(duration * 1000));
+        setToolElapsed(elapsedMs);
         pushTrace(msgId, {
           kind: 'tool_result', tool_name: toolName, preview, duration, emoji,
           result_full: resultFull,
@@ -390,8 +413,14 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
       },
       onThinkingDone: () => { markActive(); },
       onAsk: (question, choices, question_id) => {
-        setWaitingQuestion({ question, choices, id: question_id });
+        const normalizedChoices = Array.from(new Set((choices || []).map((c) => String(c).trim()).filter(Boolean))).slice(0, 3);
+        setWaitingQuestion({
+          question,
+          choices: [...normalizedChoices, 'Other'],
+          id: question_id,
+        });
         setIsStreaming(false);
+        setIsLoading(false);
         setProgressText('等待回答...');
         markActive();
       },
@@ -418,6 +447,10 @@ export function useStreamChat({ sessionId, onError, onSessionCreated }: UseStrea
         ));
       },
       onDone: (data) => {
+        if (onAssistantSpeechReady) {
+          const finalText = fullContentRef.current.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+          if (finalText) onAssistantSpeechReady(finalText);
+        }
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         stopHeartbeat();
         setProgressText('');

@@ -46,6 +46,43 @@
   line-height: 1.5;
 }
 
+.plan-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.plan-card-section {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.plan-card-section--warn {
+  background: rgba(255, 166, 0, 0.06);
+  border-color: rgba(255, 166, 0, 0.14);
+}
+
+.plan-card-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text-primary, #f5f5f4);
+}
+
+.plan-card-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary, #cbd5c0);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .plan-card-steps {
   list-style: none;
   margin: 0;
@@ -91,6 +128,41 @@
   font-size: 11px;
   color: var(--text-tertiary, #a8a29e);
   margin-top: 2px;
+}
+
+.plan-card-step-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #cbd5c0);
+  line-height: 1.45;
+}
+
+.plan-card-step-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-secondary, #a8a29e);
+  white-space: nowrap;
+}
+
+.plan-card-step-status--done,
+.plan-card-step-status--completed,
+.plan-card-step-status--success {
+  color: #8be28b;
+  background: rgba(139,226,139,0.12);
+}
+
+.plan-card-step-status--pending {
+  color: #f2d27c;
+  background: rgba(242,210,124,0.12);
+}
+
+.plan-card-step-status--error,
+.plan-card-step-status--failed {
+  color: #ff9a9a;
+  background: rgba(255,154,154,0.12);
 }
 
 .plan-card-progress {

@@ -63,3 +63,9 @@ frontend/layout-*.png
 !docs/TRANSFORMATION_PLAN.md
 !docs/agent-memory-system-design.md
 !docs/historical-reviews/
+!notes/
+!notes/**/*.md
+!notes/.foam/
+!notes/.foam/**
+!notes/.vscode/
+!notes/.vscode/*.json

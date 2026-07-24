@@ -6,6 +6,7 @@ from typing import List, Optional, AsyncIterator, Dict, Any
 from openai import AsyncOpenAI, APIError, APITimeoutError
 from app.llm.base import BaseLLM, LLMError, LLMResponse, ToolCallResult
 from app.core.base import Message
+from app.llm.request_contract import ModelRequestOptions
 import logging
 import asyncio
 import json
@@ -50,7 +51,7 @@ class OpenAILLM(BaseLLM):
             )
         return self._client
 
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> LLMResponse:
+    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None, request_options: Optional[ModelRequestOptions] = None, **kwargs) -> LLMResponse:
         """
         发送对话请求到OpenAI
 
@@ -74,11 +75,12 @@ class OpenAILLM(BaseLLM):
             logger.info(f"发送请求到OpenAI，消息数: {len(messages)}, 工具数: {len(tools) if tools else 0}")
 
             # 构建请求参数
+            effective_options = request_options or ModelRequestOptions(model=self.model, provider="openai")
             request_kwargs = {
-                "model": self.model,
+                "model": effective_options.model,
                 "messages": openai_messages,
-                "temperature": 0.7,
-                "max_tokens": 2000,
+                "temperature": effective_options.controls.temperature if effective_options.controls.temperature is not None else 0.7,
+                "max_tokens": effective_options.controls.max_tokens if effective_options.controls.max_tokens is not None else 2000,
                 "timeout": self.REQUEST_TIMEOUT,
             }
             if tools:
@@ -131,7 +133,7 @@ class OpenAILLM(BaseLLM):
             logger.error(f"OpenAI请求失败: {e}")
             raise LLMError(f"请求失败: {str(e)}", "REQUEST_FAILED", str(e))
 
-    async def stream_chat(self, messages: List[Message]) -> AsyncIterator[str]:
+    async def stream_chat(self, messages: List[Message], request_options: Optional[ModelRequestOptions] = None) -> AsyncIterator[str]:
         """
         流式发送对话请求到OpenAI
 
@@ -155,10 +157,10 @@ class OpenAILLM(BaseLLM):
 
             # 使用流式API
             stream = await self._get_client().chat.completions.create(
-                model=self.model,
+                model=(request_options.model if request_options else self.model),
                 messages=openai_messages,
-                temperature=0.7,
-                max_tokens=2000,
+                temperature=(request_options.controls.temperature if request_options and request_options.controls.temperature is not None else 0.7),
+                max_tokens=(request_options.controls.max_tokens if request_options and request_options.controls.max_tokens is not None else 2000),
                 timeout=self.REQUEST_TIMEOUT,
                 stream=True
             )

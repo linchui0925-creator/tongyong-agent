@@ -86,7 +86,7 @@ def self_skill_install(skill_md: str, category: str = "general", overwrite: bool
         return json.dumps({"ok": False, "validation": report}, ensure_ascii=False, indent=2)
 
     meta, _body = _parse_skill_md(skill_md)
-    name = _clean_name(str(meta.get("name") or "unnamed"))
+    name = _clean_name(str(meta.get("name") or _derive_name_from_body(_body) or "unnamed"))
     category = _clean_category(str(meta.get("category") or category or "general"))
 
     root = Path(settings.hermes_skills_dir)
@@ -95,6 +95,8 @@ def self_skill_install(skill_md: str, category: str = "general", overwrite: bool
     if skill_path.exists() and not overwrite:
         return json.dumps({"ok": False, "error": f"skill 已存在: {name}", "path": str(skill_path)}, ensure_ascii=False, indent=2)
 
+    meta["name"] = name
+    meta["description"] = str(meta.get("description") or _derive_description_from_body(_body) or name)
     meta["skill_type"] = "external"
     meta["quarantined"] = True
     meta["auto_load"] = bool(meta.get("auto_load", False))
@@ -133,12 +135,12 @@ def _validate_skill_md(skill_md: str) -> dict:
     if len(skill_md) > MAX_SKILL_BODY_CHARS:
         errors.append(f"skill 内容过长，超过 {MAX_SKILL_BODY_CHARS} 字符")
     meta, body = _parse_skill_md(skill_md)
-    if not meta.get("name"):
-        errors.append("frontmatter 缺少 name")
-    if not meta.get("description"):
-        errors.append("frontmatter 缺少 description")
     if not body.strip():
         errors.append("正文不能为空")
+    if not meta.get("name") and not _derive_name_from_body(body):
+        warnings.append("未提供 name，将尝试从正文标题推断")
+    if not meta.get("description"):
+        warnings.append("未提供 description，将使用正文首段或标题推断")
     if "## Steps" not in body:
         warnings.append("建议包含 ## Steps")
     if re.search(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", skill_md, re.I):
@@ -162,6 +164,25 @@ def _parse_skill_md(skill_md: str) -> tuple[dict, str]:
             except yaml.YAMLError:
                 return {}, parts[2].strip()
     return {}, text
+
+
+def _derive_name_from_body(body: str) -> Optional[str]:
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            candidate = re.sub(r"^#+\s*", "", stripped).strip()
+            candidate = re.sub(r"[^a-zA-Z0-9\s\-\u4e00-\u9fff]", "", candidate)[:80]
+            if candidate:
+                return candidate
+    return None
+
+
+def _derive_description_from_body(body: str) -> str:
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and stripped != "---":
+            return stripped[:200]
+    return ""
 
 
 def _build_skill_md(meta: dict, body: str) -> str:

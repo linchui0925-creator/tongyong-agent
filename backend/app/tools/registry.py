@@ -24,6 +24,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Any
 
+from app.tools.settlement import ToolSettlement
+
 logger = logging.getLogger(__name__)
 
 _TOOLS_DIR = Path(__file__).resolve().parent / "implementations"
@@ -338,10 +340,28 @@ class ToolRegistry:
                     continue
             # OpenAI function calling 格式：description + parameters 分开
             # entry.schema 是 JSON Schema（type, properties, required）
+            parameters = entry.schema or {"type": "object", "properties": {}}
+            if entry.name in {"terminal", "workspace_terminal"}:
+                props = parameters.setdefault("properties", {})
+                props.setdefault("sandbox_mode", {
+                    "type": "string",
+                    "enum": ["off", "macos"],
+                    "description": "可选沙盒模式。macOS 下可用 sandbox-exec 隔离命令执行。",
+                    "default": "off",
+                })
+                props.setdefault("sandbox_preset", {
+                    "type": "string",
+                    "enum": ["read_only", "workspace_only", "network_off"],
+                    "description": "预设沙盒配置。与 sandbox_profile 二选一使用。",
+                })
+                props.setdefault("sandbox_profile", {
+                    "type": "string",
+                    "description": "可选自定义 sandbox-exec profile 文本。仅在 sandbox_mode=macos 时生效。",
+                })
             func_obj: Dict[str, Any] = {
                 "name": entry.name,
                 "description": entry.description or "",
-                "parameters": entry.schema or {"type": "object", "properties": {}},
+                "parameters": parameters,
             }
             result.append({"type": "function", "function": func_obj})
         return result
@@ -352,29 +372,72 @@ class ToolRegistry:
 
     # ── 执行 ──────────────────────────────────────────────
 
-    async def execute(self, name: str, arguments: Dict[str, Any]) -> str:
+    async def execute(self, name: str, arguments: Dict[str, Any]) -> ToolSettlement:
         entry = self.get_entry(name)
         if not entry:
             logger.warning(f"工具 '{name}' 未注册，当前已注册工具: {list(self._tools.keys())}")
-            return f"未知工具: {name}"
+            return ToolSettlement(
+                tool_name=name,
+                tool_call_id=str(arguments.get("tool_call_id", "")),
+                success=False,
+                preview="",
+                full_result=f"未知工具: {name}",
+                error=f"未知工具: {name}",
+                error_type="not_found",
+                suggestion="",
+                emoji=self.get_emoji(name),
+            )
+        tool_call_id = str(arguments.get("tool_call_id", ""))
         try:
             if entry.is_async:
                 result = await entry.handler(**arguments)
             else:
                 result = entry.handler(**arguments)
+            full_result = str(result)
             max_chars = entry.max_result_size_chars
-            if max_chars and isinstance(result, str) and len(result) > max_chars:
-                result = result[:max_chars] + f"\n...（结果过长，已截断至 {max_chars} 字符）"
-            return str(result)
+            preview = full_result
+            if max_chars and len(full_result) > max_chars:
+                preview = full_result[:max_chars] + f"\n...（结果过长，已截断至 {max_chars} 字符）"
+            return ToolSettlement(
+                tool_name=name,
+                tool_call_id=tool_call_id,
+                success=True,
+                preview=preview,
+                full_result=full_result,
+                error="",
+                error_type="",
+                suggestion="",
+                emoji=self.get_emoji(name),
+            )
         except Exception as e:
             logger.error(f"工具 '{name}' 执行失败: {e}", exc_info=True)
-            return f"工具执行失败: {e}"
+            return ToolSettlement(
+                tool_name=name,
+                tool_call_id=tool_call_id,
+                success=False,
+                preview="",
+                full_result=f"工具执行失败: {e}",
+                error=str(e),
+                error_type="execution_error",
+                suggestion="",
+                emoji=self.get_emoji(name),
+            )
 
-    def dispatch(self, name: str, args: dict) -> str:
+    def dispatch(self, name: str, args: dict) -> ToolSettlement:
         """同步执行工具（向后兼容 agent.py 用）"""
         entry = self.get_entry(name)
         if not entry:
-            return json.dumps({"error": f"未知工具: {name}"})
+            return ToolSettlement(
+                tool_name=name,
+                tool_call_id=str(args.get("tool_call_id", "")),
+                success=False,
+                preview="",
+                full_result=json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False),
+                error=f"未知工具: {name}",
+                error_type="not_found",
+                suggestion="",
+                emoji=self.get_emoji(name),
+            )
         try:
             if entry.is_async:
                 import asyncio
@@ -383,13 +446,35 @@ class ToolRegistry:
                 )
             else:
                 result = entry.handler(**args)
+            full_result = str(result)
             max_chars = entry.max_result_size_chars
-            if max_chars and isinstance(result, str) and len(result) > max_chars:
-                result = result[:max_chars] + f"\n...（结果过长，已截断至 {max_chars} 字符）"
-            return str(result)
+            preview = full_result
+            if max_chars and len(full_result) > max_chars:
+                preview = full_result[:max_chars] + f"\n...（结果过长，已截断至 {max_chars} 字符）"
+            return ToolSettlement(
+                tool_name=name,
+                tool_call_id=str(args.get("tool_call_id", "")),
+                success=True,
+                preview=preview,
+                full_result=full_result,
+                error="",
+                error_type="",
+                suggestion="",
+                emoji=self.get_emoji(name),
+            )
         except Exception as e:
             logger.error(f"工具 '{name}' 执行失败: {e}", exc_info=True)
-            return json.dumps({"error": f"工具执行失败: {e}"})
+            return ToolSettlement(
+                tool_name=name,
+                tool_call_id=str(args.get("tool_call_id", "")),
+                success=False,
+                preview="",
+                full_result=json.dumps({"error": f"工具执行失败: {e}"}, ensure_ascii=False),
+                error=str(e),
+                error_type="execution_error",
+                suggestion="",
+                emoji=self.get_emoji(name),
+            )
 
     def get_emoji(self, name: str, default: str = "⚡") -> str:
         entry = self.get_entry(name)

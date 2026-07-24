@@ -107,7 +107,8 @@ async def get_session_messages(session_id: str, engine: AgentEngine = Depends(ge
                     "id": msg.id if hasattr(msg, 'id') else str(idx),
                     "role": msg.role,
                     "content": msg.content,
-                    "created_at": msg.created_at if hasattr(msg, 'created_at') else None
+                    "created_at": msg.created_at if hasattr(msg, 'created_at') else None,
+                    "sequence": getattr(msg, "sequence", None),
                 }
                 for idx, msg in enumerate(messages)
             ]

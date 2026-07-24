@@ -1,18 +1,19 @@
-# TongYong Agent
+# 维知 Agent
 
-通用智能助手系统，支持多模型切换、多智能体协作、记忆管理和技能扩展。
+维知是一个面向真实业务场景的智能体系统，支持多模型切换、上下文追溯、工具执行、记忆管理和技能扩展。
 
-## 功能特性
+## 核心特性
 
-- **多模型支持**: 支持通义千问、OpenAI、DeepSeek、Anthropic、MiniMax 等多种 LLM
-- **多智能体协作**: 内置团队协作系统，支持多智能体分工合作
-- **记忆管理**: 持久化记忆存储，支持上下文压缩和检索
-- **技能扩展**: 可扩展的工具系统和技能市场
-- **Web UI**: 现代化 Web 界面，支持实时对话和团队协作
+- **多模型支持**：支持通义千问、OpenAI、DeepSeek、Anthropic、MiniMax 等多种 LLM
+- **上下文可追溯**：每轮 turn 都会记录 runtime、context snapshot、model request/response、tool settlement 和 turn manifest
+- **多智能体/多策略扩展**：支持在上层引入任务理解、决策与编排策略
+- **记忆管理**：持久化记忆存储，支持上下文压缩和检索
+- **技能扩展**：可扩展的工具系统和技能市场
+- **现代化 Web UI**：支持实时对话、计划模式、附件上传和流式反馈
 
 ## 快速开始
 
-### 使用 Docker (推荐)
+### 使用 Docker（推荐）
 
 ```bash
 # 复制并配置环境变量
@@ -31,7 +32,7 @@ docker-compose up -d
 # 前端
 cd frontend && npm install && npm run dev
 
-# 后端 (新终端)
+# 后端（新终端）
 cd backend && uv sync && uvicorn app.main:app --reload
 ```
 
@@ -48,17 +49,44 @@ cd backend && uv sync && uvicorn app.main:app --reload
 ## 项目结构
 
 ```
-tongyong-agent/
+维知 Agent/
 ├── backend/          # Python 后端
 │   ├── app/          # 应用代码
 │   ├── llm/          # LLM 适配器
 │   ├── tools/        # 工具实现
-│   └── data/         # 本地数据
-├── frontend/        # React 前端
+│   └── data/         # 本地数据与证据文件
+├── frontend/         # React 前端
 │   └── src/          # 源代码
 ├── docs/             # 文档
 └── Dockerfile        # Docker 配置
 ```
+
+## 关键设计说明
+
+- **数据优先**：系统围绕 turn 级数据追溯展开，强调证据链完整性和可回放性
+- **中层已结构化**：上下文组装、运行态、artifact 存储和终局 manifest 已形成统一链路
+- **上层持续演进**：AgentPolicy 承接任务理解、决策和编排逻辑
+- **执行层沙盒**：`terminal` / `workspace_terminal` 支持 `sandbox_mode`、`sandbox_preset`、`sandbox_profile`，默认可由策略层回填
+
+## 沙盒说明
+
+### 可用参数
+
+- `sandbox_mode`
+  - `off`：不启用沙盒
+  - `macos`：使用 macOS `sandbox-exec`
+- `sandbox_preset`
+  - `read_only`
+  - `workspace_only`
+  - `network_off`
+- `sandbox_profile`
+  - 自定义 `sandbox-exec` profile 文本
+
+### 规则
+
+- `sandbox_preset` 与 `sandbox_profile` 只能二选一
+- 当工具调用未显式传入沙盒参数时，会优先读取当前 turn strategy 的默认值
+- `workspace_terminal` 默认仍在会话工作区内执行，沙盒是额外约束
 
 ## API 文档
 

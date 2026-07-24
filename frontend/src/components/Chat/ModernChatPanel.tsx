@@ -17,10 +17,12 @@ import ComposerModelControl from './ComposerModelControl';
 import PlanModeToggle from './PlanModeToggle';
 import PlanCard from './PlanCard';
 import { buildPlan, type PlanData } from '../../api/plan';
+import { transcribeVoice, speakText } from '../../api/voice';
 import './ModernChatPanel.css';
 
 // ── Constants ─────────────────────────────────────────
 const AGENT_NAME = '维知';
+const AGENT_LABEL = '维知';
 
 
 // ── Helpers ─────────────────────────────────────────
@@ -60,19 +62,33 @@ function splitCodeBlocks(text: string): Array<{ type: 'text' | 'code'; content: 
 
 function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const lines = code.split('\n');
+  const shouldCollapse = lines.length > 16 || code.length > 1200;
+  const preview = shouldCollapse && !expanded ? lines.slice(0, 12).join('\n') + (lines.length > 12 ? '\n…' : '') : code;
   return (
     <div className="chat-code-block">
-      <button
-        className="chat-code-copy-btn"
-        onClick={() => {
-          navigator.clipboard.writeText(code);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-      >
-        {copied ? '✓ 已复制' : '复制'}
-      </button>
-      <pre><code>{code}</code></pre>
+      <div className="chat-code-actions">
+        {shouldCollapse && (
+          <button
+            className="chat-code-toggle-btn"
+            onClick={() => setExpanded(v => !v)}
+          >
+            {expanded ? '收起代码' : `展开代码 (${lines.length} 行)`}
+          </button>
+        )}
+        <button
+          className="chat-code-copy-btn"
+          onClick={() => {
+            navigator.clipboard.writeText(code);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+        >
+          {copied ? '✓ 已复制' : '复制'}
+        </button>
+      </div>
+      <pre><code>{preview}</code></pre>
     </div>
   );
 }
@@ -231,8 +247,8 @@ function TypingIndicator({ currentTool, toolElapsed, progressText }: {
         </div>
         <span className="chat-typing-label">
           {currentTool
-            ? `${currentTool.emoji || '⚙'} ${currentTool.name} 执行中… (${(toolElapsed / 1000).toFixed(1)}s)`
-            : progressText || '正在思考…'}
+            ? `${AGENT_LABEL} 正在调用 ${currentTool.name}… (${toolElapsed >= 1000 ? (toolElapsed / 1000).toFixed(2) + 's' : `${toolElapsed}ms`})`
+            : progressText || `${AGENT_LABEL} 正在思考…`}
         </span>
       </div>
     </div>
@@ -278,9 +294,8 @@ function TokenUsageRing({ contextInfo, isCompressing, savedFlash, onCompress }: 
 }
 
 // ── Message Bubble ─────────────────────────────────────────
-function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleThinking, thinkingExpanded }: {
+function MessageBubble({ msg, isLastInGroup, onDelete, onToggleThinking, thinkingExpanded }: {
   msg: Message;
-  isFirstInGroup: boolean;
   isLastInGroup: boolean;
   onDelete: (id: string) => void;
   onToggleThinking: (id: string) => void;
@@ -288,7 +303,32 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
 }) {
   const isUser = msg.role === 'user';
   const parts = splitCodeBlocks(msg.content || '');
-  void isFirstInGroup;
+  const trace = msg.trace || [];
+  const toolCallCount = trace.filter((s) => s.kind === 'tool_call').length;
+  const repeatedToolGroups = useMemo(() => {
+    const groups: Array<{ tool: string; count: number; indices: number[] }> = [];
+    let current: { tool: string; count: number; indices: number[] } | null = null;
+    trace.forEach((step, idx) => {
+      if (step.kind !== 'tool_call') {
+        current = null;
+        return;
+      }
+      if (current && current.tool === step.tool_name) {
+        current.count += 1;
+        current.indices.push(idx);
+      } else {
+        current = { tool: step.tool_name || 'unknown', count: 1, indices: [idx] };
+        groups.push(current);
+      }
+    });
+    return groups.filter((g) => g.count > 1);
+  }, [trace]);
+  const traceStats = useMemo(() => {
+    const textCount = trace.filter((s) => s.kind === 'text').length;
+    const resultCount = trace.filter((s) => s.kind === 'tool_result').length;
+    const errorCount = trace.filter((s) => s.kind === 'tool_error').length;
+    return { textCount, resultCount, errorCount };
+  }, [trace]);
   return (
     <div className={`chat-row chat-row--${isUser ? 'user' : 'agent'} ${isLastInGroup ? 'is-last' : ''}`}>
       <div className="chat-row-body">
@@ -296,75 +336,100 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
           {!isUser && msg.thinking && (
             <details className="chat-thinking" open={thinkingExpanded}>
               <summary onClick={(e) => { e.preventDefault(); onToggleThinking(msg.id); }}>
-                💭 思考过程
+                💭 {AGENT_LABEL} 的思考过程
               </summary>
               <pre>{msg.thinking}</pre>
             </details>
           )}
-          {!isUser && msg.trace && msg.trace.length > 0 && (
-            <details className="chat-trace" open={msg.status === 'streaming'}>
-              <summary>
-                🔎 任务过程 · {msg.trace.filter((s) => s.kind === 'tool_call').length} 次工具调用
-              </summary>
-              <ol className="chat-trace-list">
-                {msg.trace.map((step, idx) => {
-                  if (step.kind === 'text') {
+          {!isUser && (msg.trace?.length || 0) > 0 && (
+            <div className="chat-section chat-section--trace">
+              <div className="chat-section-title">
+                <span>🔎 执行过程</span>
+                <span className="chat-section-badge">{toolCallCount} 次工具调用 · {traceStats.resultCount} 次结果</span>
+              </div>
+              <details className="chat-trace" open={msg.status !== 'completed'}>
+                <summary>查看详细时间线</summary>
+                <div className="chat-trace-summary">
+                  <span>叙述：{traceStats.textCount} 段</span>
+                  <span>结果：{traceStats.resultCount} 次</span>
+                  {traceStats.errorCount > 0 && <span className="chat-trace-summary-warn">错误：{traceStats.errorCount} 次</span>}
+                  {repeatedToolGroups.length > 0 && (
+                    <span className="chat-trace-summary-warn">
+                      重复调用：{repeatedToolGroups.map((g) => `${g.tool} ×${g.count}`).join('、')}
+                    </span>
+                  )}
+                </div>
+                <ol className="chat-trace-list">
+                  {(msg.trace || []).map((step, idx) => {
+                    if (step.kind === 'text') {
+                      return (
+                        <li key={idx} className="chat-trace-step chat-trace-step--text">
+                          <span className="chat-trace-icon">📝</span>
+                          <div className="chat-trace-body">{step.content}</div>
+                        </li>
+                      );
+                    }
+                    if (step.kind === 'tool_call') {
+                      const argsPreview = step.args && Object.keys(step.args).length > 0
+                        ? Object.entries(step.args).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ')
+                        : '';
+                      const prevTool = idx > 0 ? trace[idx - 1] : null;
+                      const isRepeat = prevTool?.kind === 'tool_call' && prevTool.tool_name === step.tool_name;
+                      return (
+                        <li key={idx} className={`chat-trace-step chat-trace-step--call ${isRepeat ? 'is-repeat' : ''}`}>
+                          <span className="chat-trace-icon">{step.emoji || '⚙️'}</span>
+                          <div className="chat-trace-body">
+                            <div className="chat-trace-tool-row">
+                              <span className="chat-trace-tool">{step.tool_name}</span>
+                              {isRepeat && <span className="chat-trace-repeat-tag">重复调用</span>}
+                            </div>
+                            {argsPreview && <span className="chat-trace-args">({argsPreview})</span>}
+                            <span className="chat-trace-step-label">正在调用</span>
+                          </div>
+                        </li>
+                      );
+                    }
+                    if (step.kind === 'tool_result') {
+                      const hasFull = !!(step.result_full && step.result_full.trim() && step.result_full.trim() !== (step.preview || '').trim());
+                      const prevTool = idx > 0 ? trace[idx - 1] : null;
+                      const relatedCall = prevTool?.kind === 'tool_call' && prevTool.tool_name === step.tool_name;
+                      return (
+                        <li key={idx} className={`chat-trace-step chat-trace-step--result ${relatedCall ? 'is-repeat-result' : ''}`}>
+                          <span className="chat-trace-icon">✅</span>
+                          <div className="chat-trace-body">
+                            <div className="chat-trace-tool-row">
+                              <span className="chat-trace-tool">{step.tool_name}</span>
+                              {typeof step.duration === 'number' && <span className="chat-trace-duration">{step.duration >= 1 ? `${step.duration.toFixed(2)}s` : `${Math.round(step.duration * 1000)}ms`}</span>}
+                            </div>
+                            <span className="chat-trace-step-label">已返回结果</span>
+                            {hasFull ? (
+                              <details className="chat-trace-detail">
+                                <summary>
+                                  <span className="chat-trace-preview-inline">{step.preview}</span>
+                                  <span className="chat-trace-expand-hint">展开完整结果</span>
+                                </summary>
+                                <pre className="chat-trace-preview chat-trace-preview--full">{step.result_full}</pre>
+                              </details>
+                            ) : (
+                              step.preview && <pre className="chat-trace-preview">{step.preview}</pre>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    }
                     return (
-                      <li key={idx} className="chat-trace-step chat-trace-step--text">
-                        <span className="chat-trace-icon">📝</span>
-                        <div className="chat-trace-body">{step.content}</div>
-                      </li>
-                    );
-                  }
-                  if (step.kind === 'tool_call') {
-                    const argsPreview = step.args && Object.keys(step.args).length > 0
-                      ? Object.entries(step.args).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ')
-                      : '';
-                    return (
-                      <li key={idx} className="chat-trace-step chat-trace-step--call">
-                        <span className="chat-trace-icon">{step.emoji || '⚙️'}</span>
+                      <li key={idx} className="chat-trace-step chat-trace-step--error">
+                        <span className="chat-trace-icon">⚠️</span>
                         <div className="chat-trace-body">
                           <span className="chat-trace-tool">{step.tool_name}</span>
-                          {argsPreview && <span className="chat-trace-args">({argsPreview})</span>}
+                          <span className="chat-trace-args">{step.content}</span>
                         </div>
                       </li>
                     );
-                  }
-                  if (step.kind === 'tool_result') {
-                    const hasFull = !!(step.result_full && step.result_full.trim() && step.result_full.trim() !== (step.preview || '').trim());
-                    return (
-                      <li key={idx} className="chat-trace-step chat-trace-step--result">
-                        <span className="chat-trace-icon">✅</span>
-                        <div className="chat-trace-body">
-                          <span className="chat-trace-tool">{step.tool_name}</span>
-                          {typeof step.duration === 'number' && <span className="chat-trace-duration">{step.duration.toFixed(1)}s</span>}
-                          {hasFull ? (
-                            <details className="chat-trace-detail">
-                              <summary>
-                                <span className="chat-trace-preview-inline">{step.preview}</span>
-                                <span className="chat-trace-expand-hint">展开完整结果</span>
-                              </summary>
-                              <pre className="chat-trace-preview chat-trace-preview--full">{step.result_full}</pre>
-                            </details>
-                          ) : (
-                            step.preview && <pre className="chat-trace-preview">{step.preview}</pre>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  }
-                  return (
-                    <li key={idx} className="chat-trace-step chat-trace-step--error">
-                      <span className="chat-trace-icon">⚠️</span>
-                      <div className="chat-trace-body">
-                        <span className="chat-trace-tool">{step.tool_name}</span>
-                        <span className="chat-trace-args">{step.content}</span>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            </details>
+                  })}
+                </ol>
+              </details>
+            </div>
           )}
           {parts.map((p, i) => p.type === 'code'
             ? <CodeBlock key={i} code={p.content} />
@@ -382,7 +447,7 @@ function MessageBubble({ msg, isFirstInGroup, isLastInGroup, onDelete, onToggleT
             <ArtifactPreviewCard key={artifact.path} artifact={artifact} />
           ))}
           {msg.progressLabel && msg.status === 'streaming' && (
-            <div className="chat-bubble-progress">{msg.progressLabel}</div>
+            <div className="chat-bubble-progress">{AGENT_LABEL}：{msg.progressLabel}</div>
           )}
           {msg.status === 'error' && (
             <div className="chat-bubble-error">❌ {msg.error}</div>
@@ -434,13 +499,19 @@ function ModernChatPanel({ initialSessionId, onSessionCreated }: ModernChatPanel
   const [currentSessionId, setCurrentSessionId] = useState<string>(initialSessionId || '');
   const [inputValue, setInputValue] = useState('');
   const [waitingAnswer, setWaitingAnswer] = useState('');
+  const [customClarifyMode, setCustomClarifyMode] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [planMode, setPlanMode] = useState(false);
-const [planPending, setPlanPending] = useState<PlanData | null>(null);
-const [planId, setPlanId] = useState<string | null>(null);
-const [planBuilding, setPlanBuilding] = useState(false);
-const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [planPending, setPlanPending] = useState<PlanData | null>(null);
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [planBuilding, setPlanBuilding] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [autoSpeakEnabled] = useState(true);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Sync session from parent
   useEffect(() => {
@@ -475,6 +546,13 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
     }
     return () => { document.title = baseTitle; };
   }, [isStreaming, progressText, errorMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current);
+      if (activeAudioRef.current) activeAudioRef.current.pause();
+    };
+  }, []);
 
   // 流式状态广播给 App.tsx 顶部标题栏 (用于 1px 横扫进度)
   useEffect(() => {
@@ -515,6 +593,9 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
   const isNearBottomRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastSpokenAssistantIdRef = useRef<string | null>(null);
 
   const handleScroll = useCallback(() => {
     const el = messagesRef.current;
@@ -547,7 +628,10 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
   const clearComposer = useCallback(() => {
     setInputValue('');
     setPendingAttachments([]);
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
   }, []);
 
   const sendComposer = useCallback(async () => {
@@ -600,16 +684,125 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
     }
   }, []);
 
-  const handleKey = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleKey = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault();
       sendComposer();
     }
-  }, [sendComposer]);
+  }, [sendComposer, isComposing]);
+
+  const quickFillPrompt = useCallback((prompt: string) => {
+    setInputValue(prompt);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+      }
+    });
+  }, []);
 
   const handleSendClick = useCallback(() => {
     sendComposer();
   }, [sendComposer]);
+
+  const playAssistantSpeech = useCallback(async (text: string) => {
+    if (!autoSpeakEnabled || !text.trim()) return;
+    try {
+      const result = await speakText(text);
+      if (result.success && result.audio_url) {
+        const audioUrl = result.audio_url.startsWith('http') ? result.audio_url : `${window.location.origin}${result.audio_url}`;
+        if (activeAudioRef.current) {
+          activeAudioRef.current.pause();
+          activeAudioRef.current = null;
+        }
+        const audio = new Audio(audioUrl);
+        activeAudioRef.current = audio;
+        audio.onended = () => {
+          if (activeAudioRef.current === audio) activeAudioRef.current = null;
+        };
+        void audio.play().catch(() => undefined);
+      }
+    } catch {
+      // 语音播放失败不影响主聊天
+    }
+  }, [autoSpeakEnabled]);
+
+  useEffect(() => {
+    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.status === 'completed' && m.content.trim());
+    if (!lastAssistant) return;
+    if (lastSpokenAssistantIdRef.current === lastAssistant.id) return;
+    lastSpokenAssistantIdRef.current = lastAssistant.id;
+    void playAssistantSpeech(lastAssistant.content);
+  }, [messages, playAssistantSpeech]);
+
+  const stopRecording = useCallback(async () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    recorder.stop();
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (isRecording || isLoading || isStreaming) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        setIsRecording(false);
+        if (recordingTimerRef.current) {
+          clearTimeout(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+        if (!blob.size) return;
+        try {
+          const file = new File([blob], `voice-${Date.now()}.webm`, { type: blob.type || 'audio/webm' });
+          const result = await transcribeVoice(file, currentSessionId || undefined);
+          if (result.success && result.text) {
+            handleSend(result.text);
+          } else if (!result.success) {
+            setErrorMessage(result.error || '语音识别失败，请重试');
+          }
+        } catch (err: any) {
+          setErrorMessage('语音识别失败，请重试');
+        }
+      };
+      recorder.start();
+      setIsRecording(true);
+      recordingTimerRef.current = setTimeout(() => {
+        void stopRecording();
+      }, 60000);
+    } catch (err: any) {
+      const msg = String(err?.name || err?.message || '').toLowerCase();
+      if (msg.includes('notallowed') || msg.includes('permission') || msg.includes('denied')) {
+        setErrorMessage('麦克风权限未开启');
+      } else if (msg.includes('notfound')) {
+        setErrorMessage('未找到可用麦克风');
+      } else {
+        setErrorMessage('麦克风不可用');
+      }
+      setIsRecording(false);
+    }
+  }, [currentSessionId, isRecording, isLoading, isStreaming, setErrorMessage]);
+
+  const handleVoicePressStart = useCallback(() => {
+    void startRecording();
+  }, [startRecording]);
+
+  const handleVoicePressEnd = useCallback(() => {
+    void stopRecording();
+  }, [stopRecording]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -663,17 +856,26 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
               <span className="chat-empty-name">知</span>
             </h2>
             <p className="chat-empty-title">今天想完成什么？</p>
+            <p className="chat-empty-copy">可以直接发一句话，也可以上传文件、开启计划模式，或者让它帮你分析当前项目。</p>
             <span className="chat-empty-hint">Enter 发送 · Shift+Enter 换行 · 拖拽文件以附加</span>
             <div className="chat-empty-shortcuts">
-              <span className="chat-empty-shortcut">新建对话</span>
-              <span className="chat-empty-shortcut">团队协作</span>
-              <span className="chat-empty-shortcut">浏览 MCP</span>
-              <span className="chat-empty-shortcut">设置</span>
+              <button type="button" className="chat-empty-shortcut" onClick={() => quickFillPrompt('帮我分析这个项目')}>
+                帮我分析这个项目
+              </button>
+              <button type="button" className="chat-empty-shortcut" onClick={() => quickFillPrompt('我上传文件后，请帮我总结重点')}>
+                上传文件让你总结
+              </button>
+              <button type="button" className="chat-empty-shortcut" onClick={() => quickFillPrompt('请开启计划模式，帮我分步骤完成这个任务')}>
+                开启计划模式执行任务
+              </button>
+              <button type="button" className="chat-empty-shortcut" onClick={() => quickFillPrompt('查看有哪些技能可用')}>
+                查看有哪些技能可用
+              </button>
             </div>
           </div>
         ) : (
           <>
-            {visibleMessages.map(({ msg, isFirstInGroup, isLastInGroup }, i) => {
+            {visibleMessages.map(({ msg, isLastInGroup }, i) => {
               return (
                 <div key={msg.id}>
                   {shouldShowTime(messages, i) && (
@@ -683,7 +885,6 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
                   )}
                   <MessageBubble
                     msg={msg}
-                    isFirstInGroup={isFirstInGroup}
                     isLastInGroup={isLastInGroup}
                     onDelete={handleDelete}
                     onToggleThinking={handleToggleThinking}
@@ -707,44 +908,10 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
           </button>
         </div>
       )}
-
-      {/* Clarify 交互 */}
-      {waitingQuestion && (
-        <div className="chat-clarify">
-          <div className="chat-clarify-question">{waitingQuestion.question}</div>
-          <div className="chat-clarify-choices">
-            {waitingQuestion.choices.map((choice, i) => (
-              <button
-                key={i}
-                className="chat-clarify-choice"
-                onClick={() => {
-                  handleClarifyAnswer(choice);
-                }}
-              >
-                {choice}
-              </button>
-            ))}
-          </div>
-          {waitingQuestion.choices.length === 0 && (
-            <div className="chat-clarify-input">
-              <input
-                type="text"
-                name="clarify-answer"
-                value={waitingAnswer}
-                onChange={(e) => setWaitingAnswer(e.target.value)}
-                onKeyDown={async (e) => {
-                  e.stopPropagation();
-                  if (e.key === 'Enter' && waitingAnswer.trim()) {
-                    const answer = waitingAnswer.trim();
-                    setWaitingAnswer('');
-                    await handleClarifyAnswer(answer);
-                  }
-                }}
-                placeholder="输入你的回答后按 Enter..."
-                autoFocus
-              />
-            </div>
-          )}
+      {isRecording && (
+        <div className="chat-statusbar chat-statusbar--continue">
+          <span className="chat-statusbar-dot" />
+          <span className="chat-statusbar-text">正在录音中…</span>
         </div>
       )}
 
@@ -778,6 +945,71 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
             </span>
           </div>
         )}
+        {waitingQuestion && (
+          <div className="chat-clarify chat-clarify--panel chat-clarify--composer">
+            <div className="chat-clarify-question">{AGENT_LABEL} 需要补充信息：{waitingQuestion.question}</div>
+            <div className="chat-clarify-recommendation">推荐你直接选一个，或者点 Other 自己补充。</div>
+            <div className="chat-clarify-choices">
+              {waitingQuestion.choices.map((choice, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className={`chat-clarify-choice ${choice === 'Other' ? 'chat-clarify-choice--other' : ''}`}
+                  onClick={() => {
+                    if (choice === 'Other') {
+                      setCustomClarifyMode(true);
+                      setWaitingAnswer('');
+                      requestAnimationFrame(() => {
+                        const input = document.querySelector<HTMLInputElement>('input[name="clarify-answer"]');
+                        input?.focus();
+                      });
+                      return;
+                    }
+                    void handleClarifyAnswer(choice);
+                  }}
+                >
+                  {choice}
+                </button>
+              ))}
+            </div>
+            {customClarifyMode && (
+              <div className="chat-clarify-custom-hint">你可以直接输入自己的补充内容，然后发送。</div>
+            )}
+            <div className="chat-clarify-input">
+              <input
+                type="text"
+                name="clarify-answer"
+                value={waitingAnswer}
+                onChange={(e) => setWaitingAnswer(e.target.value)}
+                onKeyDown={async (e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter' && waitingAnswer.trim()) {
+                    const answer = waitingAnswer.trim();
+                    setWaitingAnswer('');
+                    setCustomClarifyMode(false);
+                    await handleClarifyAnswer(answer);
+                  }
+                }}
+                placeholder={customClarifyMode ? '输入你的补充内容...' : '选择一个推荐项，或点 Other 自己输入'}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="chat-clarify-send"
+                onClick={async () => {
+                  if (!waitingAnswer.trim()) return;
+                  const answer = waitingAnswer.trim();
+                  setWaitingAnswer('');
+                  setCustomClarifyMode(false);
+                  await handleClarifyAnswer(answer);
+                }}
+                disabled={!waitingAnswer.trim()}
+              >
+                发送
+              </button>
+            </div>
+          </div>
+        )}
         <div className="chat-input-box">
           <input
             ref={fileInputRef}
@@ -792,8 +1024,10 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
             value={inputValue}
             onChange={handleInput}
             onKeyDown={handleKey}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
             onPaste={handlePaste}
-            placeholder={`与 ${AGENT_NAME} 聊聊…`}
+            placeholder={isComposing ? '正在输入…' : `与 ${AGENT_NAME} 聊聊…`}
             disabled={isLoading && !isStreaming}
             rows={1}
           />
@@ -816,12 +1050,26 @@ const [isDraggingFile, setIsDraggingFile] = useState(false);
                 savedFlash={savedFlash}
                 onCompress={() => handleCompress(false)}
               />
+              <button
+                className={`chat-attach-btn ${isRecording ? 'is-recording' : ''}`}
+                onMouseDown={handleVoicePressStart}
+                onMouseUp={handleVoicePressEnd}
+                onMouseLeave={handleVoicePressEnd}
+                onTouchStart={handleVoicePressStart}
+                onTouchEnd={handleVoicePressEnd}
+                onClick={(e) => e.preventDefault()}
+                disabled={isLoading || isStreaming}
+                title={isRecording ? '录音中' : '按住说话'}
+                aria-label={isRecording ? '录音中' : '按住说话'}
+              >
+                {isRecording ? '🔴' : '🎤'}
+              </button>
             </div>
             <div className="chat-input-toolbar-right">
               {isStreaming ? (
                 <button className="chat-stop-btn" onClick={handleStop} title="停止" aria-label="停止生成">■</button>
               ) : (
-                <button className="chat-send-btn" onClick={handleSendClick} disabled={(!inputValue.trim() && pendingAttachments.length === 0) || isLoading} title="发送" aria-label="发送">↑</button>
+                <button className="chat-send-btn" onClick={handleSendClick} disabled={(!inputValue.trim() && pendingAttachments.length === 0) || isLoading || isComposing} title="发送" aria-label="发送">↑</button>
               )}
             </div>
           </div>

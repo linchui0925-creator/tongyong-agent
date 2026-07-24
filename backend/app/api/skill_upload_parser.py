@@ -152,46 +152,82 @@ def _parse_yaml(content_bytes: bytes) -> Dict:
 
 
 def _parse_text(text: str) -> Dict:
-    result = {}
-    result["body_text"] = text
+    result: Dict[str, Any] = {
+        "body_text": text,
+        "warnings": [],
+    }
 
-    # 尝试从 frontmatter 提取
-    if text.startswith("---"):
+    lines = text.split("\n")
+    meta = {}
+    body_start = 0
+
+    # 尝试从 frontmatter 提取：既支持标准 YAML frontmatter，也尽量兼容松散写法
+    if text.lstrip().startswith("---"):
         parts = text.split("---", 2)
         if len(parts) >= 3:
+            raw_meta = parts[1].strip()
+            body_start = 2
             try:
-                meta = yaml.safe_load(parts[1]) or {}
-                # name 以调用方传入的 override_name 为准，不覆盖
-                if not result.get("name"):
-                    result["name"] = meta.get("name")
-                result["description"] = meta.get("description", "")
-                result["triggers"] = meta.get("triggers", [])
-                result["platforms"] = meta.get("platforms", [])
+                parsed_meta = yaml.safe_load(raw_meta) or {}
+                if isinstance(parsed_meta, dict):
+                    meta = parsed_meta
             except Exception:
-                pass
+                meta = {}
+
+            # 如果 YAML 解析失败，退化为逐行抓取常见字段，避免外部 skill 因格式不严谨而失败
+            if not meta:
+                for line in raw_meta.splitlines():
+                    m = re.match(r"^\s*([A-Za-z_][\w-]*)\s*:\s*(.+?)\s*$", line)
+                    if m:
+                        key = m.group(1).strip().lower()
+                        value = m.group(2).strip().strip('"\'')
+                        if key in {"name", "description", "version", "trigger", "triggers", "platforms"}:
+                            meta[key] = value
+
+    body_text = "\n".join(lines[body_start:]).strip() if body_start else text
+    if body_text:
+        result["body_text"] = body_text
+
+    # name / description 的优先级：frontmatter > 文本兜底提取
+    if meta:
+        if meta.get("name"):
+            result["name"] = meta.get("name")
+        if meta.get("description"):
+            result["description"] = meta.get("description", "")
+        if meta.get("triggers"):
+            result["triggers"] = meta.get("triggers", [])
+        if meta.get("platforms"):
+            result["platforms"] = meta.get("platforms", [])
 
     # 从 body 中提取 steps
-    lines = text.split("\n")
     steps = []
-    for line in lines:
+    for line in body_text.split("\n"):
         stripped = line.strip()
-        # 匹配 1. 2. 或 - 或 numbered list
         m = re.match(r"^\d+[.)]\s+(.+)", stripped)
         if m:
             steps.append(m.group(1).strip())
-        elif stripped.startswith("- ") and len(steps) > 0:
-            steps.append(stripped[2:].strip())
+        elif re.match(r"^[-*]\s+(.+)", stripped):
+            steps.append(re.sub(r"^[-*]\s+", "", stripped).strip())
 
     if steps:
-        result["steps"] = steps
+        result["steps"] = steps[:20]
 
     # 尝试提取 description（取第一段非空文字）
     if not result.get("description"):
-        for line in lines:
+        for line in body_text.split("\n"):
             stripped = line.strip()
-            if stripped and not stripped.startswith("#") and len(stripped) > 10:
+            if stripped and not stripped.startswith("#") and stripped != "---" and len(stripped) > 10:
                 result["description"] = stripped[:200]
                 break
+
+    # name 兜底：优先取一级标题，其次取 name: xxx
+    if not result.get("name"):
+        derived_name = _derive_name_from_content(body_text)
+        if derived_name:
+            result["name"] = derived_name
+
+    if not result.get("triggers"):
+        result["triggers"] = _extract_triggers(body_text)
 
     return result
 

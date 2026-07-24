@@ -40,10 +40,10 @@ class MemoryStorage:
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
-        
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -52,7 +52,7 @@ class MemoryStorage:
                 updated_at TEXT NOT NULL
             )
         """)
-        
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,19 +64,30 @@ class MemoryStorage:
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             )
         """)
-        
+
         # 添加 sequence 列（如果不存在）- 用于会话内消息排序
         try:
             cursor.execute("ALTER TABLE messages ADD COLUMN sequence INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
-            pass  # 列已存在
-        
+            pass
+
         # 创建会话序列号的索引（如果不存在）
         try:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_sequence ON messages(session_id, sequence)")
         except sqlite3.OperationalError:
             pass
-        
+
+        # 先清理历史脏数据：同一 session 内若出现重复 sequence，保留最早一条，其余重排到尾部。
+        self._dedupe_message_sequences(cursor)
+
+        # 现在可以安全创建唯一索引
+        try:
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_messages_session_sequence ON messages(session_id, sequence)"
+            )
+        except sqlite3.OperationalError as e:
+            logger.warning("messages(session_id, sequence) UNIQUE 索引未创建（可能已有重复 sequence）: %s", e)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
@@ -90,7 +101,7 @@ class MemoryStorage:
                 version INTEGER DEFAULT 1
             )
         """)
-        
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_settings (
                 id TEXT PRIMARY KEY,
@@ -104,7 +115,7 @@ class MemoryStorage:
                 UNIQUE(session_id, key)
             )
         """)
-        
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)")
@@ -131,10 +142,65 @@ class MemoryStorage:
 
         conn.commit()
         conn.close()
-    
+
     def get_connection(self):
         return sqlite3.connect(self.db_path)
-    
+
+    def _dedupe_message_sequences(self, cursor: sqlite3.Cursor) -> None:
+        """Repair historical duplicate sequence values within the same session.
+
+        Keep the earliest row for a duplicated (session_id, sequence) pair and
+        reassign later duplicates to the tail of that session so the unique index
+        can be created safely on startup.
+        """
+        cursor.execute(
+            """
+            SELECT session_id, sequence, COUNT(*) AS c
+            FROM messages
+            GROUP BY session_id, sequence
+            HAVING COUNT(*) > 1
+            ORDER BY session_id, sequence
+            """
+        )
+        duplicate_groups = cursor.fetchall()
+        if not duplicate_groups:
+            return
+
+        for session_id, sequence, _count in duplicate_groups:
+            cursor.execute(
+                """
+                SELECT id
+                FROM messages
+                WHERE session_id = ? AND sequence = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (session_id, sequence),
+            )
+            rows = [r[0] for r in cursor.fetchall()]
+            if len(rows) <= 1:
+                continue
+            keep_id = rows[0]
+            dup_ids = rows[1:]
+            cursor.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM messages WHERE session_id = ?",
+                (session_id,),
+            )
+            max_seq = int(cursor.fetchone()[0] or 0)
+            next_seq = max_seq
+            for msg_id in dup_ids:
+                next_seq += 1
+                cursor.execute(
+                    "UPDATE messages SET sequence = ? WHERE id = ?",
+                    (next_seq, msg_id),
+                )
+            logger.warning(
+                "修复重复 sequence: session=%s seq=%s keep_id=%s moved=%d",
+                session_id,
+                sequence,
+                keep_id,
+                len(dup_ids),
+            )
+
     async def create_session(self, name: str) -> Session:
         from uuid import uuid4
         session = Session(

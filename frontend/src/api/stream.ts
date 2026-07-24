@@ -167,44 +167,64 @@ export function streamChat(
         const decoder = new TextDecoder();
         let buffer = '';
 
+        const isAbortError = (error: any) => {
+            const name = String(error?.name || '');
+            const message = String(error?.message || '');
+            return name === 'AbortError'
+                || message.includes('abort')
+                || message.includes('BodyStreamBuffer was aborted');
+        };
+
         const readStream = () => {
-            reader.read().then(({ done, value }) => {
-                if (done) {
-                    console.log('[流式响应完成]');
-                    const remaining = buffer.trim();
-                    if (remaining) {
-                        const parsed = parseSseBuffer(remaining + '\n\n');
-                        for (const item of parsed.events) {
-                            const event = parseEventData({ data: item.data } as MessageEvent);
-                            if (event) handleStreamEvent(event, item.eventType, callbacks);
+            reader.read()
+                .then(({ done, value }) => {
+                    if (done) {
+                        console.log('[流式响应完成]');
+                        const remaining = buffer.trim();
+                        if (remaining) {
+                            const parsed = parseSseBuffer(remaining + '\n\n');
+                            for (const item of parsed.events) {
+                                const event = parseEventData({ data: item.data } as MessageEvent);
+                                if (event) handleStreamEvent(event, item.eventType, callbacks);
+                            }
+                        }
+                        return;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    console.log('[SSE原始数据]', buffer);
+
+                    const parsed = parseSseBuffer(buffer);
+                    buffer = parsed.remainder;
+
+                    for (const item of parsed.events) {
+                        const event = parseEventData({ data: item.data } as MessageEvent);
+                        if (event) {
+                            const normalizedType = item.eventType === 'message' ? event.type : item.eventType;
+                            handleStreamEvent(event, normalizedType, callbacks);
                         }
                     }
-                    return;
-                }
 
-                buffer += decoder.decode(value, { stream: true });
-                console.log('[SSE原始数据]', buffer);
-
-                const parsed = parseSseBuffer(buffer);
-                buffer = parsed.remainder;
-
-                for (const item of parsed.events) {
-                    const event = parseEventData({ data: item.data } as MessageEvent);
-                    if (event) {
-                        const normalizedType = item.eventType === 'message' ? event.type : item.eventType;
-                        handleStreamEvent(event, normalizedType, callbacks);
+                    readStream();
+                })
+                .catch((error) => {
+                    // reader.read() 在 abort 时会在这里抛，不会走到外层 catch
+                    if (isAbortError(error)) {
+                        console.log('[流式请求已中断]');
+                        return;
                     }
-                }
-
-                readStream();
-            });
+                    console.error('[流式读取错误]', error);
+                    callbacks.onError?.(friendlyErrorMessage(error?.message || '网络错误'));
+                });
         };
 
         readStream();
     })
     .catch(error => {
         // 忽略AbortError，这是正常的请求中止，不显示错误
-        if (error.name === 'AbortError' || error.message?.includes('abort')) {
+        if (error?.name === 'AbortError'
+            || String(error?.message || '').includes('abort')
+            || String(error?.message || '').includes('BodyStreamBuffer was aborted')) {
             console.log('[流式请求已中断]');
             return;
         }

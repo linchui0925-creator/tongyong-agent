@@ -227,10 +227,16 @@ export interface SSECallbacks {
     onPlanLoaded?: (plan: any) => void;
     /** 等待用户交互式回答 */
     onAsk?: (question: string, choices: string[], question_id: string) => void;
+    /** ask-first 时自动聚焦到输入框上方面板 */
+    onAskPanelOpen?: (question: string) => void;
     /** Token 使用量更新（实时） */
     onUsage?: (inputTokens: number, outputTokens: number, totalTokens: number) => void;
     /** 上下文容量更新（实时）— 每次 LLM 调用前/压缩后推，TokenUsageBar 用 */
     onContext?: (info: ContextInfo) => void;
+    /** 语音层：识别到用户语音文本 */
+    onVoiceTranscript?: (text: string) => void;
+    /** 语音层：TTS 音频已生成 */
+    onVoiceAudioReady?: (audioUrl: string) => void;
 }
 
 /** UI主题配置 */

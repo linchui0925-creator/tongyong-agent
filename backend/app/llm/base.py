@@ -8,6 +8,14 @@ from app.core.base import Message
 from dataclasses import dataclass
 import logging
 
+from app.llm.request_contract import (
+    ModelRequestOptions,
+    ModelResponse,
+    ModelToolCall,
+    ModelThinkingBlock,
+    ModelUsage,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,14 +27,24 @@ class ToolCallResult:
     tool_call_id: str = ""
 
 
-class LLMResponse:
-    """LLM响应，支持纯文本和工具调用"""
+class LLMResponse(ModelResponse):
+    """Backward-compatible response wrapper."""
 
-    def __init__(self, content: str = "", tool_calls: Optional[List[ToolCallResult]] = None, thinking: Optional[List[str]] = None, usage: Optional[Dict[str, int]] = None):
-        self.content = content
-        self.tool_calls = tool_calls or []
-        self.thinking = thinking or []
-        self.usage = usage or {}  # {"input_tokens": int, "output_tokens": int, "total_tokens": int}
+    def __init__(self, content: str = "", tool_calls: Optional[List[ToolCallResult]] = None, thinking: Optional[List[str]] = None, usage: Optional[Dict[str, int]] = None, raw: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            content=content,
+            tool_calls=[
+                ModelToolCall(tool_name=tc.tool_name, arguments=tc.arguments, tool_call_id=tc.tool_call_id)
+                for tc in (tool_calls or [])
+            ],
+            thinking=[ModelThinkingBlock(text=t) for t in (thinking or [])],
+            usage=ModelUsage(
+                input_tokens=(usage or {}).get("input_tokens", 0),
+                output_tokens=(usage or {}).get("output_tokens", 0),
+                total_tokens=(usage or {}).get("total_tokens", 0),
+            ),
+            raw=raw,
+        )
 
     @property
     def has_tool_calls(self) -> bool:
@@ -35,6 +53,18 @@ class LLMResponse:
     @property
     def has_thinking(self) -> bool:
         return len(self.thinking) > 0
+
+    @property
+    def tool_calls_legacy(self) -> List[ToolCallResult]:
+        return [ToolCallResult(tool_name=tc.tool_name, arguments=tc.arguments, tool_call_id=tc.tool_call_id) for tc in self.tool_calls]
+
+    @property
+    def usage_legacy(self) -> Dict[str, int]:
+        return {
+            "input_tokens": self.usage.input_tokens if self.usage else 0,
+            "output_tokens": self.usage.output_tokens if self.usage else 0,
+            "total_tokens": self.usage.total_tokens if self.usage else 0,
+        }
 
     def __str__(self) -> str:
         if self.has_tool_calls:
@@ -53,19 +83,18 @@ class BaseLLM(ABC):
         logger.info(f"LLM初始化: {self.__class__.__name__}, 模型: {model}")
     
     @abstractmethod
-    async def chat(self, messages: List[Message], tools: Optional[List[Dict]] = None) -> 'LLMResponse':
+    async def chat(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict]] = None,
+        request_options: Optional[ModelRequestOptions] = None,
+        **kwargs,
+    ) -> 'LLMResponse':
         """
-        发送对话请求
+        发送对话请求。
 
-        Args:
-            messages: 消息列表
-            tools: 工具定义列表（OpenAI function calling 格式），None 表示不使用工具
-
-        Returns:
-            LLMResponse: 包含文本内容和/或工具调用
-
-        Raises:
-            LLMError: 请求失败时抛出
+        Backward compatible: older callers may still pass tools/tool_choice directly.
+        New callers should prefer request_options.
         """
         pass
     

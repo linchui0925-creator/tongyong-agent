@@ -24,6 +24,23 @@ router = APIRouter(prefix="/api/files", tags=["files"])
 # 后端进程启动时的 cwd — bare filename 解析的锚点
 _BACKEND_CWD = Path(os.getcwd()).resolve()
 
+# 相对/裸文件名的解析锚点: 与 file_tools._resolve_path 保持一致 (写入落在项目根),
+# 否则点击链接 (path=index.html) 会锚到 backend/ 找不到文件, 预览空白。
+_REPO_ROOT = _BACKEND_CWD.parent if _BACKEND_CWD.name == "backend" else _BACKEND_CWD
+
+
+def _workspace_roots() -> list:
+    """会话隔离工作区根 (workspace_* 工具写入处), 供裸文件名兜底查找。"""
+    roots = []
+    try:
+        from app.paths import data_path
+        base = Path(os.getenv("TONGYONG_WORKSPACE_ROOT", data_path("workspaces"))).resolve()
+        if base.exists():
+            roots.append(base)
+    except Exception:
+        pass
+    return roots
+
 # 允许的目录白名单 (前缀匹配, 已 resolve)
 def _allowed_dirs() -> list:
     """运行时构建白名单 (用户 home 可能不固定)"""
@@ -34,6 +51,7 @@ def _allowed_dirs() -> list:
     allowed = [
         cwd,  # backend cwd
         cwd.parent,  # 项目根
+        _REPO_ROOT,
         Path("/tmp").resolve(),
         Path("/private/tmp").resolve(),
         Path("/var/folders").resolve(),
@@ -41,7 +59,7 @@ def _allowed_dirs() -> list:
         home,
         home / "Documents",
         home / "Desktop",
-    ]
+    ] + _workspace_roots()
     return [p for p in allowed if p.exists()]
 
 # 拒绝的目录 (前缀匹配)
@@ -88,10 +106,16 @@ def _resolve_path(path_str: str) -> Path:
             f"请直接打开远程链接，不要通过文件预览代理: {path_str}",
         )
 
-    p = Path(path_str)
+    p = Path(path_str).expanduser()
     if not p.is_absolute():
-        # bare filename 或相对路径 → 锚定到 backend cwd
-        p = (_BACKEND_CWD / p).resolve()
+        # 裸文件名 / 相对路径 → 与 file_tools 一致锚到项目根;
+        # 若项目根不存在, 再依次尝试 backend cwd 和会话工作区。
+        candidates = [(_REPO_ROOT / p).resolve(), (_BACKEND_CWD / p).resolve()]
+        for root in _workspace_roots():
+            candidates.append((root / p).resolve())
+            matches = sorted(root.rglob(p.name)) if not p.parts[:-1] else []
+            candidates.extend(m.resolve() for m in matches if m.is_file())
+        p = next((c for c in candidates if c.exists()), candidates[0])
     else:
         p = p.resolve()
 

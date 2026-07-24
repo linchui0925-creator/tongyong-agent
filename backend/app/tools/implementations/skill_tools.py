@@ -229,6 +229,149 @@ def load_skill(name: str) -> str:
     return skill_view(name)
 
 
+# GitHub 上非仓库的保留路径段 — 这些不是 skill 仓库, 不能直接安装
+_GITHUB_NON_REPO_SEGMENTS = {
+    "topics", "search", "marketplace", "orgs", "sponsors", "collections",
+    "trending", "about", "features", "settings", "notifications", "explore",
+    "stars", "watching", "new", "login", "join",
+}
+
+
+def _normalize_github_source(raw: str):
+    """把用户给的 source/URL 归一化。
+
+    返回 (owner_repo, keyword):
+      - owner_repo: 形如 'owner/repo' 的真实仓库 (可直接安装); 否则空串
+      - keyword:    当输入是 topics/search 等非仓库页面时, 抽出的主题词 (用于搜索); 否则空串
+    """
+    if not raw:
+        return "", ""
+    text = raw.strip().strip("<>").strip()
+    # 去掉协议与 github 域名前缀
+    for pref in ("https://", "http://", "git@", "ssh://"):
+        if text.startswith(pref):
+            text = text[len(pref):]
+    text = text.replace("github.com:", "github.com/")
+    if text.startswith("www."):
+        text = text[4:]
+    if text.startswith("github.com/"):
+        text = text[len("github.com/"):]
+    # 去掉查询串 / 锚点 / .git 后缀 / 首尾斜杠
+    text = text.split("?", 1)[0].split("#", 1)[0].strip().strip("/")
+    if text.endswith(".git"):
+        text = text[:-4]
+    if not text:
+        return "", ""
+    parts = [p for p in text.split("/") if p]
+    first = parts[0].lower()
+    if first in _GITHUB_NON_REPO_SEGMENTS:
+        # topics/<topic> / search?q=... → 取主题词做搜索关键字
+        keyword = parts[1] if len(parts) > 1 else ""
+        return "", keyword.replace("-", " ").strip()
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}", ""
+    # 只有一个段 (光 owner, 或裸词) → 当搜索关键字
+    return "", parts[0].replace("-", " ").strip()
+
+
+def _match_install_candidate(name: str, candidates):
+    """从实时搜索结果里挑最匹配的 skill (skill_id 精确 > name 精确 > 装机量最高)。"""
+    lname = (name or "").strip().lower()
+    for c in candidates:
+        if str(c.get("skill_id", "")).lower() == lname:
+            return c
+    for c in candidates:
+        if str(c.get("name", "")).lower() == lname:
+            return c
+    if candidates:
+        return max(candidates, key=lambda c: int(c.get("installs") or 0))
+    return None
+
+
+async def skill_install(name: str, source: str = "") -> str:
+    """下载并安装一个外部 skill 到本地 hermes skills 目录。
+
+    - source 已知 (owner/repo) 时直接安装。
+    - 只给 name 时先走实时搜索解析出 source, 解析不到就报错并给候选, 不空转。
+    """
+    from app.core import marketplace
+
+    name = (name or "").strip()
+    if not name:
+        return "❌ 需要提供要安装的 skill 名称。"
+    source = (source or "").strip()
+    resolved_id = name
+
+    # 归一化 source/name 里的 GitHub URL。若给的是 topics/search 等非仓库页面,
+    # 抽出主题词转为搜索关键字 (自主纠偏, 不是死用原始 URL)。
+    search_keyword = ""
+    if source:
+        norm_repo, kw = _normalize_github_source(source)
+        if norm_repo:
+            source = norm_repo
+        else:
+            search_keyword = kw
+            source = ""
+    if not source and (name.startswith(("http://", "https://", "github.com/")) or "/" in name):
+        norm_repo, kw = _normalize_github_source(name)
+        if norm_repo:
+            source = norm_repo
+        elif kw and not search_keyword:
+            search_keyword = kw
+
+    if not source:
+        query = search_keyword or name
+        candidates = []
+        try:
+            from app.core import skill_search
+            candidates = await asyncio.to_thread(skill_search.search_skills, query, 10)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skill_install 实时搜索失败: %s", exc)
+        cand = _match_install_candidate(name if not search_keyword else query, candidates)
+        if cand:
+            source = str(cand.get("source") or "")
+            resolved_id = str(cand.get("skill_id") or name)
+        else:
+            try:
+                local = await asyncio.to_thread(marketplace.list_marketplace_skills, None, query, None)
+            except Exception:  # noqa: BLE001
+                local = []
+            if local:
+                source = str(local[0].get("source_repo") or "")
+                resolved_id = str(local[0].get("name") or name)
+        if not source:
+            hint = ""
+            if candidates:
+                names = "、".join(str(c.get("skill_id") or c.get("name")) for c in candidates[:5])
+                hint = f" 相近的 skill: {names}。"
+            topic_note = ""
+            if search_keyword:
+                topic_note = (
+                    f" 你给的是 GitHub topics/搜索页(不是具体仓库)，已按主题词『{search_keyword}』检索。"
+                )
+            return (
+                f"❌ 找不到可直接安装的 skill('{query}')，无法确定来源仓库。{topic_note}"
+                f"{hint} 请给出具体 skill 仓库(格式 owner/repo)，或换个关键词。"
+            )
+    else:
+        # 显式 owner/repo 但仓库里 skill 目录名未必等于 name, 让 marketplace 侧解析
+        resolved_id = resolved_id or name
+
+    try:
+        result = await asyncio.to_thread(marketplace.install_skill, resolved_id, source)
+    except Exception as exc:  # noqa: BLE001
+        return f"❌ 安装 skill 失败: {exc}"
+
+    if not result.get("ok"):
+        return f"❌ 安装 skill 失败: {result.get('error', '未知错误')}（{resolved_id}@{source}）"
+
+    total_files = result.get("total_files", 1)
+    note = ""
+    if result.get("quarantined"):
+        note = " 该 skill 默认隔离(quarantined)，启用后才会进入可用列表。"
+    return (
+        f"✅ 已安装 skill '{resolved_id}'（来源 {source}，{total_files} 个文件）。{note}"
+    )
 
 
 # 启动时注册 (W4-21 P2-2: 显式 _register_tools, 便于测试 mock)
@@ -305,6 +448,36 @@ def _register_tools():
         is_async=False,
         emoji="📋",
         parallel_mode="safe",
+    )
+
+    registry.register(
+        name="skill_install",
+        toolset="skill",
+        description=(
+            "下载并安装一个外部 skill 到本地(经 GitHub API 拉取, 不需要 git/terminal)。\n"
+            "用户要求“安装/下载某个 skill”时用它, 不要用 web_search/web_extract/terminal 去凑。\n"
+            "source 可传 owner/repo 或完整 GitHub 仓库 URL; 不传则按 name 自动检索。\n"
+            "若给的是 GitHub topics/搜索页(非具体仓库), 会自动按主题词检索真实仓库。\n"
+            "解析不到来源会返回候选让你确认, 不要反复重试。"
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "要安装的 skill 名称 / skillId",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "可选来源仓库，格式 owner/repo；不传则自动解析。",
+                },
+            },
+            "required": ["name"],
+        },
+        handler=skill_install,
+        is_async=True,
+        emoji="📥",
+        parallel_mode="never",
     )
 
 

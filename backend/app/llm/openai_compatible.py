@@ -14,6 +14,7 @@ from typing import List, Optional, AsyncIterator, Dict
 import httpx
 
 from app.llm.base import BaseLLM, LLMError, LLMResponse, ToolCallResult
+from app.llm.request_contract import ModelRequestOptions, ModelResponse, ModelToolCall, ModelThinkingBlock, ModelUsage
 from app.core.base import Message
 from app.llm.model_metadata import get_model_info
 
@@ -156,7 +157,7 @@ class OpenAICompatibleLLM(BaseLLM):
 
     # ── 对话 ──────────────────────────────────────────────
 
-    async def chat(self, messages, tools: Optional[List[Dict]] = None, tool_choice: Optional[str] = None, **kwargs) -> LLMResponse:
+    async def chat(self, messages, tools: Optional[List[Dict]] = None, tool_choice: Optional[str] = None, request_options: Optional[ModelRequestOptions] = None, **kwargs) -> LLMResponse:
         # 兼容两种入参: Pydantic Message 对象 / 普通 dict (test_connection 等用)
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")
@@ -172,11 +173,17 @@ class OpenAICompatibleLLM(BaseLLM):
             self._merge_system_messages(normalized_input)
         )
 
+        effective_options = request_options or ModelRequestOptions(
+            model=self.model,
+            provider=getattr(self, "provider", "openai_compatible"),
+            api_format=self._detect_api_format(self.api_base, getattr(self, 'request_config', {})),
+            stream_mode=str(getattr(self, 'request_config', {}).get('stream_mode', 'native')),
+        )
         body = {
-            "model": self.model,
+            "model": effective_options.model,
             "messages": openai_messages,
-            "temperature": getattr(self, "temperature", 0.7),
-            "max_tokens": self._request_max_tokens(),
+            "temperature": effective_options.controls.temperature if effective_options.controls.temperature is not None else getattr(self, "temperature", 0.7),
+            "max_tokens": effective_options.controls.max_tokens if effective_options.controls.max_tokens is not None else self._request_max_tokens(),
         }
         if tools:
             body["tools"] = tools
@@ -201,7 +208,7 @@ class OpenAICompatibleLLM(BaseLLM):
                 async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
                     # 自动检测API格式（和CC逻辑完全一致）
                     request_config = getattr(self, 'request_config', {})
-                    api_format = self._detect_api_format(self.api_base, request_config)
+                    api_format = effective_options.api_format or self._detect_api_format(self.api_base, request_config)
                     
                     if api_format == 'anthropic':
                         # Anthropic Messages API格式
@@ -218,10 +225,10 @@ class OpenAICompatibleLLM(BaseLLM):
                                 })
                         
                         anthropic_body = {
-                            "model": self.model,
+                            "model": effective_options.model,
                             "messages": anthropic_messages,
-                            "temperature": getattr(self, "temperature", 0.7),
-                            "max_tokens": self._request_max_tokens(),
+                            "temperature": effective_options.controls.temperature if effective_options.controls.temperature is not None else getattr(self, "temperature", 0.7),
+                            "max_tokens": effective_options.controls.max_tokens if effective_options.controls.max_tokens is not None else self._request_max_tokens(),
                         }
                         if system_prompt:
                             anthropic_body["system"] = system_prompt.strip()
@@ -241,10 +248,10 @@ class OpenAICompatibleLLM(BaseLLM):
                     elif api_format == 'openai_responses':
                         # OpenAI Responses API格式
                         responses_body = {
-                            "model": self.model,
+                            "model": effective_options.model,
                             "input": openai_messages,
-                            "temperature": getattr(self, "temperature", 0.7),
-                            "max_output_tokens": self._request_max_tokens(),
+                            "temperature": effective_options.controls.temperature if effective_options.controls.temperature is not None else getattr(self, "temperature", 0.7),
+                            "max_output_tokens": effective_options.controls.max_tokens if effective_options.controls.max_tokens is not None else self._request_max_tokens(),
                         }
                         if tools:
                             responses_body["tools"] = [
@@ -291,7 +298,7 @@ class OpenAICompatibleLLM(BaseLLM):
 
     # ── 流式 ──────────────────────────────────────────────
 
-    async def stream_chat(self, messages: List[Message]) -> AsyncIterator[str]:
+    async def stream_chat(self, messages: List[Message], request_options: Optional[ModelRequestOptions] = None) -> AsyncIterator[str]:
         if not self.api_key:
             raise LLMError("API密钥未设置", "MISSING_API_KEY")
 
@@ -305,7 +312,7 @@ class OpenAICompatibleLLM(BaseLLM):
         api_format = self._detect_api_format(self.api_base, request_config)
         if api_format != 'chat_completions':
             logger.warning("stream_chat 非 chat_completions 协议暂走完整响应回退: %s", api_format)
-            response = await self.chat(messages)
+            response = await self.chat(messages, request_options=request_options)
             text = response.content if isinstance(response, LLMResponse) else str(response)
             for chunk in text:
                 yield chunk
@@ -317,10 +324,10 @@ class OpenAICompatibleLLM(BaseLLM):
                 f"{self.api_base}/chat/completions" if not str(self.api_base).endswith('/chat/completions') else self.api_base,
                 headers=self._headers(),
                 json={
-                    "model": self.model,
+                    "model": (request_options.model if request_options else self.model),
                     "messages": openai_messages,
-                    "temperature": getattr(self, "temperature", 0.7),
-                    "max_tokens": self._request_max_tokens(),
+                    "temperature": (request_options.controls.temperature if request_options and request_options.controls.temperature is not None else getattr(self, "temperature", 0.7)),
+                    "max_tokens": (request_options.controls.max_tokens if request_options and request_options.controls.max_tokens is not None else self._request_max_tokens()),
                     "stream": True,
                 },
             ) as resp:

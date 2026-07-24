@@ -4,6 +4,7 @@ W4-34 改: 继承 OpenAICompatibleLLM,自动获得 tools 传 + tool_calls 解析
 旧实现 chat() 不传 tools 字段,LLM 永远只回纯文本 — 已修。
 """
 from app.llm.openai_compatible import OpenAICompatibleLLM
+from app.llm.request_contract import ModelRequestOptions
 
 
 class WenxinLLM(OpenAICompatibleLLM):

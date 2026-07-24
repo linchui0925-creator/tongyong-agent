@@ -130,6 +130,9 @@ def create_app() -> FastAPI:
     app.include_router(profile_gateway_router)
     app.include_router(evaluation.router)
     app.include_router(team_router, tags=["team"])
+    # Voice API
+    from app.api.voice import router as voice_router
+    app.include_router(voice_router, prefix="/api/voice", tags=["voice"])
 
     # ── Gateway + Hermes 初始化 ──
     _init_gateway_and_hermes()

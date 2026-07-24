@@ -14,6 +14,7 @@ import shlex
 from typing import Optional
 
 from app.tools.registry import registry
+from app.tools.runtime_context import get_tool_turn_strategy
 from app.tools.security_config import _ALLOWED_COMMANDS, _FORBIDDEN_PATTERNS
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,12 @@ _APPROVAL_PATTERNS = [
     (re.compile(r"\bchmod\s+-R\b"), "recursive_chmod", "high"),
     (re.compile(r"\bchown\s+-R\b"), "recursive_chown", "high"),
 ]
+
+_SANDBOX_PRESETS = {
+    "read_only": "(version 1)\n(deny default)\n(allow file-read*)\n(allow process*)",
+    "workspace_only": "(version 1)\n(deny default)\n(allow file-read*)\n(allow file-write* (subpath \".\"))\n(allow process*)",
+    "network_off": "(version 1)\n(deny default)\n(allow file-read*)\n(allow file-write* (subpath \".\"))\n(allow process*)\n(deny network*)",
+}
 
 
 def _validate_command(command: str) -> Optional[str]:
@@ -160,6 +167,21 @@ TERMINAL_SCHEMA = {
             "type": "string",
             "description": "审批通过后的 ID。高风险命令必须携带已批准的 approval_id 才会执行。",
         },
+        "sandbox_mode": {
+            "type": "string",
+            "enum": ["off", "macos"],
+            "description": "可选沙盒模式。macOS 下可用 sandbox-exec 隔离命令执行。",
+            "default": "off",
+        },
+        "sandbox_preset": {
+            "type": "string",
+            "enum": ["read_only", "workspace_only", "network_off"],
+            "description": "预设沙盒配置。与 sandbox_profile 二选一使用。",
+        },
+        "sandbox_profile": {
+            "type": "string",
+            "description": "可选自定义 sandbox-exec profile 文本。仅在 sandbox_mode=macos 时生效。",
+        },
     },
     "required": ["command"],
 }
@@ -172,12 +194,26 @@ async def terminal_tool(
     background: bool = False,
     session_id: Optional[str] = None,
     approval_id: Optional[str] = None,
+    sandbox_mode: str = "off",
+    sandbox_preset: str = "",
+    sandbox_profile: str = "",
 ) -> str:
     # 安全校验
     err = _validate_command(command)
     if err:
         return f"⛔ {err}"
 
+    strategy = get_tool_turn_strategy() or {}
+    if sandbox_mode == "off":
+        sandbox_mode = str(strategy.get("sandbox_mode", "off") or "off")
+    if not sandbox_preset:
+        sandbox_preset = str(strategy.get("sandbox_preset", "") or "")
+    if sandbox_mode not in {"off", "macos"}:
+        return f"⛔ 不支持的 sandbox_mode: {sandbox_mode}"
+    if sandbox_preset and sandbox_preset not in _SANDBOX_PRESETS:
+        return f"⛔ 不支持的 sandbox_preset: {sandbox_preset}"
+    if sandbox_preset and sandbox_profile.strip():
+        return "⛔ sandbox_preset 与 sandbox_profile 只能二选一"
     approved, approval_message = await _approval_allows_execution(approval_id, command, session_id)
     if not approved:
         return approval_message
@@ -188,9 +224,18 @@ async def terminal_tool(
 
     timeout = min(timeout, _MAX_FOREGROUND_TIMEOUT if not background else 86400)
 
+    shell_cmd = command
+    if sandbox_mode == "macos":
+        profile = sandbox_profile.strip()
+        if sandbox_preset:
+            profile = _SANDBOX_PRESETS[sandbox_preset]
+        if not profile:
+            profile = _SANDBOX_PRESETS["workspace_only"]
+        shell_cmd = f"sandbox-exec -p {shlex.quote(profile)} {command}"
+
     try:
         process = await asyncio.create_subprocess_shell(
-            command,
+            shell_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -221,7 +266,10 @@ async def terminal_tool(
             output = output[:_MAX_OUTPUT_CHARS] + "\n...（输出过长，已截断）"
 
         status = "✅" if process.returncode == 0 else "❌"
-        return f"{status} 命令完成（返回码 {process.returncode}）\n{output}"
+        sandbox_note = ""
+        if sandbox_mode == "macos":
+            sandbox_note = f"\n[sandbox] 沙盒环境中执行（macOS{f'/{sandbox_preset}' if sandbox_preset else ''}）"
+        return f"{status} 命令完成（返回码 {process.returncode}）{sandbox_note}\n{output}"
 
     except Exception as e:
         logger.error(f"命令执行失败: {e}", exc_info=True)

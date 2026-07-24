@@ -113,14 +113,17 @@ export async function switchModel(provider: string, apiKey?: string, model?: str
     try {
         const response = await fetch(`${API_BASE}/switch`, {
             method: "POST",
-        body: JSON.stringify({
-            provider,
-            api_key: apiKey || undefined,
-            model: model || undefined,
-            api_endpoint: apiEndpoint || undefined,
-            skip_test: true,
-        }),
-    });
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                provider,
+                api_key: apiKey || undefined,
+                model: model || undefined,
+                api_endpoint: apiEndpoint || undefined,
+                skip_test: true,
+            }),
+        });
 
         if (!response.ok) {
             let errMsg = "切换模型失败";

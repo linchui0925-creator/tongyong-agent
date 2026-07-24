@@ -8,10 +8,11 @@ session-scoped tools can isolate their filesystem workspace and approval queue.
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Optional
+from typing import Optional, Any, Dict
 
 
 _CURRENT_SESSION_ID: ContextVar[Optional[str]] = ContextVar("tool_session_id", default=None)
+_CURRENT_TURN_STRATEGY: ContextVar[Optional[Dict[str, Any]]] = ContextVar("tool_turn_strategy", default=None)
 
 
 def set_tool_session_id(session_id: Optional[str]):
@@ -24,3 +25,15 @@ def reset_tool_session_id(token) -> None:
 
 def get_tool_session_id(default: str = "default") -> str:
     return _CURRENT_SESSION_ID.get() or default
+
+
+def set_tool_turn_strategy(strategy: Optional[Dict[str, Any]]):
+    return _CURRENT_TURN_STRATEGY.set(strategy)
+
+
+def reset_tool_turn_strategy(token) -> None:
+    _CURRENT_TURN_STRATEGY.reset(token)
+
+
+def get_tool_turn_strategy(default: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    return _CURRENT_TURN_STRATEGY.get() or default

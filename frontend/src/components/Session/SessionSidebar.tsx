@@ -134,7 +134,7 @@ function SessionSidebar({
   const startEdit = (session: Session, e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
     setEditingId(session.id)
-    setEditName(session.name)
+    setEditName(session.name ?? '')
   }
 
   const saveEdit = async () => {
@@ -179,11 +179,11 @@ function SessionSidebar({
           <div className="session-list-empty">暂无会话</div>
         ) : (
           <>
-            {visible.map(session => {
+            {visible.map((session, index) => {
               const isPinned = pinnedSessionIds.includes(session.id)
               return (
                 <div
-                  key={session.id}
+                  key={`${session.id || 'session'}-${index}`}
                   className={`session-item cursor-target ${currentSessionId === session.id ? 'active' : ''}`}
                   onClick={() => {
                     if (editingId !== session.id) onSessionSelect(session.id)
@@ -201,6 +201,7 @@ function SessionSidebar({
                         }}
                         onClick={(e) => e.stopPropagation()}
                         autoFocus
+                        key={session.id}
                       />
                       <div className="session-edit-actions">
                         <button className="session-edit-confirm" onClick={saveEdit} aria-label="保存">

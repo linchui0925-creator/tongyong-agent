@@ -441,10 +441,19 @@ async def upload_skill(
     if not parsed["body_text"]:
         raise HTTPException(status_code=400, detail="无法从文件中提取有效内容")
 
-    # 确定 skill 名称
+    # 兼容外部 skill 的非标准 frontmatter：只要能提取到名称/描述就尽量继续安装
     skill_name = parsed["name"] or name or _derive_name_from_content(parsed["body_text"])
     if not skill_name:
         raise HTTPException(status_code=400, detail="无法确定 skill 名称，请上传有意义的文件或提供 name 参数")
+
+    description = parsed.get("description") or f"用户上传的 skill: {skill_name}"
+    warnings = list(parsed.get("warnings", []))
+    if not parsed.get("description"):
+        warnings.append("未从 frontmatter 提取到 description，已使用正文兜底")
+    if not parsed.get("steps"):
+        warnings.append("未识别到明确的 Steps，已从正文启发式提取")
+    if not parsed.get("triggers"):
+        warnings.append("未识别到明确的触发条件，已从正文启发式提取")
 
     # 分类安全检查
     if category not in _skill_categories:
@@ -453,7 +462,7 @@ async def upload_skill(
     # 创建 skill
     ok, msg = _skill_manager.create_skill(
         name=skill_name,
-        description=parsed.get("description", f"用户上传的 skill: {skill_name}"),
+        description=description,
         steps=parsed.get("steps", _extract_steps_from_text(parsed["body_text"])),
         pitfalls=parsed.get("pitfalls"),
         category=category,
@@ -461,7 +470,7 @@ async def upload_skill(
     )
 
     if not ok:
-        return UploadResult(success=False, message=msg, warnings=parsed.get("warnings", []))
+        return UploadResult(success=False, message=msg, warnings=warnings)
 
     # 如果有引用文件（从 zip 解压），添加引用
     if parsed.get("references"):
@@ -482,7 +491,7 @@ async def upload_skill(
         message=f"Skill '{skill_name}' 创建成功",
         parsed_triggers=parsed.get("triggers", []),
         parsed_steps=parsed.get("steps", []),
-        warnings=parsed.get("warnings", []),
+        warnings=warnings,
     )
 
 

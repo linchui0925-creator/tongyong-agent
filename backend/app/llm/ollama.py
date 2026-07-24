@@ -15,6 +15,7 @@ import httpx
 
 from app.llm.openai_compatible import OpenAICompatibleLLM
 from app.core.base import Message
+from app.llm.request_contract import ModelRequestOptions
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,13 @@ class OllamaLLM(OpenAICompatibleLLM):
 
     def __init__(self, api_key: str = None, model: str = None):
         super().__init__(api_key, model)
+
+    async def chat(self, messages: List[Message], tools=None, request_options: ModelRequestOptions = None, **kwargs):
+        return await super().chat(messages, tools=tools, request_options=request_options, **kwargs)
+
+    async def stream_chat(self, messages: List[Message], request_options: ModelRequestOptions = None):
+        async for chunk in super().stream_chat(messages, request_options=request_options):
+            yield chunk
 
     async def get_embedding(self, text: str) -> List[float]:
         # ollama 原生 /api/embeddings 用 prompt 不是 input

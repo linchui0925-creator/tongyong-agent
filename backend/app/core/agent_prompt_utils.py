@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from app.core.base import Message
+from app.core.context_source import ContextSource
 from app.paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -47,47 +48,50 @@ def try_fallback_llm(agent):
 
 
 async def inject_domain_prompts(agent, session_id: str):
-    """Inject domain knowledge prompts to reduce default-model drift."""
+    """Return domain context sources instead of mutating the message list directly."""
     try:
         from app.domains import get_integrator
         integrator = get_integrator()
         prompt = integrator.get_all()
-        if prompt:
-            agent.context.messages.insert(0, Message(role="system", content=prompt, created_at=""))
-            logger.info(f"注入全部领域认知 ({len(integrator.get_domain_keys())} 个领域)")
-        logger.warning(f"[DOMAIN] injected | context.messages count after={len(agent.context.messages)}")
+        if not prompt:
+            return []
+        logger.info(f"注入全部领域认知 ({len(integrator.get_domain_keys())} 个领域)")
+        return [ContextSource(key="domain_prompts", order=20, render=prompt, source_type="dynamic")]
     except Exception as e:
         logger.warning(f"领域认知注入失败: {e}")
+        return []
 
 
 def inject_base_system_prompt(agent):
-    """Inject the base system prompt last so it lands at the top of the stack."""
+    """Return base system prompt as a context source."""
     try:
         from app.core.system_prompt import get_system_prompt
         full_prompt = get_system_prompt()
         if not full_prompt:
-            return
-        agent.context.messages.insert(0, Message(role="system", content=full_prompt, created_at=""))
-        logger.warning(
-            f"[SYS_PROMPT] injected | bytes={len(full_prompt)} | context.messages count after={len(agent.context.messages)}"
-        )
+            return []
+        logger.warning(f"[SYS_PROMPT] prepared | bytes={len(full_prompt)}")
+        return [ContextSource(key="base_system_prompt", order=10, render=full_prompt, source_type="static")]
     except Exception as e:
         logger.warning(f"基础 system prompt 注入失败: {e}")
+        return []
 
 
 async def inject_memory(agent, session_id: str):
-    """Inject long-term file memory and user preference memory."""
+    """Return long-term file memory and user preference context sources."""
     try:
         from app.hermes.memory_file import MemoryFileManager
         mfm = MemoryFileManager(base_dir=data_path("hermes"))
+        sources = []
         mem_content = mfm.read_memory()
         user_content = mfm.read_user()
         if mem_content:
-            agent.context.messages.insert(0, Message(role="system", content=f"[长期事实记忆]\n{mem_content}", created_at=""))
+            sources.append(ContextSource(key="long_term_memory", order=5, render=f"[长期事实记忆]\n{mem_content}", source_type="file"))
             logger.info("注入 MEMORY.md 长期记忆")
         if user_content:
-            agent.context.messages.insert(0, Message(role="system", content=f"[用户偏好]\n{user_content}", created_at=""))
+            sources.append(ContextSource(key="user_profile", order=6, render=f"[用户偏好]\n{user_content}", source_type="file"))
             logger.info("注入 USER.md 用户画像")
-        logger.warning(f"[MEMORY] injected | context.messages count after={len(agent.context.messages)}")
+        logger.warning(f"[MEMORY] prepared | sources={len(sources)}")
+        return sources
     except Exception as e:
         logger.debug(f"平文件记忆注入跳过: {e}")
+        return []

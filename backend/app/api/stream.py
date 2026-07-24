@@ -209,6 +209,7 @@ async def generate_stream_response(
     attachment_ids: Optional[list[str]] = None,
     thinking_mode: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    plan_id: Optional[str] = None,
 ):
     """
     生成流式响应
@@ -240,19 +241,19 @@ async def generate_stream_response(
 
         # W5-7: runtime trace — 一次 stream 请求 = 一条 trace
         trace_id = uuid.uuid4().hex
-        # W5-8: 加载计划 (如果 plan_id 提供), 先于 trace 避免循环依赖
-        _loaded_plan = None
-        if request.plan_id:
-            try:
-                _store = _rt.get_store() if _rt else None
-                if _store is not None:
-                    _loaded_plan = _store.get_plan(request.plan_id)
-            except Exception:
-                pass
         try:
             from app.core.runtime import trace as _rt
         except Exception:
             _rt = None
+        # W5-8: 加载计划 (如果 plan_id 提供), 先于 trace 避免循环依赖
+        _loaded_plan = None
+        if plan_id:
+            try:
+                _store = _rt.get_store() if _rt else None
+                if _store is not None:
+                    _loaded_plan = _store.get_plan(plan_id)
+            except Exception:
+                pass
 
         # W3 切流量: 决策是否走 langchain (显式 > 默认 > 灰度)
         effective_use_langchain = _should_use_langchain(
@@ -610,6 +611,7 @@ async def stream_chat(request: StreamChatRequest):
             attachment_ids=request.attachment_ids,
             thinking_mode=request.thinking_mode,
             reasoning_effort=request.reasoning_effort,
+            plan_id=request.plan_id,
         )
     )
 

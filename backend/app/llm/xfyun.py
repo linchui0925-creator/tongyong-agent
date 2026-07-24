@@ -7,6 +7,7 @@ W4-34 改: 继承 OpenAICompatibleLLM,自动获得 tools 传 + tool_calls 解析
 override chat() 加鉴权头。此处保持 OpenAI 兼容假定 (Bearer 头),如失败可回退。
 """
 from app.llm.openai_compatible import OpenAICompatibleLLM
+from app.llm.request_contract import ModelRequestOptions
 
 
 class XfyunLLM(OpenAICompatibleLLM):

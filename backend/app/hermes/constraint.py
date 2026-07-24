@@ -175,6 +175,20 @@ class HermesConstraintEngine:
             self._consecutive_empty += 1
             self._consecutive_valid = 0
 
+    @staticmethod
+    def _result_signature(result: str) -> str:
+        """归一化工具结果, 用于"是否拿回同样信息"的停滞判定。
+
+        截断 + 折叠空白 + 小写, 只取前若干字符做指纹; 结果太短(错误/空)不参与。
+        """
+        if not result:
+            return ""
+        import re as _re
+        normalized = _re.sub(r"\s+", " ", result).strip().lower()
+        if len(normalized) < 20:
+            return ""
+        return normalized[:200]
+
     def should_continue_loop(self, tools_used: List[str],
                              tool_results: List[Tuple[str, str]],
                              current_round: int) -> Tuple[bool, str]:
@@ -220,9 +234,36 @@ class HermesConstraintEngine:
             return True, "工具全部失败，将尝试其他方法"
 
         # 5. 检查是否在"兜圈子"（相同工具+相同参数）
+        # 5a. 全程累计: 同一 (工具, 参数) 被调用 >= 3 次 → 判定空转 (不依赖 consecutive_valid,
+        #     否则模型换查询词/在 web_search↔web_extract 间交替就能一路空转到 max_rounds)。
+        call_counts: Dict[Tuple[str, str], int] = {}
+        for record in self.execution_log:
+            key = (record.tool_name, str(record.arguments))
+            call_counts[key] = call_counts.get(key, 0) + 1
+            if call_counts[key] >= 3:
+                return False, (
+                    f"已 {call_counts[key]} 次执行完全相同的调用（{record.tool_name}），"
+                    "未取得新进展，停止循环"
+                )
+
+        # 5c. 通用停滞: 不同工具/参数但反复拿回"同样的信息"(结果签名重复)。
+        #     这是工具无关的兜底 —— 覆盖"没有合适工具, 模型换着法子调用却毫无新进展"的场景,
+        #     不用预先知道缺哪个工具。
+        sig_counts: Dict[str, int] = {}
+        for record in self.execution_log:
+            sig = self._result_signature(record.result)
+            if not sig:
+                continue
+            sig_counts[sig] = sig_counts.get(sig, 0) + 1
+            if sig_counts[sig] >= 3:
+                return False, (
+                    "连续多次工具调用返回相同的信息，未取得新进展，停止循环"
+                    "（可能缺少能真正推进任务的工具）"
+                )
+
+        # 5b. 短窗口内相邻重复 (原逻辑保留)
         if self._consecutive_valid >= 3:
             recent = self.execution_log[-3:]
-            # 只有工具名+参数都相同才算是真正的重复
             seen = set()
             for record in recent:
                 key = (record.tool_name, str(record.arguments))

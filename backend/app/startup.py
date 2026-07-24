@@ -38,15 +38,16 @@ def init_agent_engine() -> AgentEngine:
     from app.config import settings
     restored = llm_mgr.try_restore_saved_provider()
 
-    # 4. W5-2 修: 不管 saved 是否成功, 都用 factory 真正构造一个 LLM 实例
+    # 4. 用恢复出的完整 runtime config 直接重建当前 LLM。
     from app.llm.factory import get_llm
     if restored:
-        provider, model = restored
         try:
-            llm_instance = get_llm(provider=provider, model=model)
-            logger.info(f"LLM 初始化成功 (restored): {provider}/{model} -> {type(llm_instance).__name__}")
+            llm_instance = llm_mgr._llm_from_runtime_config(restored)
+            provider = restored.get("provider", settings.default_llm_provider)
+            model = restored.get("model", settings.default_llm_model)
+            logger.info(f"LLM 初始化成功 (restored runtime): {provider}/{model} -> {type(llm_instance).__name__}")
         except Exception as e:
-            logger.warning(f"restored LLM 构造失败 ({provider}/{model}: {e}), 降级 default")
+            logger.warning(f"restored runtime LLM 构造失败 ({restored.get('provider')}/{restored.get('model')}: {e}), 降级 default")
             llm_instance = get_llm(provider=settings.default_llm_provider, model=settings.default_llm_model)
             provider = settings.default_llm_provider
     else:

@@ -135,7 +135,7 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
       .forEach(profile => {
         // 候选 model 列表: profile.models[] (来自 builtin / scrape), 至少含 default_model
         const ids = (profile.models && profile.models.length > 0)
-            ? profile.models.map(m => m.id)
+            ? profile.models.map(m => m.id).filter((id): id is string => Boolean(id && id.trim()))
             : (profile.default_model ? [profile.default_model] : []);
         if (ids.length === 0) {
           // fallback: 没 models 也没 default → 单卡, 用 profile 的 default_model
@@ -191,7 +191,9 @@ export default function ModelSelector({ defaultHubVisible = true }: ModelSelecto
 
     const seen = new Set(profileCards.map(card => `${card.providerId}:${card.model}`));
     const savedCards = savedModels
-      .filter(saved => saved.api_key && saved.api_key !== 'YOUR_API_KEY' && !seen.has(`${saved.provider}:${saved.model}`))
+      .filter(saved => saved.api_key && saved.api_key !== 'YOUR_API_KEY')
+      .filter(saved => Boolean(saved.model && saved.model.trim()))
+      .filter(saved => !seen.has(`${saved.provider}:${saved.model}`))
       .map(saved => {
         const isCurrent = current?.provider === saved.provider && current?.model === saved.model;
         const id = `saved:${saved.id}`;

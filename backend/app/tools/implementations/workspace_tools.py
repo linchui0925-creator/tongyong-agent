@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from app.core.multi_agent.workspace import SUBDIRS, TaskWorkspace
 from app.tools.registry import registry
-from app.tools.runtime_context import get_tool_session_id
+from app.tools.runtime_context import get_tool_session_id, get_tool_turn_strategy
 from app.paths import data_path
 
 
@@ -105,7 +105,7 @@ WORKSPACE_READ_SCHEMA = {
         "subdir": {"type": "string", "enum": list(SUBDIRS), "description": "工作区子目录。"},
         "filename": {"type": "string", "description": "工作区内相对文件名。"},
         "offset": {"type": "integer", "description": "起始行号，从 1 开始。", "default": 1},
-        "limit": {"type": "integer", "description": "最多读取行数，-1 表示全部。", "default": 200},
+        "limit": {"type": "integer", "description": "最多读取行数，-1 表示全部。", "default": 2000},
         "session_id": {"type": "string", "description": "可选会话 ID；默认使用当前请求会话。"},
         "task_id": {"type": "string", "description": "可选任务 ID；传入时覆盖 session_id。"},
     },
@@ -134,6 +134,21 @@ WORKSPACE_TERMINAL_SCHEMA = {
         "session_id": {"type": "string", "description": "可选会话 ID；默认使用当前请求会话。"},
         "task_id": {"type": "string", "description": "可选任务 ID；传入时覆盖 session_id。"},
         "approval_id": {"type": "string", "description": "高风险命令审批通过后的 ID。"},
+        "sandbox_mode": {
+            "type": "string",
+            "enum": ["off", "macos"],
+            "description": "可选沙盒模式。macOS 下可用 sandbox-exec 隔离工作区命令。",
+            "default": "off",
+        },
+        "sandbox_preset": {
+            "type": "string",
+            "enum": ["read_only", "workspace_only", "network_off"],
+            "description": "预设沙盒配置。与 sandbox_profile 二选一使用。",
+        },
+        "sandbox_profile": {
+            "type": "string",
+            "description": "可选自定义 sandbox-exec profile 文本。仅在 sandbox_mode=macos 时生效。",
+        },
     },
     "required": ["command"],
 }
@@ -176,7 +191,7 @@ async def workspace_read_tool(
     subdir: str,
     filename: str,
     offset: int = 1,
-    limit: int = 200,
+    limit: int = 2000,
     session_id: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> str:
@@ -255,6 +270,9 @@ async def workspace_terminal_tool(
     session_id: Optional[str] = None,
     task_id: Optional[str] = None,
     approval_id: Optional[str] = None,
+    sandbox_mode: str = "off",
+    sandbox_preset: str = "",
+    sandbox_profile: str = "",
 ) -> str:
     from app.tools.implementations.terminal import _approval_allows_execution, _validate_command
 
@@ -263,14 +281,38 @@ async def workspace_terminal_tool(
         return f"⛔ {err}"
 
     ws = _get_workspace(session_id, task_id)
+    strategy = get_tool_turn_strategy() or {}
+    if sandbox_mode == "off":
+        sandbox_mode = str(strategy.get("sandbox_mode", "off") or "off")
+    if not sandbox_preset:
+        sandbox_preset = str(strategy.get("sandbox_preset", "") or "")
     approved, approval_message = await _approval_allows_execution(approval_id, command, session_id or ws.task_id)
     if not approved:
         return approval_message
+    if sandbox_mode not in {"off", "macos"}:
+        return f"⛔ 不支持的 sandbox_mode: {sandbox_mode}"
+    if sandbox_preset and sandbox_preset not in {"read_only", "workspace_only", "network_off"}:
+        return f"⛔ 不支持的 sandbox_preset: {sandbox_preset}"
+    if sandbox_preset and sandbox_profile.strip():
+        return "⛔ sandbox_preset 与 sandbox_profile 只能二选一"
 
     timeout = max(1, min(int(timeout or _DEFAULT_TIMEOUT), _MAX_TIMEOUT))
+    shell_cmd = command
+    if sandbox_mode == "macos":
+        profile = sandbox_profile.strip()
+        if sandbox_preset == "read_only":
+            profile = "(version 1)\n(deny default)\n(allow file-read*)\n(allow process*)"
+        elif sandbox_preset == "workspace_only":
+            profile = "(version 1)\n(deny default)\n(allow file-read*)\n(allow file-write* (subpath \".\"))\n(allow process*)"
+        elif sandbox_preset == "network_off":
+            profile = "(version 1)\n(deny default)\n(allow file-read*)\n(allow file-write* (subpath \".\"))\n(allow process*)\n(deny network*)"
+        if not profile:
+            profile = "(version 1)\n(deny default)\n(allow file-read*)\n(allow file-write* (subpath \".\"))\n(allow process*)\n(allow network*)"
+        shell_cmd = f"sandbox-exec -p {shlex.quote(profile)} {command}"
+
     try:
         process = await asyncio.create_subprocess_shell(
-            command,
+            shell_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(ws.base),
@@ -301,8 +343,11 @@ async def workspace_terminal_tool(
             for p in ws.base.rglob(ext):
                 artifact_previews.append(_artifact_payload(str(p), "image", p.name))
                 break
+        sandbox_note = ""
+        if sandbox_mode == "macos":
+            sandbox_note = f" [沙盒环境中执行: macOS{f'/{sandbox_preset}' if sandbox_preset else ''}]"
         return json.dumps({
-            "message": f"{status} workspace 命令完成（返回码 {process.returncode}，cwd={ws.base}）",
+            "message": f"{status} workspace 命令完成（返回码 {process.returncode}，cwd={ws.base}）{sandbox_note}",
             "returncode": process.returncode,
             "workspace_path": str(ws.base),
             "stdout": output,
